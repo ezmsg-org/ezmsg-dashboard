@@ -142,5 +142,5 @@ cython_debug/
 # JetBrains
 .idea/
 
-src/ezmsg/sigproc/__version__.py
+src/ezmsg/dashboard/__version__.py
 uv.lock
