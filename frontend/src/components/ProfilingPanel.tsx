@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Panel } from "./Panel";
 import type {
@@ -174,20 +174,6 @@ export function ProfilingPanel({
     return rows.sort((a, b) => b.backpressureNsWindow - a.backpressureNsWindow);
   }, [processRows]);
 
-  useEffect(() => {
-    setExpandedIds((previous) => {
-      const validIds = new Set(publisherRows.map((row) => row.id));
-      const retained = previous.filter((id) => validIds.has(id));
-      if (retained.length > 0) {
-        return retained;
-      }
-      if (publisherRows.length === 0) {
-        return [];
-      }
-      return [publisherRows[0].id];
-    });
-  }, [publisherRows]);
-
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
     return publisherRows.filter((row) => {
@@ -205,11 +191,6 @@ export function ProfilingPanel({
     });
   }, [publisherRows, pressuredOnly, searchText]);
 
-  const pressuredCount = useMemo(
-    () => publisherRows.filter((row) => row.backpressureNsWindow > 0).length,
-    [publisherRows]
-  );
-
   const toggleExpanded = (id: string) => {
     setExpandedIds((previous) =>
       previous.includes(id)
@@ -223,23 +204,6 @@ export function ProfilingPanel({
       title="Profiling"
       subtitle="Publisher-first backpressure diagnostics"
     >
-      <div className="stats-grid">
-        <article className="stat-card">
-          <span>Publishers</span>
-          <strong>{publisherRows.length}</strong>
-        </article>
-        <article className="stat-card">
-          <span>Pressured Publishers</span>
-          <strong>{pressuredCount}</strong>
-        </article>
-        <article className="stat-card">
-          <span>Trace Batches</span>
-          <strong>
-            {latestTraceEvent ? Object.keys(latestTraceEvent.data.batches).length : 0}
-          </strong>
-        </article>
-      </div>
-
       <div className="profiling-controls">
         <input
           type="search"
@@ -269,15 +233,28 @@ export function ProfilingPanel({
                 key={row.id}
                 className={`publisher-row severity-${row.severity}`}
               >
-                <div className="publisher-row__summary">
-                  <div className="publisher-row__identity">
-                    <span className={`severity-dot severity-${row.severity}`} />
-                    <div>
-                      <p className="mono">{row.topic}</p>
-                      <p className="muted mono">
-                        {row.endpointId} · {row.processId.slice(0, 8)} · pid {row.pid}
-                      </p>
+                <button
+                  type="button"
+                  className="publisher-row__toggle"
+                  onClick={() => toggleExpanded(row.id)}
+                  aria-expanded={expanded}
+                >
+                  <div className="publisher-row__top">
+                    <div className="publisher-row__identity">
+                      <span className={`severity-dot severity-${row.severity}`} />
+                      <div className="publisher-row__identity-text">
+                        <p className="mono publisher-topic" title={row.topic}>
+                          {row.topic}
+                        </p>
+                        <p
+                          className="muted mono publisher-subline"
+                          title={`${row.endpointId} · ${row.processId} · pid ${row.pid}`}
+                        >
+                          {row.endpointId} · {row.processId.slice(0, 8)} · pid {row.pid}
+                        </p>
+                      </div>
                     </div>
+                    <span className="publisher-caret">{expanded ? "▾" : "▸"}</span>
                   </div>
 
                   <div className="publisher-row__metrics">
@@ -296,15 +273,7 @@ export function ProfilingPanel({
                       </strong>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    className="publisher-expand-btn"
-                    onClick={() => toggleExpanded(row.id)}
-                  >
-                    {expanded ? "Hide" : "Details"}
-                  </button>
-                </div>
+                </button>
 
                 {expanded ? (
                   <div className="publisher-row__details">
@@ -320,6 +289,14 @@ export function ProfilingPanel({
                       <article className="mini-kpi">
                         <span>Host</span>
                         <strong>{row.host}</strong>
+                      </article>
+                      <article className="mini-kpi">
+                        <span>Trace Batches</span>
+                        <strong>
+                          {latestTraceEvent
+                            ? Object.keys(latestTraceEvent.data.batches).length
+                            : 0}
+                        </strong>
                       </article>
                     </div>
 
