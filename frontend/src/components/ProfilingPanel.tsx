@@ -19,7 +19,6 @@ type Severity = "none" | "low" | "medium" | "high";
 type SubscriberContributor = {
   id: string;
   endpointId: string;
-  endpointToken: string;
   topic: string;
   processId: string;
   pid: number;
@@ -41,7 +40,8 @@ type PublisherRow = {
   messagesPublishedWindow: number;
   publishDeltaNsAvgWindow: number;
   inflightCurrent: number;
-  inflightPeakWindow: number;
+  inflightDisplayTotal: number;
+  inflightUsesNumBuffers: boolean;
   backpressureNsWindow: number;
   severity: Severity;
   contributors: SubscriberContributor[];
@@ -221,7 +221,6 @@ function toContributor(
   return {
     id: `${process.process_id}:${subscriber.endpoint_id}`,
     endpointId: subscriber.endpoint_id,
-    endpointToken: shortEndpointToken(subscriber.endpoint_id),
     topic: subscriber.topic,
     processId: process.process_id,
     pid: process.pid,
@@ -265,6 +264,12 @@ function toPublisherRow(
   const backpressureNsWindow = toNumber(publisher.backpressure_wait_ns_window);
   const severity = backpressureSeverity(backpressureNsWindow);
   const rowId = `${process.process_id}:${publisher.endpoint_id}`;
+  const rawNumBuffers = publisher["num_buffers"];
+  const numBuffers =
+    typeof rawNumBuffers === "number" && Number.isFinite(rawNumBuffers)
+      ? Math.max(0, Math.trunc(rawNumBuffers))
+      : null;
+  const inflightPeakWindow = toNumber(publisher.inflight_messages_peak_window);
   return {
     id: rowId,
     endpointId: publisher.endpoint_id,
@@ -276,7 +281,8 @@ function toPublisherRow(
     messagesPublishedWindow: toNumber(publisher.messages_published_window),
     publishDeltaNsAvgWindow: toNumber(publisher.publish_delta_ns_avg_window),
     inflightCurrent: toNumber(publisher.inflight_messages_current),
-    inflightPeakWindow: toNumber(publisher.inflight_messages_peak_window),
+    inflightDisplayTotal: numBuffers ?? inflightPeakWindow,
+    inflightUsesNumBuffers: numBuffers !== null,
     backpressureNsWindow,
     severity,
     contributors: contributorListForPublisher(publisher.topic, allSubscribers),
@@ -474,7 +480,7 @@ export function ProfilingPanel({
                     <div>
                       <span>Inflight</span>
                       <strong>
-                        {row.inflightCurrent} / {row.inflightPeakWindow}
+                        {row.inflightCurrent} / {row.inflightDisplayTotal}
                       </strong>
                     </div>
                   </div>
@@ -495,15 +501,13 @@ export function ProfilingPanel({
                         <span>Host</span>
                         <strong>{row.host}</strong>
                       </article>
-                      <article className="mini-kpi">
-                        <span>Trace Batches</span>
-                        <strong>
-                          {latestTraceEvent
-                            ? Object.keys(latestTraceEvent.data.batches).length
-                            : 0}
-                        </strong>
-                      </article>
                     </div>
+                    {row.inflightUsesNumBuffers ? null : (
+                      <p className="muted profiling-note">
+                        Inflight denominator is window peak (no `num_buffers` published for this
+                        endpoint).
+                      </p>
+                    )}
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
@@ -574,7 +578,7 @@ export function ProfilingPanel({
                     </details>
 
                     <div className="panel-section">
-                      <h3>Likely Subscriber Contributors</h3>
+                      <h3>Subscribers</h3>
                       {row.contributors.length === 0 ? (
                         <p className="muted">
                           No subscriber profiling data is available for this topic.
@@ -583,7 +587,6 @@ export function ProfilingPanel({
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th>Subscriber Endpoint</th>
                               <th>Topic</th>
                               <th>Process</th>
                               <th>Attr. Backpressure</th>
@@ -595,14 +598,11 @@ export function ProfilingPanel({
                           <tbody>
                             {row.contributors.map((contributor) => (
                               <tr key={contributor.id}>
-                                <td className="mono" title={contributor.endpointId}>
-                                  {contributor.endpointToken}
-                                </td>
                                 <td>
                                   <details className="topic-details">
                                     <summary
                                       className="mono topic-summary"
-                                      title={contributor.topic}
+                                      title={`endpoint ${contributor.endpointId}`}
                                     >
                                       {shortTopic(contributor.topic)}
                                     </summary>

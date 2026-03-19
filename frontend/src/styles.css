@@ -435,6 +435,10 @@ body {
   font-size: 0.92rem;
 }
 
+.profiling-note {
+  font-size: 0.78rem;
+}
+
 .publisher-detail-line {
   display: flex;
   justify-content: space-between;
@@ -564,7 +568,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 260px;
+  max-width: 420px;
 }
 
 .topic-summary::-webkit-details-marker {
