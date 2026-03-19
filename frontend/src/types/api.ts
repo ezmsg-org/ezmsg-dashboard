@@ -58,16 +58,34 @@ export type GraphSnapshotPayload = {
 };
 
 export type PublisherProfilingSnapshot = {
+  endpoint_id: string;
+  topic: string;
+  messages_published_total: number;
   messages_published_window: number;
+  publish_delta_ns_avg_window: number;
   publish_rate_hz_window: number;
+  inflight_messages_current: number;
+  inflight_messages_peak_window: number;
+  backpressure_wait_ns_total: number;
   backpressure_wait_ns_window: number;
+  timestamp: number;
   [key: string]: unknown;
 };
 
 export type SubscriberProfilingSnapshot = {
+  endpoint_id: string;
+  topic: string;
+  messages_received_total: number;
   messages_received_window: number;
+  lease_time_ns_total: number;
+  lease_time_ns_avg_window: number;
+  user_span_ns_total: number;
   user_span_ns_avg_window: number;
+  attributable_backpressure_ns_total: number;
   attributable_backpressure_ns_window: number;
+  attributable_backpressure_events_total: number;
+  channel_kind_last: string;
+  timestamp: number;
   [key: string]: unknown;
 };
 
