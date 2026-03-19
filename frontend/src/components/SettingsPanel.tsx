@@ -77,7 +77,6 @@ export function SettingsPanel({
   const [editorMode, setEditorMode] = useState<EditorMode>("json");
   const [patchTextValue, setPatchTextValue] = useState("{}");
   const [patchBoolValue, setPatchBoolValue] = useState(false);
-  const [patchTimeout, setPatchTimeout] = useState("2.0");
   const [patchPending, setPatchPending] = useState(false);
   const [patchError, setPatchError] = useState<string | null>(null);
   const [patchSuccess, setPatchSuccess] = useState<string | null>(null);
@@ -95,7 +94,6 @@ export function SettingsPanel({
   const selectedField =
     schemaFields.find((field) => field.name === selectedFieldPath) ?? null;
   const patchable = Boolean(selectedValue?.patchable);
-  const patchDisabledReason = selectedValue?.patch_error ?? null;
 
   useEffect(() => {
     if (schemaFields.length === 0) {
@@ -163,19 +161,12 @@ export function SettingsPanel({
       return;
     }
     if (!patchable) {
-      setPatchError(patchDisabledReason ?? "This component is read-only.");
+      setPatchError("This component is read-only.");
       setPatchSuccess(null);
       return;
     }
     if (!selectedField) {
       setPatchError("No schema field is selected.");
-      setPatchSuccess(null);
-      return;
-    }
-
-    const timeout = Number.parseFloat(patchTimeout);
-    if (!Number.isFinite(timeout) || timeout <= 0) {
-      setPatchError("Timeout must be a positive number.");
       setPatchSuccess(null);
       return;
     }
@@ -220,8 +211,7 @@ export function SettingsPanel({
       const response = await patchSettingField(
         selectedComponent,
         selectedField.name,
-        parsedValue,
-        timeout
+        parsedValue
       );
       setPatchSuccess(
         `Patched ${response.component_address}.${response.field_path}`
@@ -253,10 +243,6 @@ export function SettingsPanel({
               : "-"}
           </strong>
         </article>
-        <article className="stat-card">
-          <span>Patch Access</span>
-          <strong>{patchable ? "Writable" : "Read-Only"}</strong>
-        </article>
       </div>
 
       {componentAddresses.length === 0 ? (
@@ -272,6 +258,8 @@ export function SettingsPanel({
                 type="button"
                 className={`settings-item ${
                   selectedComponent === address ? "is-active" : ""
+                } ${
+                  settings?.[address]?.patchable ? "is-patchable" : "is-readonly"
                 }`}
                 onClick={() => setSelectedComponent(address)}
               >
@@ -288,145 +276,132 @@ export function SettingsPanel({
         </div>
       )}
 
-      <div className="panel-section">
-        <h3>Patch Field</h3>
-        {!patchable ? (
-          <p className="muted">
-            {patchDisabledReason ?? "This component does not support dynamic settings patches."}
-          </p>
-        ) : null}
-        {patchable && schemaFields.length === 0 ? (
-          <p className="muted">
-            Settings schema metadata is unavailable; field-level patch widgets cannot be generated.
-          </p>
-        ) : null}
-        <form className="patch-form" onSubmit={onSubmitPatch}>
-          <label>
-            <span>Field</span>
-            <select
-              value={selectedFieldPath}
-              onChange={(event) => setSelectedFieldPath(event.target.value)}
-              disabled={!selectedComponent || !patchable || schemaFields.length === 0 || patchPending}
-            >
-              {schemaFields.map((field) => (
-                <option key={field.name} value={field.name}>
-                  {field.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {selectedField ? (
+      {patchable ? (
+        <div className="panel-section">
+          <h3>Patch Field</h3>
+          {schemaFields.length === 0 ? (
             <p className="muted">
-              {selectedField.description ?? "No field description available."}
-              {selectedField.bounds
-                ? ` Bounds: [${selectedField.bounds[0] ?? "-inf"}, ${selectedField.bounds[1] ?? "+inf"}]`
-                : ""}
+              Settings schema metadata is unavailable; field-level patch widgets cannot be generated.
             </p>
-          ) : null}
+          ) : (
+            <form className="patch-form" onSubmit={onSubmitPatch}>
+              <label>
+                <span>Field</span>
+                <select
+                  value={selectedFieldPath}
+                  onChange={(event) => setSelectedFieldPath(event.target.value)}
+                  disabled={!selectedComponent || schemaFields.length === 0 || patchPending}
+                >
+                  {schemaFields.map((field) => (
+                    <option key={field.name} value={field.name}>
+                      {field.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          {editorMode === "boolean" ? (
-            <label className="patch-checkbox">
-              <input
-                type="checkbox"
-                checked={patchBoolValue}
-                onChange={(event) => setPatchBoolValue(event.target.checked)}
-                disabled={!selectedComponent || !patchable || patchPending}
-              />
-              <span>Enabled</span>
-            </label>
-          ) : null}
+              {selectedField ? (
+                <p className="muted">
+                  {selectedField.description ?? "No field description available."}
+                  {selectedField.bounds
+                    ? ` Bounds: [${selectedField.bounds[0] ?? "-inf"}, ${selectedField.bounds[1] ?? "+inf"}]`
+                    : ""}
+                </p>
+              ) : null}
 
-          {editorMode === "choice" ? (
-            <label>
-              <span>Value</span>
-              <select
-                value={patchTextValue}
-                onChange={(event) => setPatchTextValue(event.target.value)}
-                disabled={!selectedComponent || !patchable || patchPending}
-              >
-                {(selectedField?.choices ?? []).map((choice, index) => (
-                  <option key={`${selectedField?.name}-${index}`} value={String(index)}>
-                    {toDisplayJson(choice)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+              {editorMode === "boolean" ? (
+                <label className="patch-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={patchBoolValue}
+                    onChange={(event) => setPatchBoolValue(event.target.checked)}
+                    disabled={!selectedComponent || patchPending}
+                  />
+                  <span>Enabled</span>
+                </label>
+              ) : null}
 
-          {editorMode === "number" ? (
-            <label>
-              <span>Value</span>
-              <input
-                type="number"
-                value={patchTextValue}
-                min={selectedField?.bounds?.[0] ?? undefined}
-                max={selectedField?.bounds?.[1] ?? undefined}
-                step="any"
-                onChange={(event) => setPatchTextValue(event.target.value)}
-                disabled={!selectedComponent || !patchable || patchPending}
-              />
-            </label>
-          ) : null}
+              {editorMode === "choice" ? (
+                <label>
+                  <span>Value</span>
+                  <select
+                    value={patchTextValue}
+                    onChange={(event) => setPatchTextValue(event.target.value)}
+                    disabled={!selectedComponent || patchPending}
+                  >
+                    {(selectedField?.choices ?? []).map((choice, index) => (
+                      <option key={`${selectedField?.name}-${index}`} value={String(index)}>
+                        {toDisplayJson(choice)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
 
-          {editorMode === "text" ? (
-            <label>
-              <span>Value</span>
-              <input
-                type="text"
-                value={patchTextValue}
-                onChange={(event) => setPatchTextValue(event.target.value)}
-                disabled={!selectedComponent || !patchable || patchPending}
-              />
-            </label>
-          ) : null}
+              {editorMode === "number" ? (
+                <label>
+                  <span>Value</span>
+                  <input
+                    type="number"
+                    value={patchTextValue}
+                    min={selectedField?.bounds?.[0] ?? undefined}
+                    max={selectedField?.bounds?.[1] ?? undefined}
+                    step="any"
+                    onChange={(event) => setPatchTextValue(event.target.value)}
+                    disabled={!selectedComponent || patchPending}
+                  />
+                </label>
+              ) : null}
 
-          {editorMode === "json" ? (
-            <label>
-              <span>Value (JSON)</span>
-              <textarea
-                value={patchTextValue}
-                onChange={(event) => setPatchTextValue(event.target.value)}
-                rows={7}
-                spellCheck={false}
-                className="mono"
-                disabled={!selectedComponent || !patchable || patchPending}
-              />
-            </label>
-          ) : null}
+              {editorMode === "text" ? (
+                <label>
+                  <span>Value</span>
+                  <input
+                    type="text"
+                    value={patchTextValue}
+                    onChange={(event) => setPatchTextValue(event.target.value)}
+                    disabled={!selectedComponent || patchPending}
+                  />
+                </label>
+              ) : null}
 
-          <label>
-            <span>Timeout seconds</span>
-            <input
-              type="text"
-              value={patchTimeout}
-              onChange={(event) => setPatchTimeout(event.target.value)}
-              disabled={!selectedComponent || !patchable || patchPending}
-            />
-          </label>
+              {editorMode === "json" ? (
+                <label>
+                  <span>Value (JSON)</span>
+                  <textarea
+                    value={patchTextValue}
+                    onChange={(event) => setPatchTextValue(event.target.value)}
+                    rows={7}
+                    spellCheck={false}
+                    className="mono"
+                    disabled={!selectedComponent || patchPending}
+                  />
+                </label>
+              ) : null}
 
-          <div className="patch-form__actions">
-            <button
-              type="submit"
-              disabled={
-                !selectedComponent
-                || !patchable
-                || !selectedField
-                || schemaFields.length === 0
-                || patchPending
-              }
-            >
-              {patchPending ? "Applying..." : "Apply Patch"}
-            </button>
-            {patchSuccess ? (
-              <span className="patch-status ok">{patchSuccess}</span>
-            ) : null}
-            {patchError ? (
-              <span className="patch-status err">{patchError}</span>
-            ) : null}
-          </div>
-        </form>
-      </div>
+              <div className="patch-form__actions">
+                <button
+                  type="submit"
+                  disabled={
+                    !selectedComponent
+                    || !selectedField
+                    || schemaFields.length === 0
+                    || patchPending
+                  }
+                >
+                  {patchPending ? "Applying..." : "Apply Patch"}
+                </button>
+                {patchSuccess ? (
+                  <span className="patch-status ok">{patchSuccess}</span>
+                ) : null}
+                {patchError ? (
+                  <span className="patch-status err">{patchError}</span>
+                ) : null}
+              </div>
+            </form>
+          )}
+        </div>
+      ) : null}
     </Panel>
   );
 }

@@ -275,9 +275,16 @@ body {
   padding: 0.4rem 0.55rem;
 }
 
+.settings-item.is-readonly {
+  color: #64748b;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
 .settings-item.is-active {
   border-color: #0ea5e9;
   background: #e0f2fe;
+  color: #0f172a;
 }
 
 .settings-detail {
