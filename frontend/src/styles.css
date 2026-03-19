@@ -295,68 +295,91 @@ body {
 }
 
 .settings-detail h3 {
-  margin: 0 0 0.5rem;
+  margin: 0;
   font-size: 0.82rem;
   color: #0f172a;
 }
 
-.json-block {
-  margin: 0;
-  max-height: 320px;
+.settings-detail__heading {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.25rem;
+}
+
+.settings-type {
+  font-size: 0.72rem;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+}
+
+.settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 440px;
   overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.settings-field-row {
+  border: 1px solid #dbe2ea;
+  border-radius: 10px;
   background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 0.6rem;
-  font-size: 0.82rem;
-  line-height: 1.45;
+  padding: 0.55rem;
 }
 
-.patch-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
+.settings-field-row.is-disabled {
+  background: #f1f5f9;
+  border-color: #d0dae5;
 }
 
-.patch-form label {
+.settings-field-row__meta {
   display: flex;
   flex-direction: column;
-  gap: 0.28rem;
+  gap: 0.2rem;
+}
+
+.settings-field-row__meta label {
   font-size: 0.8rem;
-  color: #334155;
 }
 
-.patch-form input,
-.patch-form textarea,
-.patch-form select {
+.settings-field-row__control {
+  margin-top: 0.45rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.settings-field-row__control input,
+.settings-field-row__control textarea,
+.settings-field-row__control select {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   padding: 0.45rem 0.55rem;
   font: inherit;
   background: #ffffff;
+  width: 100%;
 }
 
-.patch-form input:disabled,
-.patch-form textarea:disabled,
-.patch-form select:disabled {
-  background: #f1f5f9;
+.settings-field-row__control textarea {
+  min-height: 84px;
+  resize: vertical;
 }
 
-.patch-checkbox {
-  display: flex !important;
-  flex-direction: row !important;
-  align-items: center;
-  gap: 0.45rem !important;
+.settings-field-row__control input:disabled,
+.settings-field-row__control textarea:disabled,
+.settings-field-row__control select:disabled {
+  background: #e5ebf3;
+  color: #64748b;
 }
 
-.patch-form__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-}
-
-.patch-form__actions button {
+.settings-field-row__control button {
   border: 1px solid #3b82f6;
   border-radius: 8px;
   background: #2563eb;
@@ -367,13 +390,22 @@ body {
   cursor: pointer;
 }
 
-.patch-form__actions button:disabled {
-  opacity: 0.6;
+.settings-field-row__control button:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
+}
+
+.patch-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
 }
 
 .patch-status {
   font-size: 0.8rem;
+  margin-top: 0.35rem;
 }
 
 .patch-status.ok {

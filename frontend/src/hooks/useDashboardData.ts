@@ -200,6 +200,8 @@ export function useDashboardData() {
                 ...typed.data.value,
                 patchable: existingValue?.patchable ?? false,
                 patch_error: existingValue?.patch_error ?? null,
+                component_type: existingValue?.component_type ?? null,
+                component_name: existingValue?.component_name ?? null,
               },
             };
             return { ...previous, settings: nextSettings };
@@ -296,6 +298,8 @@ export function useDashboardData() {
               ...payload.updated_value,
               patchable: existingValue?.patchable ?? true,
               patch_error: existingValue?.patch_error ?? null,
+              component_type: existingValue?.component_type ?? null,
+              component_name: existingValue?.component_name ?? null,
             },
           },
         };

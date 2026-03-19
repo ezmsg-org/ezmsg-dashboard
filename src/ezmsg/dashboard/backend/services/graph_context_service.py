@@ -186,11 +186,19 @@ class GraphContextLifecycleService:
         settings_snapshot: dict[str, Any],
         graph_snapshot: GraphSnapshot,
     ) -> dict[str, dict[str, Any]]:
-        patchability = self._patchability_by_component(graph_snapshot)
+        component_info = self._component_info_by_component(graph_snapshot)
         adapted = adapt_settings_snapshot(settings_snapshot)
         out: dict[str, dict[str, Any]] = {}
         for component_address, value in adapted.items():
-            patchable = patchability.get(component_address, False)
+            info = component_info.get(
+                component_address,
+                {
+                    "patchable": False,
+                    "component_type": None,
+                    "component_name": None,
+                },
+            )
+            patchable = bool(info["patchable"])
             out[component_address] = {
                 **value,
                 "patchable": patchable,
@@ -199,6 +207,8 @@ class GraphContextLifecycleService:
                     if patchable
                     else "Read-only: component does not expose dynamic settings."
                 ),
+                "component_type": info["component_type"],
+                "component_name": info["component_name"],
             }
         return out
 
@@ -207,13 +217,16 @@ class GraphContextLifecycleService:
         graph_snapshot: GraphSnapshot,
         component_address: str,
     ) -> bool:
-        return self._patchability_by_component(graph_snapshot).get(component_address, False)
+        return bool(
+            self._component_info_by_component(graph_snapshot)
+            .get(component_address, {"patchable": False})["patchable"]
+        )
 
-    def _patchability_by_component(
+    def _component_info_by_component(
         self,
         graph_snapshot: GraphSnapshot,
-    ) -> dict[str, bool]:
-        patchability: dict[str, bool] = {}
+    ) -> dict[str, dict[str, Any]]:
+        component_info: dict[str, dict[str, Any]] = {}
         for session in graph_snapshot.sessions.values():
             metadata = session.metadata
             if metadata is None:
@@ -224,8 +237,22 @@ class GraphContextLifecycleService:
                     dynamic_settings is not None
                     and getattr(dynamic_settings, "enabled", False)
                 )
-                patchability[component_address] = patchability.get(component_address, False) or enabled
-        return patchability
+                existing = component_info.get(
+                    component_address,
+                    {
+                        "patchable": False,
+                        "component_type": None,
+                        "component_name": None,
+                    },
+                )
+                component_info[component_address] = {
+                    "patchable": bool(existing["patchable"]) or enabled,
+                    "component_type": existing["component_type"]
+                    or getattr(component, "component_type", None),
+                    "component_name": existing["component_name"]
+                    or getattr(component, "name", None),
+                }
+        return component_info
 
     async def event_envelopes(
         self,

@@ -22,6 +22,8 @@ export type SettingsValuePayload = {
   serialized_present: boolean;
   patchable?: boolean;
   patch_error?: string | null;
+  component_type?: string | null;
+  component_name?: string | null;
 };
 
 export type SettingsSnapshotPayload = Record<string, SettingsValuePayload>;
