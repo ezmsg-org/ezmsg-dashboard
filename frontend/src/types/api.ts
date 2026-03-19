@@ -65,6 +65,7 @@ export type PublisherProfilingSnapshot = {
   publish_delta_ns_avg_window: number;
   publish_rate_hz_window: number;
   inflight_messages_current: number;
+  num_buffers: number;
   inflight_messages_peak_window: number;
   backpressure_wait_ns_total: number;
   backpressure_wait_ns_window: number;

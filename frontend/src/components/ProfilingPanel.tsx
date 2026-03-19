@@ -36,6 +36,7 @@ type PublisherRow = {
   processId: string;
   pid: number;
   host: string;
+  windowSeconds: number;
   publishRateHzWindow: number;
   messagesPublishedWindow: number;
   publishDeltaNsAvgWindow: number;
@@ -81,6 +82,16 @@ function formatRate(hz: number): string {
 
 function formatMs(ns: number): string {
   return `${nsToMs(ns).toFixed(2)} ms`;
+}
+
+function formatWindowSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  if (Math.abs(seconds - Math.round(seconds)) < 1e-6) {
+    return `${Math.round(seconds)}s`;
+  }
+  return `${seconds.toFixed(1)}s`;
 }
 
 function shortEndpointToken(endpointId: string): string {
@@ -276,6 +287,7 @@ function toPublisherRow(
     processId: process.process_id,
     pid: process.pid,
     host: process.host,
+    windowSeconds: toNumber(process.window_seconds),
     publishRateHzWindow: toNumber(publisher.publish_rate_hz_window),
     messagesPublishedWindow: toNumber(publisher.messages_published_window),
     publishDeltaNsAvgWindow: toNumber(publisher.publish_delta_ns_avg_window),
@@ -436,6 +448,7 @@ export function ProfilingPanel({
             const traceOpen = activeTraceRowIds.includes(row.id);
             const traceSamples = traceSamplesByRowId[row.id] ?? [];
             const traceMetrics = summarizeTraceMetrics(traceSamples);
+            const windowLabel = formatWindowSeconds(row.windowSeconds);
             return (
               <article
                 key={row.id}
@@ -488,7 +501,7 @@ export function ProfilingPanel({
                   <div className="publisher-row__details">
                     <div className="publisher-kpis">
                       <article className="mini-kpi">
-                        <span>Messages (window)</span>
+                        <span>{windowLabel ? `Messages (${windowLabel})` : "Messages"}</span>
                         <strong>{row.messagesPublishedWindow}</strong>
                       </article>
                       <article className="mini-kpi">
