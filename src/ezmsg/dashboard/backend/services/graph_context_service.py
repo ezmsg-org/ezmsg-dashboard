@@ -6,7 +6,7 @@ import time
 from typing import Any, AsyncIterator, Callable, Protocol
 
 from ezmsg.core.graphcontext import GraphContext
-from ezmsg.core.graphmeta import ProfilingStreamControl
+from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl
 
 from ..models.events import (
     EventEnvelopeModel,
@@ -128,16 +128,27 @@ class GraphContextLifecycleService:
             context.settings_snapshot(),
             context.profiling_snapshot_all(),
         )
+        settings_with_patchability = self._settings_with_patchability(
+            settings_snapshot=settings_snapshot,
+            graph_snapshot=graph_snapshot,
+        )
         return {
             "snapshot": adapt_graph_snapshot(graph_snapshot),
-            "settings": adapt_settings_snapshot(settings_snapshot),
+            "settings": settings_with_patchability,
             "profiling": adapt_profiling_snapshot(profiling_snapshot),
         }
 
     async def settings_payload(self) -> dict[str, Any]:
         context = self._require_context()
-        settings_snapshot = await context.settings_snapshot()
-        return {"settings": adapt_settings_snapshot(settings_snapshot)}
+        settings_snapshot, graph_snapshot = await asyncio.gather(
+            context.settings_snapshot(),
+            context.snapshot(),
+        )
+        settings_with_patchability = self._settings_with_patchability(
+            settings_snapshot=settings_snapshot,
+            graph_snapshot=graph_snapshot,
+        )
+        return {"settings": settings_with_patchability}
 
     async def update_setting_field(
         self,
@@ -148,6 +159,11 @@ class GraphContextLifecycleService:
         timeout: float = 2.0,
     ) -> dict[str, Any]:
         context = self._require_context()
+        graph_snapshot = await context.snapshot()
+        if not self._component_is_patchable(graph_snapshot, component_address):
+            raise SettingsPatchError(
+                f"Component '{component_address}' does not support dynamic settings patches."
+            )
         try:
             updated_value = await context.update_setting(
                 component_address=component_address,
@@ -163,6 +179,53 @@ class GraphContextLifecycleService:
             "field_path": field_path,
             "updated_value": adapt_settings_value(updated_value),
         }
+
+    def _settings_with_patchability(
+        self,
+        *,
+        settings_snapshot: dict[str, Any],
+        graph_snapshot: GraphSnapshot,
+    ) -> dict[str, dict[str, Any]]:
+        patchability = self._patchability_by_component(graph_snapshot)
+        adapted = adapt_settings_snapshot(settings_snapshot)
+        out: dict[str, dict[str, Any]] = {}
+        for component_address, value in adapted.items():
+            patchable = patchability.get(component_address, False)
+            out[component_address] = {
+                **value,
+                "patchable": patchable,
+                "patch_error": (
+                    None
+                    if patchable
+                    else "Read-only: component does not expose dynamic settings."
+                ),
+            }
+        return out
+
+    def _component_is_patchable(
+        self,
+        graph_snapshot: GraphSnapshot,
+        component_address: str,
+    ) -> bool:
+        return self._patchability_by_component(graph_snapshot).get(component_address, False)
+
+    def _patchability_by_component(
+        self,
+        graph_snapshot: GraphSnapshot,
+    ) -> dict[str, bool]:
+        patchability: dict[str, bool] = {}
+        for session in graph_snapshot.sessions.values():
+            metadata = session.metadata
+            if metadata is None:
+                continue
+            for component_address, component in metadata.components.items():
+                dynamic_settings = getattr(component, "dynamic_settings", None)
+                enabled = bool(
+                    dynamic_settings is not None
+                    and getattr(dynamic_settings, "enabled", False)
+                )
+                patchability[component_address] = patchability.get(component_address, False) or enabled
+        return patchability
 
     async def event_envelopes(
         self,
