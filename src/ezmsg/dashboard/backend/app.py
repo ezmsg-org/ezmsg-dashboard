@@ -4,9 +4,16 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
+
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 def get_graph_service(request: Request) -> GraphServiceProtocol:
@@ -34,22 +41,25 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
     app = FastAPI(title="ezmsg Dashboard Backend", lifespan=lifespan)
 
     @app.get("/api/health")
-    async def api_health(graph_service: GraphServiceDependency) -> dict[str, object]:
-        return await graph_service.health_payload()
+    async def api_health(graph_service: GraphServiceDependency) -> JSONResponse:
+        payload = await graph_service.health_payload()
+        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/snapshot")
-    async def api_snapshot(graph_service: GraphServiceDependency) -> dict[str, object]:
+    async def api_snapshot(graph_service: GraphServiceDependency) -> JSONResponse:
         try:
-            return await graph_service.snapshot_payload()
+            payload = await graph_service.snapshot_payload()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/settings")
-    async def api_settings(graph_service: GraphServiceDependency) -> dict[str, object]:
+    async def api_settings(graph_service: GraphServiceDependency) -> JSONResponse:
         try:
-            return await graph_service.settings_payload()
+            payload = await graph_service.settings_payload()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.websocket("/ws/events")
     async def ws_events(

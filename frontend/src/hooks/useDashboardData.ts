@@ -19,8 +19,35 @@ const SNAPSHOT_REFRESH_DEBOUNCE_MS = 250;
 const RECONNECT_DELAY_MS = 1000;
 
 function wsUrl(): string {
+  const configuredBaseUrl = import.meta.env.VITE_WS_BASE_URL as
+    | string
+    | undefined;
+  if (configuredBaseUrl && configuredBaseUrl.length > 0) {
+    return `${configuredBaseUrl.replace(/\/$/, "")}/ws/events`;
+  }
+
+  if (import.meta.env.DEV) {
+    return "ws://127.0.0.1:8000/ws/events";
+  }
+
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${window.location.host}/ws/events`;
+}
+
+async function fetchJsonNoStore<T>(path: string): Promise<T> {
+  const separator = path.includes("?") ? "&" : "?";
+  const url = `${path}${separator}_ts=${Date.now()}`;
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`${path} failed (${response.status})`);
+  }
+  return (await response.json()) as T;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,25 +70,23 @@ export function useDashboardData() {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [lastSnapshotUpdateMs, setLastSnapshotUpdateMs] = useState<number | null>(
+    null
+  );
 
   const refreshTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
-    const response = await fetch("/api/snapshot");
-    if (!response.ok) {
-      throw new Error(`/api/snapshot failed (${response.status})`);
-    }
-    const payload = (await response.json()) as DashboardSnapshotResponse;
+    const payload = await fetchJsonNoStore<DashboardSnapshotResponse>(
+      "/api/snapshot"
+    );
     setSnapshot(payload);
+    setLastSnapshotUpdateMs(Date.now());
   }, []);
 
   const refreshHealth = useCallback(async () => {
-    const response = await fetch("/api/health");
-    if (!response.ok) {
-      throw new Error(`/api/health failed (${response.status})`);
-    }
-    const payload = (await response.json()) as HealthResponse;
+    const payload = await fetchJsonNoStore<HealthResponse>("/api/health");
     setHealth(payload);
   }, []);
 
@@ -215,6 +240,7 @@ export function useDashboardData() {
     topologyEvents,
     connectionState,
     error,
+    lastSnapshotUpdateMs,
     refreshSnapshot: reloadSnapshot,
   };
 }

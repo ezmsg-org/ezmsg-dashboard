@@ -13,9 +13,13 @@ export function App() {
     latestTraceEvent,
     connectionState,
     error,
+    lastSnapshotUpdateMs,
     topologyEvents,
     refreshSnapshot,
   } = useDashboardData();
+  const snapshotUpdatedAt = lastSnapshotUpdateMs
+    ? new Date(lastSnapshotUpdateMs).toLocaleTimeString()
+    : "n/a";
 
   return (
     <div className="app-shell">
@@ -37,6 +41,7 @@ export function App() {
           <button type="button" className="refresh-btn" onClick={() => refreshSnapshot()}>
             Refresh Snapshot
           </button>
+          <span className="snapshot-time">Snapshot updated {snapshotUpdatedAt}</span>
         </div>
         {error ? <p className="error-text">{error}</p> : null}
       </header>

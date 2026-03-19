@@ -93,6 +93,7 @@ def test_health_route() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["graph_session_active"] is True
+    assert response.headers["cache-control"].startswith("no-store")
     assert fake_service.started is True
     assert fake_service.stopped is True
 
@@ -107,6 +108,7 @@ def test_snapshot_route() -> None:
     assert "snapshot" in payload
     assert "settings" in payload
     assert "profiling" in payload
+    assert response.headers["cache-control"].startswith("no-store")
     assert payload["settings"]["unit.alpha"]["serialized_present"] is True
 
 
@@ -117,6 +119,7 @@ def test_settings_route() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert response.headers["cache-control"].startswith("no-store")
     assert payload["settings"]["unit.alpha"]["repr_value"]["enabled"] is True
 
 
