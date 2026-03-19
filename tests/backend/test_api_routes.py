@@ -11,6 +11,8 @@ class FakeGraphService:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
+        self.raise_patch_error = False
+        self.last_patch_request: dict[str, object] | None = None
 
     async def startup(self) -> None:
         self.started = True
@@ -49,6 +51,33 @@ class FakeGraphService:
                     "serialized_present": True,
                 }
             }
+        }
+
+    async def update_setting_field(
+        self,
+        *,
+        component_address: str,
+        field_path: str,
+        value: object,
+        timeout: float,
+    ) -> dict[str, object]:
+        self.last_patch_request = {
+            "component_address": component_address,
+            "field_path": field_path,
+            "value": value,
+            "timeout": timeout,
+        }
+        if self.raise_patch_error:
+            raise RuntimeError("Invalid field path: not_a_real_field")
+        return {
+            "component_address": component_address,
+            "field_path": field_path,
+            "updated_value": {
+                "repr_value": {"enabled": value},
+                "structured_value": {"enabled": value},
+                "settings_schema": None,
+                "serialized_present": True,
+            },
         }
 
     async def event_envelopes(
@@ -132,3 +161,48 @@ def test_events_websocket_route() -> None:
 
     assert first["kind"] == "system.ready"
     assert second["kind"] == "topology.changed"
+
+
+def test_patch_settings_route_success() -> None:
+    fake_service = FakeGraphService()
+    app = create_app(fake_service)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/settings/unit.alpha/field",
+            json={
+                "field_path": "enabled",
+                "value": False,
+                "timeout": 1.5,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert response.headers["cache-control"].startswith("no-store")
+    assert payload["component_address"] == "unit.alpha"
+    assert payload["field_path"] == "enabled"
+    assert payload["updated_value"]["structured_value"]["enabled"] is False
+    assert fake_service.last_patch_request == {
+        "component_address": "unit.alpha",
+        "field_path": "enabled",
+        "value": False,
+        "timeout": 1.5,
+    }
+
+
+def test_patch_settings_route_invalid_field_path() -> None:
+    fake_service = FakeGraphService()
+    fake_service.raise_patch_error = True
+    app = create_app(fake_service)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/settings/unit.alpha/field",
+            json={
+                "field_path": "does.not.exist",
+                "value": 123,
+            },
+        )
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert "Invalid field path" in payload["detail"]

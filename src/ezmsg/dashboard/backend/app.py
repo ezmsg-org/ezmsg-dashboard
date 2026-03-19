@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
+from .services.graph_context_service import GraphServiceUnavailableError, SettingsPatchError
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -24,6 +27,12 @@ def get_graph_service(request: Request) -> GraphServiceProtocol:
 
 
 GraphServiceDependency = Annotated[GraphServiceProtocol, Depends(get_graph_service)]
+
+
+class SettingsFieldPatchRequest(BaseModel):
+    field_path: str = Field(min_length=1)
+    value: Any
+    timeout: float = Field(default=2.0, gt=0.0)
 
 
 def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
@@ -49,7 +58,7 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
     async def api_snapshot(graph_service: GraphServiceDependency) -> JSONResponse:
         try:
             payload = await graph_service.snapshot_payload()
-        except RuntimeError as exc:
+        except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
@@ -57,8 +66,27 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
     async def api_settings(graph_service: GraphServiceDependency) -> JSONResponse:
         try:
             payload = await graph_service.settings_payload()
-        except RuntimeError as exc:
+        except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+
+    @app.post("/api/settings/{component_address:path}/field")
+    async def api_patch_setting_field(
+        component_address: str,
+        body: SettingsFieldPatchRequest,
+        graph_service: GraphServiceDependency,
+    ) -> JSONResponse:
+        try:
+            payload = await graph_service.update_setting_field(
+                component_address=component_address,
+                field_path=body.field_path,
+                value=body.value,
+                timeout=body.timeout,
+            )
+        except GraphServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (SettingsPatchError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.websocket("/ws/events")

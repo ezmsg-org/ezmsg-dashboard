@@ -21,10 +21,19 @@ from .adapters import (
     adapt_graph_snapshot,
     adapt_profiling_snapshot,
     adapt_profiling_trace_batch,
+    adapt_settings_value,
     adapt_settings_event,
     adapt_settings_snapshot,
     adapt_topology_event,
 )
+
+
+class GraphServiceUnavailableError(RuntimeError):
+    """Raised when GraphContext lifecycle service is not currently active."""
+
+
+class SettingsPatchError(RuntimeError):
+    """Raised when a settings patch request fails in GraphContext."""
 
 
 class GraphServiceProtocol(Protocol):
@@ -37,6 +46,15 @@ class GraphServiceProtocol(Protocol):
     async def snapshot_payload(self) -> dict[str, Any]: ...
 
     async def settings_payload(self) -> dict[str, Any]: ...
+
+    async def update_setting_field(
+        self,
+        *,
+        component_address: str,
+        field_path: str,
+        value: Any,
+        timeout: float,
+    ) -> dict[str, Any]: ...
 
     async def event_envelopes(
         self,
@@ -92,7 +110,7 @@ class GraphContextLifecycleService:
 
     def _require_context(self) -> GraphContext:
         if self._context is None:
-            raise RuntimeError("GraphContext is not active.")
+            raise GraphServiceUnavailableError("GraphContext is not active.")
         return self._context
 
     async def health_payload(self) -> dict[str, Any]:
@@ -120,6 +138,31 @@ class GraphContextLifecycleService:
         context = self._require_context()
         settings_snapshot = await context.settings_snapshot()
         return {"settings": adapt_settings_snapshot(settings_snapshot)}
+
+    async def update_setting_field(
+        self,
+        *,
+        component_address: str,
+        field_path: str,
+        value: Any,
+        timeout: float = 2.0,
+    ) -> dict[str, Any]:
+        context = self._require_context()
+        try:
+            updated_value = await context.update_setting(
+                component_address=component_address,
+                field_path=field_path,
+                value=value,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            raise SettingsPatchError(str(exc)) from exc
+
+        return {
+            "component_address": component_address,
+            "field_path": field_path,
+            "updated_value": adapt_settings_value(updated_value),
+        }
 
     async def event_envelopes(
         self,
