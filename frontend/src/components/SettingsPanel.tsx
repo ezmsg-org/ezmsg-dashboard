@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { Panel } from "./Panel";
 import type {
+  SettingsSchemaField,
   SettingsFieldPatchResponse,
   SettingsSnapshotPayload,
 } from "../types/api";
@@ -20,13 +21,62 @@ export function SettingsPanel({
   settings,
   patchSettingField,
 }: SettingsPanelProps) {
+  type EditorMode = "boolean" | "number" | "choice" | "text" | "json";
+
+  const inferEditorMode = (field: SettingsSchemaField): EditorMode => {
+    const fieldType = field.field_type.toLowerCase();
+    if (Array.isArray(field.choices) && field.choices.length > 0) {
+      return "choice";
+    }
+    if (fieldType.includes("bool")) {
+      return "boolean";
+    }
+    if (
+      fieldType.includes("int")
+      || fieldType.includes("float")
+      || fieldType.includes("double")
+      || fieldType.includes("number")
+    ) {
+      return "number";
+    }
+    if (fieldType.includes("str") || fieldType.includes("string")) {
+      return "text";
+    }
+    return "json";
+  };
+
+  const readPathValue = (value: unknown, path: string): unknown => {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    const keys = path.split(".").filter((part) => part.length > 0);
+    let current: unknown = value;
+    for (const key of keys) {
+      if (!current || typeof current !== "object" || !(key in current)) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[key];
+    }
+    return current;
+  };
+
+  const toDisplayJson = (value: unknown): string => {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  };
+
   const componentAddresses = useMemo(
     () => (settings ? Object.keys(settings).sort() : []),
     [settings]
   );
   const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
-  const [patchFieldPath, setPatchFieldPath] = useState("");
-  const [patchValueText, setPatchValueText] = useState("{}");
+  const [selectedFieldPath, setSelectedFieldPath] = useState("");
+  const [editorMode, setEditorMode] = useState<EditorMode>("json");
+  const [patchTextValue, setPatchTextValue] = useState("{}");
+  const [patchBoolValue, setPatchBoolValue] = useState(false);
   const [patchTimeout, setPatchTimeout] = useState("2.0");
   const [patchPending, setPatchPending] = useState(false);
   const [patchError, setPatchError] = useState<string | null>(null);
@@ -41,24 +91,84 @@ export function SettingsPanel({
 
   const selectedValue = selectedComponent ? settings?.[selectedComponent] : null;
   const previewValue = selectedValue?.structured_value ?? selectedValue?.repr_value;
+  const schemaFields = selectedValue?.settings_schema?.fields ?? [];
+  const selectedField =
+    schemaFields.find((field) => field.name === selectedFieldPath) ?? null;
+  const patchable = Boolean(selectedValue?.patchable);
+  const patchDisabledReason = selectedValue?.patch_error ?? null;
+
+  useEffect(() => {
+    if (schemaFields.length === 0) {
+      setSelectedFieldPath("");
+      return;
+    }
+    const exists = schemaFields.some((field) => field.name === selectedFieldPath);
+    if (!exists) {
+      setSelectedFieldPath(schemaFields[0].name);
+    }
+  }, [schemaFields, selectedFieldPath]);
 
   useEffect(() => {
     if (!previewValue) {
-      setPatchValueText("{}");
+      setPatchTextValue("{}");
+    } else {
+      setPatchTextValue(JSON.stringify(previewValue, null, 2));
+    }
+  }, [selectedComponent, previewValue]);
+
+  useEffect(() => {
+    if (!selectedField) {
       return;
     }
-    setPatchValueText(JSON.stringify(previewValue, null, 2));
-  }, [selectedComponent, previewValue]);
+
+    const mode = inferEditorMode(selectedField);
+    setEditorMode(mode);
+    const sourceValue = previewValue ?? {};
+    const currentValue = readPathValue(sourceValue, selectedField.name);
+    const initialValue = currentValue ?? selectedField.default ?? null;
+
+    if (mode === "boolean") {
+      setPatchBoolValue(Boolean(initialValue));
+      return;
+    }
+
+    if (mode === "choice") {
+      const choices = selectedField.choices ?? [];
+      const index = Math.max(
+        0,
+        choices.findIndex((choice) => JSON.stringify(choice) === JSON.stringify(initialValue))
+      );
+      setPatchTextValue(String(index));
+      return;
+    }
+
+    if (mode === "number") {
+      setPatchTextValue(
+        typeof initialValue === "number" ? String(initialValue) : ""
+      );
+      return;
+    }
+
+    if (mode === "text") {
+      setPatchTextValue(typeof initialValue === "string" ? initialValue : "");
+      return;
+    }
+
+    setPatchTextValue(toDisplayJson(initialValue));
+  }, [selectedComponent, selectedFieldPath, selectedField, previewValue]);
 
   const onSubmitPatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedComponent) {
       return;
     }
-
-    const normalizedPath = patchFieldPath.trim();
-    if (normalizedPath.length === 0) {
-      setPatchError("Field path is required.");
+    if (!patchable) {
+      setPatchError(patchDisabledReason ?? "This component is read-only.");
+      setPatchSuccess(null);
+      return;
+    }
+    if (!selectedField) {
+      setPatchError("No schema field is selected.");
       setPatchSuccess(null);
       return;
     }
@@ -70,13 +180,37 @@ export function SettingsPanel({
       return;
     }
 
-    let parsedValue: unknown;
-    try {
-      parsedValue = JSON.parse(patchValueText);
-    } catch {
-      setPatchError("Value must be valid JSON.");
-      setPatchSuccess(null);
-      return;
+    let parsedValue: unknown = null;
+    if (editorMode === "boolean") {
+      parsedValue = patchBoolValue;
+    } else if (editorMode === "choice") {
+      const index = Number.parseInt(patchTextValue, 10);
+      const choices = selectedField.choices ?? [];
+      if (!Number.isInteger(index) || index < 0 || index >= choices.length) {
+        setPatchError("A valid choice must be selected.");
+        setPatchSuccess(null);
+        return;
+      }
+      parsedValue = choices[index];
+    } else if (editorMode === "number") {
+      const numeric = Number.parseFloat(patchTextValue);
+      if (!Number.isFinite(numeric)) {
+        setPatchError("Value must be a valid number.");
+        setPatchSuccess(null);
+        return;
+      }
+      const isIntType = selectedField.field_type.toLowerCase().includes("int");
+      parsedValue = isIntType ? Math.trunc(numeric) : numeric;
+    } else if (editorMode === "text") {
+      parsedValue = patchTextValue;
+    } else {
+      try {
+        parsedValue = JSON.parse(patchTextValue);
+      } catch {
+        setPatchError("Value must be valid JSON.");
+        setPatchSuccess(null);
+        return;
+      }
     }
 
     setPatchPending(true);
@@ -85,7 +219,7 @@ export function SettingsPanel({
     try {
       const response = await patchSettingField(
         selectedComponent,
-        normalizedPath,
+        selectedField.name,
         parsedValue,
         timeout
       );
@@ -112,12 +246,16 @@ export function SettingsPanel({
           <strong>{componentAddresses.length}</strong>
         </article>
         <article className="stat-card">
-          <span>Selected</span>
+          <span>Selected Component</span>
           <strong>
             {selectedComponent
               ? selectedComponent.split(".").slice(-1)[0]
               : "-"}
           </strong>
+        </article>
+        <article className="stat-card">
+          <span>Patch Access</span>
+          <strong>{patchable ? "Writable" : "Read-Only"}</strong>
         </article>
       </div>
 
@@ -152,29 +290,110 @@ export function SettingsPanel({
 
       <div className="panel-section">
         <h3>Patch Field</h3>
+        {!patchable ? (
+          <p className="muted">
+            {patchDisabledReason ?? "This component does not support dynamic settings patches."}
+          </p>
+        ) : null}
+        {patchable && schemaFields.length === 0 ? (
+          <p className="muted">
+            Settings schema metadata is unavailable; field-level patch widgets cannot be generated.
+          </p>
+        ) : null}
         <form className="patch-form" onSubmit={onSubmitPatch}>
           <label>
-            <span>Field path</span>
-            <input
-              type="text"
-              value={patchFieldPath}
-              onChange={(event) => setPatchFieldPath(event.target.value)}
-              placeholder="enabled or nested.path.value"
-              disabled={!selectedComponent || patchPending}
-            />
+            <span>Field</span>
+            <select
+              value={selectedFieldPath}
+              onChange={(event) => setSelectedFieldPath(event.target.value)}
+              disabled={!selectedComponent || !patchable || schemaFields.length === 0 || patchPending}
+            >
+              {schemaFields.map((field) => (
+                <option key={field.name} value={field.name}>
+                  {field.name}
+                </option>
+              ))}
+            </select>
           </label>
 
-          <label>
-            <span>Value (JSON)</span>
-            <textarea
-              value={patchValueText}
-              onChange={(event) => setPatchValueText(event.target.value)}
-              rows={7}
-              spellCheck={false}
-              className="mono"
-              disabled={!selectedComponent || patchPending}
-            />
-          </label>
+          {selectedField ? (
+            <p className="muted">
+              {selectedField.description ?? "No field description available."}
+              {selectedField.bounds
+                ? ` Bounds: [${selectedField.bounds[0] ?? "-inf"}, ${selectedField.bounds[1] ?? "+inf"}]`
+                : ""}
+            </p>
+          ) : null}
+
+          {editorMode === "boolean" ? (
+            <label className="patch-checkbox">
+              <input
+                type="checkbox"
+                checked={patchBoolValue}
+                onChange={(event) => setPatchBoolValue(event.target.checked)}
+                disabled={!selectedComponent || !patchable || patchPending}
+              />
+              <span>Enabled</span>
+            </label>
+          ) : null}
+
+          {editorMode === "choice" ? (
+            <label>
+              <span>Value</span>
+              <select
+                value={patchTextValue}
+                onChange={(event) => setPatchTextValue(event.target.value)}
+                disabled={!selectedComponent || !patchable || patchPending}
+              >
+                {(selectedField?.choices ?? []).map((choice, index) => (
+                  <option key={`${selectedField?.name}-${index}`} value={String(index)}>
+                    {toDisplayJson(choice)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {editorMode === "number" ? (
+            <label>
+              <span>Value</span>
+              <input
+                type="number"
+                value={patchTextValue}
+                min={selectedField?.bounds?.[0] ?? undefined}
+                max={selectedField?.bounds?.[1] ?? undefined}
+                step="any"
+                onChange={(event) => setPatchTextValue(event.target.value)}
+                disabled={!selectedComponent || !patchable || patchPending}
+              />
+            </label>
+          ) : null}
+
+          {editorMode === "text" ? (
+            <label>
+              <span>Value</span>
+              <input
+                type="text"
+                value={patchTextValue}
+                onChange={(event) => setPatchTextValue(event.target.value)}
+                disabled={!selectedComponent || !patchable || patchPending}
+              />
+            </label>
+          ) : null}
+
+          {editorMode === "json" ? (
+            <label>
+              <span>Value (JSON)</span>
+              <textarea
+                value={patchTextValue}
+                onChange={(event) => setPatchTextValue(event.target.value)}
+                rows={7}
+                spellCheck={false}
+                className="mono"
+                disabled={!selectedComponent || !patchable || patchPending}
+              />
+            </label>
+          ) : null}
 
           <label>
             <span>Timeout seconds</span>
@@ -182,12 +401,21 @@ export function SettingsPanel({
               type="text"
               value={patchTimeout}
               onChange={(event) => setPatchTimeout(event.target.value)}
-              disabled={!selectedComponent || patchPending}
+              disabled={!selectedComponent || !patchable || patchPending}
             />
           </label>
 
           <div className="patch-form__actions">
-            <button type="submit" disabled={!selectedComponent || patchPending}>
+            <button
+              type="submit"
+              disabled={
+                !selectedComponent
+                || !patchable
+                || !selectedField
+                || schemaFields.length === 0
+                || patchPending
+              }
+            >
               {patchPending ? "Applying..." : "Apply Patch"}
             </button>
             {patchSuccess ? (

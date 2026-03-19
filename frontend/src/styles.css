@@ -320,7 +320,8 @@ body {
 }
 
 .patch-form input,
-.patch-form textarea {
+.patch-form textarea,
+.patch-form select {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   padding: 0.45rem 0.55rem;
@@ -329,8 +330,16 @@ body {
 }
 
 .patch-form input:disabled,
-.patch-form textarea:disabled {
+.patch-form textarea:disabled,
+.patch-form select:disabled {
   background: #f1f5f9;
+}
+
+.patch-checkbox {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem !important;
 }
 
 .patch-form__actions {

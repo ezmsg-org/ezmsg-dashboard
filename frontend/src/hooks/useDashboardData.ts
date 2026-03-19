@@ -192,9 +192,15 @@ export function useDashboardData() {
               return previous;
             }
             const typed = envelope as SettingsChangedEnvelope;
+            const existingValue =
+              previous.settings[typed.data.component_address] ?? null;
             const nextSettings: Record<string, SettingsValuePayload> = {
               ...previous.settings,
-              [typed.data.component_address]: typed.data.value,
+              [typed.data.component_address]: {
+                ...typed.data.value,
+                patchable: existingValue?.patchable ?? false,
+                patch_error: existingValue?.patch_error ?? null,
+              },
             };
             return { ...previous, settings: nextSettings };
           });
@@ -281,11 +287,16 @@ export function useDashboardData() {
         if (!previous) {
           return previous;
         }
+        const existingValue = previous.settings[payload.component_address] ?? null;
         return {
           ...previous,
           settings: {
             ...previous.settings,
-            [payload.component_address]: payload.updated_value,
+            [payload.component_address]: {
+              ...payload.updated_value,
+              patchable: existingValue?.patchable ?? true,
+              patch_error: existingValue?.patch_error ?? null,
+            },
           },
         };
       });

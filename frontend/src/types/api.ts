@@ -1,8 +1,27 @@
+export type SettingsSchemaField = {
+  name: string;
+  field_type: string;
+  required: boolean;
+  default: unknown;
+  description: string | null;
+  bounds: [number | null, number | null] | null;
+  choices: unknown[] | null;
+  widget_hint: string | null;
+};
+
+export type SettingsSchemaPayload = {
+  provider: string;
+  settings_type: string;
+  fields: SettingsSchemaField[];
+};
+
 export type SettingsValuePayload = {
   repr_value: Record<string, unknown> | string;
   structured_value: Record<string, unknown> | null;
-  settings_schema: Record<string, unknown> | null;
+  settings_schema: SettingsSchemaPayload | null;
   serialized_present: boolean;
+  patchable?: boolean;
+  patch_error?: string | null;
 };
 
 export type SettingsSnapshotPayload = Record<string, SettingsValuePayload>;
