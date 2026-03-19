@@ -12,6 +12,7 @@ dependencies = [
   "ezmsg>=3.8.0",
   "fastapi>=0.116.0",
   "numpy>=1.26.0",
+  "uvicorn[standard]>=0.42.0",
 ]
 
 [dependency-groups]
