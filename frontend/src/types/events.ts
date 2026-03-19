@@ -1,3 +1,5 @@
+import type { SettingsValuePayload } from "./api";
+
 export type TopologyChangedEnvelope = {
   kind: "topology.changed";
   data: {
@@ -8,13 +10,6 @@ export type TopologyChangedEnvelope = {
     source_session_id: string | null;
     source_process_id: string | null;
   };
-};
-
-export type SettingsValuePayload = {
-  repr_value: Record<string, unknown> | string;
-  structured_value: Record<string, unknown> | null;
-  settings_schema: Record<string, unknown> | null;
-  serialized_present: boolean;
 };
 
 export type SettingsChangedEnvelope = {
