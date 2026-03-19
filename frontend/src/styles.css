@@ -305,6 +305,69 @@ body {
   line-height: 1.45;
 }
 
+.patch-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.patch-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.patch-form input,
+.patch-form textarea {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+  background: #ffffff;
+}
+
+.patch-form input:disabled,
+.patch-form textarea:disabled {
+  background: #f1f5f9;
+}
+
+.patch-form__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.patch-form__actions button {
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+}
+
+.patch-form__actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.patch-status {
+  font-size: 0.8rem;
+}
+
+.patch-status.ok {
+  color: #065f46;
+}
+
+.patch-status.err {
+  color: #b91c1c;
+}
+
 @media (min-width: 900px) {
   .panel:nth-of-type(1) {
     grid-column: span 7;

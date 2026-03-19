@@ -16,6 +16,7 @@ export function App() {
     lastSnapshotUpdateMs,
     topologyEvents,
     refreshSnapshot,
+    patchSettingField,
   } = useDashboardData();
   const snapshotUpdatedAt = lastSnapshotUpdateMs
     ? new Date(lastSnapshotUpdateMs).toLocaleTimeString()
@@ -55,7 +56,10 @@ export function App() {
           profilingSnapshot={snapshot?.profiling ?? null}
           latestTraceEvent={latestTraceEvent}
         />
-        <SettingsPanel settings={snapshot?.settings ?? null} />
+        <SettingsPanel
+          settings={snapshot?.settings ?? null}
+          patchSettingField={patchSettingField}
+        />
       </main>
     </div>
   );

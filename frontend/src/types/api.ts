@@ -76,3 +76,15 @@ export type HealthResponse = {
   graph_session_active: boolean;
   graph_address: string | null;
 };
+
+export type SettingsFieldPatchRequest = {
+  field_path: string;
+  value: unknown;
+  timeout?: number;
+};
+
+export type SettingsFieldPatchResponse = {
+  component_address: string;
+  field_path: string;
+  updated_value: SettingsValuePayload;
+};

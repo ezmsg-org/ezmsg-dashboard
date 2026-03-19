@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   DashboardSnapshotResponse,
   HealthResponse,
+  SettingsFieldPatchResponse,
   SettingsValuePayload,
 } from "../types/api";
 import type {
@@ -46,6 +47,34 @@ async function fetchJsonNoStore<T>(path: string): Promise<T> {
   });
   if (!response.ok) {
     throw new Error(`${path} failed (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+async function postJsonNoStore<T>(path: string, body: unknown): Promise<T> {
+  const separator = path.includes("?") ? "&" : "?";
+  const url = `${path}${separator}_ts=${Date.now()}`;
+  const response = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = `${path} failed (${response.status})`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (typeof payload.detail === "string" && payload.detail.length > 0) {
+        detail = payload.detail;
+      }
+    } catch {
+      // keep the default message
+    }
+    throw new Error(detail);
   }
   return (await response.json()) as T;
 }
@@ -232,6 +261,40 @@ export function useDashboardData() {
     }
   }, [refreshSnapshot]);
 
+  const patchSettingField = useCallback(
+    async (
+      componentAddress: string,
+      fieldPath: string,
+      value: unknown,
+      timeout = 2.0
+    ) => {
+      const encodedAddress = encodeURIComponent(componentAddress);
+      const payload = await postJsonNoStore<SettingsFieldPatchResponse>(
+        `/api/settings/${encodedAddress}/field`,
+        {
+          field_path: fieldPath,
+          value,
+          timeout,
+        }
+      );
+      setSnapshot((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return {
+          ...previous,
+          settings: {
+            ...previous.settings,
+            [payload.component_address]: payload.updated_value,
+          },
+        };
+      });
+      setLastSnapshotUpdateMs(Date.now());
+      return payload;
+    },
+    []
+  );
+
   return {
     health,
     snapshot,
@@ -242,5 +305,6 @@ export function useDashboardData() {
     error,
     lastSnapshotUpdateMs,
     refreshSnapshot: reloadSnapshot,
+    patchSettingField,
   };
 }
