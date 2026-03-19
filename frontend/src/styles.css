@@ -435,10 +435,6 @@ body {
   font-size: 0.92rem;
 }
 
-.profiling-note {
-  font-size: 0.78rem;
-}
-
 .publisher-detail-line {
   display: flex;
   justify-content: space-between;

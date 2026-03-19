@@ -41,7 +41,6 @@ type PublisherRow = {
   publishDeltaNsAvgWindow: number;
   inflightCurrent: number;
   inflightDisplayTotal: number;
-  inflightUsesNumBuffers: boolean;
   backpressureNsWindow: number;
   severity: Severity;
   contributors: SubscriberContributor[];
@@ -282,7 +281,6 @@ function toPublisherRow(
     publishDeltaNsAvgWindow: toNumber(publisher.publish_delta_ns_avg_window),
     inflightCurrent: toNumber(publisher.inflight_messages_current),
     inflightDisplayTotal: numBuffers ?? inflightPeakWindow,
-    inflightUsesNumBuffers: numBuffers !== null,
     backpressureNsWindow,
     severity,
     contributors: contributorListForPublisher(publisher.topic, allSubscribers),
@@ -502,12 +500,6 @@ export function ProfilingPanel({
                         <strong>{row.host}</strong>
                       </article>
                     </div>
-                    {row.inflightUsesNumBuffers ? null : (
-                      <p className="muted profiling-note">
-                        Inflight denominator is window peak (no `num_buffers` published for this
-                        endpoint).
-                      </p>
-                    )}
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
