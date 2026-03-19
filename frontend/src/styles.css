@@ -435,6 +435,73 @@ body {
   font-size: 0.92rem;
 }
 
+.publisher-detail-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.publisher-endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 220px;
+  flex: 1;
+}
+
+.publisher-endpoint span {
+  color: #64748b;
+  font-size: 0.74rem;
+}
+
+.publisher-endpoint code {
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trace-btn {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.4rem 0.65rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.trace-btn.is-active {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.topic-details {
+  display: block;
+}
+
+.topic-summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.topic-summary::-webkit-details-marker {
+  display: none;
+}
+
+.topic-full {
+  margin-top: 0.25rem;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);

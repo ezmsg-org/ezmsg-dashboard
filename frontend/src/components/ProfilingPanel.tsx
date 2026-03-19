@@ -19,6 +19,7 @@ type Severity = "none" | "low" | "medium" | "high";
 type SubscriberContributor = {
   id: string;
   endpointId: string;
+  endpointToken: string;
   topic: string;
   processId: string;
   pid: number;
@@ -71,6 +72,13 @@ function shortEndpointToken(endpointId: string): string {
   return endpointId.slice(0, 8);
 }
 
+function shortTopic(topic: string, max = 48): string {
+  if (topic.length <= max) {
+    return topic;
+  }
+  return `${topic.slice(0, max - 1)}…`;
+}
+
 function backpressureSeverity(backpressureNsWindow: number): Severity {
   if (backpressureNsWindow <= 0) {
     return "none";
@@ -91,6 +99,7 @@ function toContributor(
   return {
     id: `${process.process_id}:${subscriber.endpoint_id}`,
     endpointId: subscriber.endpoint_id,
+    endpointToken: shortEndpointToken(subscriber.endpoint_id),
     topic: subscriber.topic,
     processId: process.process_id,
     pid: process.pid,
@@ -159,6 +168,7 @@ export function ProfilingPanel({
   const [searchText, setSearchText] = useState("");
   const [pressuredOnly, setPressuredOnly] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [traceTargetId, setTraceTargetId] = useState<string | null>(null);
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
@@ -301,12 +311,6 @@ export function ProfilingPanel({
                         <strong>{row.host}</strong>
                       </article>
                       <article className="mini-kpi">
-                        <span>Endpoint</span>
-                        <strong className="mono" title={row.endpointId}>
-                          {row.endpointId}
-                        </strong>
-                      </article>
-                      <article className="mini-kpi">
                         <span>Trace Batches</span>
                         <strong>
                           {latestTraceEvent
@@ -314,6 +318,25 @@ export function ProfilingPanel({
                             : 0}
                         </strong>
                       </article>
+                    </div>
+                    <div className="publisher-detail-line">
+                      <div className="publisher-endpoint">
+                        <span>Endpoint</span>
+                        <code className="mono" title={row.endpointId}>
+                          {row.endpointId}
+                        </code>
+                      </div>
+                      <button
+                        type="button"
+                        className={`trace-btn ${
+                          traceTargetId === row.id ? "is-active" : ""
+                        }`}
+                        onClick={() => setTraceTargetId(row.id)}
+                      >
+                        {traceTargetId === row.id
+                          ? "Realtime Trace Targeted"
+                          : "Realtime Trace"}
+                      </button>
                     </div>
 
                     <div className="panel-section">
@@ -327,6 +350,7 @@ export function ProfilingPanel({
                           <thead>
                             <tr>
                               <th>Subscriber Endpoint</th>
+                              <th>Topic</th>
                               <th>Process</th>
                               <th>Attr. Backpressure</th>
                               <th>Backpressure Events</th>
@@ -337,7 +361,22 @@ export function ProfilingPanel({
                           <tbody>
                             {row.contributors.map((contributor) => (
                               <tr key={contributor.id}>
-                                <td className="mono">{contributor.endpointId}</td>
+                                <td className="mono" title={contributor.endpointId}>
+                                  {contributor.endpointToken}
+                                </td>
+                                <td>
+                                  <details className="topic-details">
+                                    <summary
+                                      className="mono topic-summary"
+                                      title={contributor.topic}
+                                    >
+                                      {shortTopic(contributor.topic)}
+                                    </summary>
+                                    <div className="mono topic-full">
+                                      {contributor.topic}
+                                    </div>
+                                  </details>
+                                </td>
                                 <td className="mono">
                                   {contributor.processId.slice(0, 8)} (pid {contributor.pid})
                                 </td>
