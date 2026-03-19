@@ -12,7 +12,9 @@ class FakeGraphService:
         self.started = False
         self.stopped = False
         self.raise_patch_error = False
+        self.raise_trace_control_error = False
         self.last_patch_request: dict[str, object] | None = None
+        self.last_trace_control_request: dict[str, object] | None = None
 
     async def startup(self) -> None:
         self.started = True
@@ -77,6 +79,48 @@ class FakeGraphService:
                 "structured_value": {"enabled": value},
                 "settings_schema": None,
                 "serialized_present": True,
+            },
+        }
+
+    async def set_profiling_trace_control(
+        self,
+        *,
+        process_id: str,
+        enabled: bool,
+        publisher_endpoint_id: str | None,
+        publisher_topic: str | None,
+        subscriber_topic: str | None,
+        metrics: list[str] | None,
+        sample_mod: int,
+        ttl_seconds: float | None,
+        timeout: float,
+    ) -> dict[str, object]:
+        self.last_trace_control_request = {
+            "process_id": process_id,
+            "enabled": enabled,
+            "publisher_endpoint_id": publisher_endpoint_id,
+            "publisher_topic": publisher_topic,
+            "subscriber_topic": subscriber_topic,
+            "metrics": metrics,
+            "sample_mod": sample_mod,
+            "ttl_seconds": ttl_seconds,
+            "timeout": timeout,
+        }
+        if self.raise_trace_control_error:
+            raise RuntimeError("Process trace control rejected.")
+        return {
+            "process_id": process_id,
+            "unit_address": "SYS/U_TRACE",
+            "enabled": enabled,
+            "control": {
+                "publisher_endpoint_ids": [publisher_endpoint_id]
+                if publisher_endpoint_id
+                else [],
+                "publisher_topics": [publisher_topic] if publisher_topic else [],
+                "subscriber_topics": [subscriber_topic] if subscriber_topic else [],
+                "metrics": metrics or [],
+                "sample_mod": sample_mod,
+                "ttl_seconds": ttl_seconds,
             },
         }
 
@@ -206,3 +250,58 @@ def test_patch_settings_route_invalid_field_path() -> None:
     assert response.status_code == 422
     payload = response.json()
     assert "Invalid field path" in payload["detail"]
+
+
+def test_profiling_trace_control_route_success() -> None:
+    fake_service = FakeGraphService()
+    app = create_app(fake_service)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/profiling/trace-control",
+            json={
+                "process_id": "3b0ddec4-0000-0000-0000-000000000000",
+                "enabled": True,
+                "publisher_endpoint_id": "TOPIC:pub",
+                "publisher_topic": "TOPIC",
+                "subscriber_topic": "TOPIC",
+                "metrics": ["publish_delta_ns", "lease_time_ns"],
+                "sample_mod": 1,
+                "ttl_seconds": 15.0,
+                "timeout": 1.0,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["process_id"] == "3b0ddec4-0000-0000-0000-000000000000"
+    assert payload["enabled"] is True
+    assert response.headers["cache-control"].startswith("no-store")
+    assert fake_service.last_trace_control_request == {
+        "process_id": "3b0ddec4-0000-0000-0000-000000000000",
+        "enabled": True,
+        "publisher_endpoint_id": "TOPIC:pub",
+        "publisher_topic": "TOPIC",
+        "subscriber_topic": "TOPIC",
+        "metrics": ["publish_delta_ns", "lease_time_ns"],
+        "sample_mod": 1,
+        "ttl_seconds": 15.0,
+        "timeout": 1.0,
+    }
+
+
+def test_profiling_trace_control_route_error() -> None:
+    fake_service = FakeGraphService()
+    fake_service.raise_trace_control_error = True
+    app = create_app(fake_service)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/profiling/trace-control",
+            json={
+                "process_id": "3b0ddec4-0000-0000-0000-000000000000",
+                "enabled": True,
+            },
+        )
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert "trace control" in payload["detail"].lower()

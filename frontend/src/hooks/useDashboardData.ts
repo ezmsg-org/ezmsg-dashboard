@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   DashboardSnapshotResponse,
   HealthResponse,
+  ProfilingTraceControlRequest,
+  ProfilingTraceControlResponse,
   SettingsFieldPatchResponse,
   SettingsValuePayload,
 } from "../types/api";
@@ -310,6 +312,16 @@ export function useDashboardData() {
     []
   );
 
+  const setProfilingTraceControl = useCallback(
+    async (request: ProfilingTraceControlRequest) => {
+      return await postJsonNoStore<ProfilingTraceControlResponse>(
+        "/api/profiling/trace-control",
+        request
+      );
+    },
+    []
+  );
+
   return {
     health,
     snapshot,
@@ -321,5 +333,6 @@ export function useDashboardData() {
     lastSnapshotUpdateMs,
     refreshSnapshot: reloadSnapshot,
     patchSettingField,
+    setProfilingTraceControl,
   };
 }

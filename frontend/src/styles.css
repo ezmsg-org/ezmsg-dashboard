@@ -505,6 +505,42 @@ body {
   padding: 0.5rem 0.55rem;
 }
 
+.timing-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.timing-trace__canvas {
+  width: 100%;
+  height: 220px;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+  background: #0f172a;
+}
+
+.timing-trace__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+.timing-trace__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: #475569;
+}
+
+.timing-trace__legend-item i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
 .trace-inline__meta {
   margin: 0 0 0.45rem;
   color: #475569;

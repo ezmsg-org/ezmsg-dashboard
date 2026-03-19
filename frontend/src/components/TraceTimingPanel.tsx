@@ -1,0 +1,268 @@
+import { useEffect, useMemo, useRef } from "react";
+
+export type TimingTraceSample = {
+  timestamp: number;
+  processId: string;
+  endpointId: string;
+  topic: string;
+  metric: string;
+  value: number;
+  sampleSeq: number | null;
+};
+
+type TraceTimingPanelProps = {
+  samples: TimingTraceSample[];
+  publisherProcessId: string;
+  publisherEndpointId: string;
+  topic: string;
+  windowSeconds?: number;
+};
+
+const LEASE_COLORS = [
+  "#7dd3fc",
+  "#a78bfa",
+  "#fca5a5",
+  "#86efac",
+  "#f9a8d4",
+  "#fdba74",
+];
+
+function shortEndpoint(endpointId: string): string {
+  const parts = endpointId.split(":");
+  const token = parts.length > 1 ? parts[parts.length - 1] : endpointId;
+  return token.slice(0, 8);
+}
+
+function toMs(valueNs: number): number {
+  return valueNs / 1_000_000;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+export function TraceTimingPanel({
+  samples,
+  publisherProcessId,
+  publisherEndpointId,
+  topic,
+  windowSeconds = 2.0,
+}: TraceTimingPanelProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const originRef = useRef<number | null>(null);
+
+  const filtered = useMemo(
+    () =>
+      samples.filter(
+        (sample) =>
+          sample.topic === topic
+          && Number.isFinite(sample.timestamp)
+          && Number.isFinite(sample.value)
+      ),
+    [samples, topic]
+  );
+
+  const subscriberLegend = useMemo(() => {
+    const endpoints = [
+      ...new Set(
+        filtered
+          .filter(
+            (sample) =>
+              sample.metric === "lease_time_ns"
+              && sample.endpointId !== publisherEndpointId
+          )
+          .map((sample) => sample.endpointId)
+      ),
+    ];
+    return endpoints.slice(0, 6).map((endpointId, index) => ({
+      endpointId,
+      color: LEASE_COLORS[index % LEASE_COLORS.length],
+    }));
+  }, [filtered, publisherEndpointId]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const width = Math.max(440, Math.floor(canvas.clientWidth));
+    const height = 220;
+    canvas.width = Math.floor(width * devicePixelRatio);
+    canvas.height = Math.floor(height * devicePixelRatio);
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+    context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    context.clearRect(0, 0, width, height);
+
+    const left = 52;
+    const right = 16;
+    const top = 12;
+    const bottom = 24;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    const pubTop = top;
+    const pubBottom = top + plotHeight * 0.52;
+    const leaseTop = pubBottom + 8;
+    const leaseBottom = leaseTop + plotHeight * 0.2;
+    const attrTop = leaseBottom + 8;
+    const attrBottom = top + plotHeight;
+
+    context.fillStyle = "#0f172a";
+    context.fillRect(0, 0, width, height);
+
+    const windowNs = Math.max(1, windowSeconds * 1_000_000_000);
+    const latestTimestamp = filtered.reduce(
+      (latest, sample) => Math.max(latest, sample.timestamp),
+      0
+    );
+    if (!Number.isFinite(latestTimestamp) || latestTimestamp <= 0) {
+      context.fillStyle = "#94a3b8";
+      context.font = '12px "Avenir Next", sans-serif';
+      context.fillText("Waiting for trace samples...", left, top + 14);
+      return;
+    }
+    if (originRef.current === null || latestTimestamp < originRef.current) {
+      originRef.current = latestTimestamp;
+    }
+    const origin = originRef.current;
+    const minTs = latestTimestamp - windowNs;
+    const recent = filtered.filter((sample) => sample.timestamp >= minTs);
+
+    const xOf = (timestamp: number): number => {
+      const delta = timestamp - origin;
+      const wrapped = ((delta % windowNs) + windowNs) % windowNs;
+      return left + (wrapped / windowNs) * plotWidth;
+    };
+    const yFromMs = (
+      valueMs: number,
+      laneTop: number,
+      laneBottom: number,
+      maxMs: number
+    ): number => {
+      const ratio = clamp(valueMs / Math.max(maxMs, 1e-9), 0, 1);
+      return laneBottom - ratio * (laneBottom - laneTop);
+    };
+
+    context.strokeStyle = "#1e293b";
+    context.lineWidth = 1;
+    const tickCount = Math.max(2, Math.floor(windowSeconds / 0.5));
+    for (let i = 0; i <= tickCount; i += 1) {
+      const x = left + (i / tickCount) * plotWidth;
+      context.beginPath();
+      context.moveTo(x, top);
+      context.lineTo(x, top + plotHeight);
+      context.stroke();
+    }
+
+    const cursorX = xOf(latestTimestamp);
+    context.strokeStyle = "#f59e0b";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(cursorX, top);
+    context.lineTo(cursorX, top + plotHeight);
+    context.stroke();
+
+    const publisherSeries = recent
+      .filter(
+        (sample) =>
+          sample.metric === "publish_delta_ns"
+          && sample.processId === publisherProcessId
+          && sample.endpointId === publisherEndpointId
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+    const leaseSeries = recent.filter((sample) => sample.metric === "lease_time_ns");
+    const attributableSeries = recent.filter(
+      (sample) => sample.metric === "attributable_backpressure_ns"
+    );
+
+    const pubMaxMs = Math.max(
+      0.25,
+      ...publisherSeries.map((sample) => toMs(sample.value))
+    );
+    const leaseMaxMs = Math.max(0.25, ...leaseSeries.map((sample) => toMs(sample.value)));
+    const attrMaxMs = Math.max(
+      0.25,
+      ...attributableSeries.map((sample) => toMs(sample.value))
+    );
+
+    context.strokeStyle = "#38bdf8";
+    context.lineWidth = 1.25;
+    context.beginPath();
+    let started = false;
+    let previousX = 0;
+    for (const sample of publisherSeries) {
+      const x = xOf(sample.timestamp);
+      const y = yFromMs(toMs(sample.value), pubTop + 2, pubBottom - 2, pubMaxMs);
+      if (!started || x < previousX) {
+        if (started) {
+          context.stroke();
+          context.beginPath();
+        }
+        context.moveTo(x, y);
+        started = true;
+      } else {
+        context.lineTo(x, y);
+      }
+      previousX = x;
+    }
+    if (started) {
+      context.stroke();
+    }
+
+    const endpointColorMap = new Map<string, string>(
+      subscriberLegend.map((item) => [item.endpointId, item.color])
+    );
+
+    for (const sample of leaseSeries) {
+      const x = xOf(sample.timestamp);
+      const y = yFromMs(toMs(sample.value), leaseTop + 2, leaseBottom - 2, leaseMaxMs);
+      context.fillStyle = endpointColorMap.get(sample.endpointId) ?? "#93c5fd";
+      context.beginPath();
+      context.arc(x, y, 2.8, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    context.strokeStyle = "#f59e0b";
+    context.lineWidth = 1;
+    for (const sample of attributableSeries) {
+      const x = xOf(sample.timestamp);
+      const y = yFromMs(toMs(sample.value), attrTop + 2, attrBottom - 2, attrMaxMs);
+      context.beginPath();
+      context.moveTo(x, attrBottom - 1);
+      context.lineTo(x, y);
+      context.stroke();
+    }
+
+    context.fillStyle = "#cbd5e1";
+    context.font = '11px "Avenir Next", sans-serif';
+    context.fillText("Publish Delta", 6, pubTop + 12);
+    context.fillText("Lease Delta", 10, leaseTop + 12);
+    context.fillText("Attr BP", 19, attrTop + 12);
+    context.fillText(
+      `${windowSeconds.toFixed(1)}s`,
+      left + plotWidth - 24,
+      top + plotHeight + 16
+    );
+    context.fillText(`${pubMaxMs.toFixed(2)} ms`, 6, pubBottom - 4);
+  }, [filtered, publisherEndpointId, publisherProcessId, subscriberLegend, topic, windowSeconds]);
+
+  return (
+    <div className="timing-trace">
+      <canvas ref={canvasRef} className="timing-trace__canvas" />
+      {subscriberLegend.length > 0 ? (
+        <div className="timing-trace__legend">
+          {subscriberLegend.map((entry) => (
+            <span key={entry.endpointId} className="timing-trace__legend-item">
+              <i style={{ background: entry.color }} />
+              {shortEndpoint(entry.endpointId)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}

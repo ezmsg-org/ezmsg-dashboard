@@ -128,3 +128,22 @@ export type SettingsFieldPatchResponse = {
   field_path: string;
   updated_value: SettingsValuePayload;
 };
+
+export type ProfilingTraceControlRequest = {
+  process_id: string;
+  enabled: boolean;
+  publisher_endpoint_id?: string | null;
+  publisher_topic?: string | null;
+  subscriber_topic?: string | null;
+  metrics?: string[] | null;
+  sample_mod?: number;
+  ttl_seconds?: number | null;
+  timeout?: number;
+};
+
+export type ProfilingTraceControlResponse = {
+  process_id: string;
+  unit_address: string;
+  enabled: boolean;
+  control: Record<string, unknown>;
+};

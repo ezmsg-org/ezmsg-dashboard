@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Panel } from "./Panel";
+import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
 import type {
+  ProfilingTraceControlRequest,
   ProcessProfilingSnapshotPayload,
   ProfilingSnapshotPayload,
   PublisherProfilingSnapshot,
@@ -12,6 +14,9 @@ import type { ProfilingTraceEnvelope } from "../types/events";
 type ProfilingPanelProps = {
   profilingSnapshot: ProfilingSnapshotPayload | null;
   latestTraceEvent: ProfilingTraceEnvelope | null;
+  setProfilingTraceControl: (
+    request: ProfilingTraceControlRequest
+  ) => Promise<unknown>;
 };
 
 type Severity = "none" | "low" | "medium" | "high";
@@ -49,24 +54,23 @@ type PublisherRow = {
 
 type PublisherTraceSample = {
   rowId: string;
+  processId: string;
+  endpointId: string;
   topic: string;
   timestamp: number;
   metric: string;
   value: number;
+  sampleSeq: number | null;
   channelKind: string | null;
 };
 
-type TraceMetricSummary = {
-  metric: string;
-  count: number;
-  latestValue: number;
-  avgValue: number;
-  points: number[];
-  channelKinds: string[];
-};
-
-const TRACE_HISTORY_MAX = 80;
-const TRACE_CHART_POINTS = 24;
+const TRACE_HISTORY_MAX = 800;
+const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
+const TRACE_SUBSCRIBER_METRICS = new Set([
+  "lease_time_ns",
+  "attributable_backpressure_ns",
+  "user_span_ns",
+]);
 
 function toNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -151,6 +155,7 @@ function extractTraceSamples(
       const metric = sample.metric;
       const value = sample.value;
       const timestamp = sample.timestamp;
+      const sampleSeq = sample.sample_seq;
       if (
         typeof endpointId !== "string"
         || typeof topic !== "string"
@@ -162,6 +167,8 @@ function extractTraceSamples(
       }
       out.push({
         rowId: `${processId}:${endpointId}`,
+        processId,
+        endpointId,
         topic,
         timestamp:
           typeof timestamp === "number" && Number.isFinite(timestamp)
@@ -169,59 +176,16 @@ function extractTraceSamples(
             : event.data.timestamp,
         metric,
         value,
+        sampleSeq:
+          typeof sampleSeq === "number" && Number.isFinite(sampleSeq)
+            ? Math.trunc(sampleSeq)
+            : null,
         channelKind:
           typeof sample.channel_kind === "string" ? sample.channel_kind : null,
       });
     }
   }
   return out;
-}
-
-function summarizeTraceMetrics(samples: PublisherTraceSample[]): TraceMetricSummary[] {
-  const byMetric = new Map<string, PublisherTraceSample[]>();
-  for (const sample of samples) {
-    const list = byMetric.get(sample.metric);
-    if (list) {
-      list.push(sample);
-    } else {
-      byMetric.set(sample.metric, [sample]);
-    }
-  }
-
-  const summaries: TraceMetricSummary[] = [];
-  for (const [metric, list] of byMetric.entries()) {
-    if (list.length === 0) {
-      continue;
-    }
-    const sorted = [...list].sort((a, b) => a.timestamp - b.timestamp);
-    const points = sorted.slice(-TRACE_CHART_POINTS).map((sample) => sample.value);
-    const latestValue = sorted[sorted.length - 1]?.value ?? 0;
-    const sum = sorted.reduce((accum, sample) => accum + sample.value, 0);
-    const channelKinds = [...new Set(sorted.map((sample) => sample.channelKind).filter(Boolean))];
-    summaries.push({
-      metric,
-      count: sorted.length,
-      latestValue,
-      avgValue: sum / sorted.length,
-      points,
-      channelKinds: channelKinds as string[],
-    });
-  }
-
-  return summaries.sort((a, b) => b.count - a.count || a.metric.localeCompare(b.metric));
-}
-
-function normalizeSparklineHeights(points: number[]): number[] {
-  if (points.length === 0) {
-    return [];
-  }
-  const maxAbs = points.reduce((maxValue, point) => Math.max(maxValue, Math.abs(point)), 0);
-  if (maxAbs <= 0) {
-    return points.map(() => 12);
-  }
-  return points.map((point) =>
-    Math.max(12, Math.round((Math.abs(point) / maxAbs) * 100))
-  );
 }
 
 function toContributor(
@@ -302,6 +266,7 @@ function toPublisherRow(
 export function ProfilingPanel({
   profilingSnapshot,
   latestTraceEvent,
+  setProfilingTraceControl,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
   const [pressuredOnly, setPressuredOnly] = useState(false);
@@ -309,6 +274,12 @@ export function ProfilingPanel({
   const [activeTraceRowIds, setActiveTraceRowIds] = useState<string[]>([]);
   const [traceSamplesByRowId, setTraceSamplesByRowId] = useState<
     Record<string, PublisherTraceSample[]>
+  >({});
+  const [traceControlPending, setTraceControlPending] = useState<
+    Record<string, boolean>
+  >({});
+  const [traceControlError, setTraceControlError] = useState<
+    Record<string, string | null>
   >({});
 
   const processRows = useMemo(
@@ -360,60 +331,119 @@ export function ProfilingPanel({
     if (!latestTraceEvent || activeTraceRowIds.length === 0) {
       return;
     }
-    const activeIds = new Set(activeTraceRowIds);
     const extracted = extractTraceSamples(latestTraceEvent);
     if (extracted.length === 0) {
       return;
     }
+    const activeIds = new Set(activeTraceRowIds);
+    const activeRows = activeTraceRowIds
+      .map((rowId) => rowById.get(rowId))
+      .filter((row): row is PublisherRow => row !== undefined);
     setTraceSamplesByRowId((previous) => {
       let changed = false;
       const next: Record<string, PublisherTraceSample[]> = { ...previous };
       for (const sample of extracted) {
-        if (!activeIds.has(sample.rowId)) {
-          continue;
+        const matchedRowIds = new Set<string>();
+        const publisherRow = rowById.get(sample.rowId);
+        if (
+          publisherRow
+          && activeIds.has(sample.rowId)
+          && publisherRow.topic === sample.topic
+          && TRACE_PUBLISHER_METRICS.has(sample.metric)
+        ) {
+          matchedRowIds.add(sample.rowId);
         }
-        const row = rowById.get(sample.rowId);
-        if (!row || row.topic !== sample.topic) {
-          continue;
+        if (TRACE_SUBSCRIBER_METRICS.has(sample.metric)) {
+          for (const activeRow of activeRows) {
+            if (activeRow.topic === sample.topic) {
+              matchedRowIds.add(activeRow.id);
+            }
+          }
         }
-        const priorSamples = next[sample.rowId] ?? [];
-        const merged = [...priorSamples, sample];
-        if (merged.length > TRACE_HISTORY_MAX) {
-          merged.splice(0, merged.length - TRACE_HISTORY_MAX);
+        for (const rowId of matchedRowIds) {
+          const priorSamples = next[rowId] ?? [];
+          const merged = [...priorSamples, sample];
+          if (merged.length > TRACE_HISTORY_MAX) {
+            merged.splice(0, merged.length - TRACE_HISTORY_MAX);
+          }
+          next[rowId] = merged;
+          changed = true;
         }
-        next[sample.rowId] = merged;
-        changed = true;
       }
       return changed ? next : previous;
     });
   }, [activeTraceRowIds, latestTraceEvent, rowById]);
 
-  const toggleExpanded = (id: string) => {
-    setExpandedIds((previous) =>
-      previous.includes(id)
-        ? previous.filter((existingId) => existingId !== id)
-        : [...previous, id]
-    );
-    setActiveTraceRowIds((previous) =>
-      previous.includes(id)
-        ? previous.filter((existingId) => existingId !== id)
-        : previous
-    );
-  };
-
-  const toggleTraceCapture = (rowId: string, nextOpen: boolean) => {
-    if (nextOpen) {
-      setTraceSamplesByRowId((previous) => ({ ...previous, [rowId]: [] }));
-      setActiveTraceRowIds((previous) =>
-        previous.includes(rowId) ? previous : [...previous, rowId]
-      );
+  const applyTraceControl = async (
+    row: PublisherRow,
+    nextOpen: boolean
+  ): Promise<void> => {
+    if (traceControlPending[row.id]) {
       return;
     }
-    setActiveTraceRowIds((previous) =>
-      previous.includes(rowId)
-        ? previous.filter((existingId) => existingId !== rowId)
-        : previous
+    setTraceControlPending((previous) => ({ ...previous, [row.id]: true }));
+    setTraceControlError((previous) => ({ ...previous, [row.id]: null }));
+    if (nextOpen) {
+      setTraceSamplesByRowId((previous) => ({ ...previous, [row.id]: [] }));
+      setActiveTraceRowIds((previous) =>
+        previous.includes(row.id) ? previous : [...previous, row.id]
+      );
+    } else {
+      setActiveTraceRowIds((previous) =>
+        previous.includes(row.id)
+          ? previous.filter((existingId) => existingId !== row.id)
+          : previous
+      );
+    }
+    try {
+      await setProfilingTraceControl({
+        process_id: row.processId,
+        enabled: nextOpen,
+        publisher_endpoint_id: row.endpointId,
+        publisher_topic: row.topic,
+        subscriber_topic: row.topic,
+        metrics: nextOpen
+          ? [
+              "publish_delta_ns",
+              "lease_time_ns",
+              "attributable_backpressure_ns",
+              "user_span_ns",
+            ]
+          : null,
+        sample_mod: 1,
+        ttl_seconds: nextOpen ? 45.0 : null,
+        timeout: 2.0,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Trace control request failed.";
+      setTraceControlError((previous) => ({ ...previous, [row.id]: message }));
+      setActiveTraceRowIds((previous) =>
+        nextOpen
+          ? previous.filter((existingId) => existingId !== row.id)
+          : previous.includes(row.id)
+            ? previous
+            : [...previous, row.id]
+      );
+    } finally {
+      setTraceControlPending((previous) => ({ ...previous, [row.id]: false }));
+    }
+  };
+
+  const toggleExpanded = (row: PublisherRow) => {
+    const nextExpanded = !expandedIds.includes(row.id);
+    setExpandedIds((previous) =>
+      previous.includes(row.id)
+        ? previous.filter((existingId) => existingId !== row.id)
+        : [...previous, row.id]
     );
+    if (!nextExpanded && activeTraceRowIds.includes(row.id)) {
+      void applyTraceControl(row, false);
+    }
+  };
+
+  const toggleTraceCapture = (row: PublisherRow, nextOpen: boolean) => {
+    void applyTraceControl(row, nextOpen);
   };
 
   return (
@@ -447,7 +477,8 @@ export function ProfilingPanel({
             const expanded = expandedIds.includes(row.id);
             const traceOpen = activeTraceRowIds.includes(row.id);
             const traceSamples = traceSamplesByRowId[row.id] ?? [];
-            const traceMetrics = summarizeTraceMetrics(traceSamples);
+            const traceBusy = Boolean(traceControlPending[row.id]);
+            const traceErrorMessage = traceControlError[row.id] ?? null;
             const windowLabel = formatWindowSeconds(row.windowSeconds);
             return (
               <article
@@ -457,7 +488,7 @@ export function ProfilingPanel({
                 <button
                   type="button"
                   className="publisher-row__toggle"
-                  onClick={() => toggleExpanded(row.id)}
+                  onClick={() => toggleExpanded(row)}
                   aria-expanded={expanded}
                 >
                   <div className="publisher-row__top">
@@ -526,7 +557,7 @@ export function ProfilingPanel({
                       open={traceOpen}
                       onToggle={(event) =>
                         toggleTraceCapture(
-                          row.id,
+                          row,
                           (event.currentTarget as HTMLDetailsElement).open
                         )
                       }
@@ -534,51 +565,35 @@ export function ProfilingPanel({
                       <summary>
                         <span>Realtime Trace</span>
                         <span className={`trace-status ${traceOpen ? "is-live" : ""}`}>
-                          {traceOpen ? "capturing" : "stopped"}
+                          {traceBusy
+                            ? "applying..."
+                            : traceOpen
+                              ? "capturing"
+                              : "stopped"}
                         </span>
                       </summary>
                       <div className="trace-inline__panel">
-                        {traceMetrics.length === 0 ? (
+                        {traceSamples.length === 0 ? (
                           <p className="muted">
                             Waiting for trace samples on this publisher endpoint.
                           </p>
                         ) : (
                           <>
                             <p className="trace-inline__meta">
-                              {traceSamples.length} samples across {traceMetrics.length} metric
-                              {traceMetrics.length === 1 ? "" : "s"}
+                              {traceSamples.length} samples captured over {windowLabel || "window"}.
                             </p>
-                            <div className="trace-metric-list">
-                              {traceMetrics.map((metric) => {
-                                const heights = normalizeSparklineHeights(metric.points);
-                                return (
-                                  <article key={metric.metric} className="trace-metric-card">
-                                    <div className="trace-metric-card__header">
-                                      <span className="mono">{metric.metric}</span>
-                                      <span>{metric.count} pts</span>
-                                      <span>avg {metric.avgValue.toFixed(2)}</span>
-                                      <span>last {metric.latestValue.toFixed(2)}</span>
-                                    </div>
-                                    <div className="trace-sparkline" aria-hidden="true">
-                                      {heights.map((height, index) => (
-                                        <span
-                                          // eslint-disable-next-line react/no-array-index-key
-                                          key={`${metric.metric}:${index}`}
-                                          style={{ height: `${height}%` }}
-                                        />
-                                      ))}
-                                    </div>
-                                    {metric.channelKinds.length > 0 ? (
-                                      <p className="trace-channel-kinds">
-                                        channel {metric.channelKinds.join(", ").toLowerCase()}
-                                      </p>
-                                    ) : null}
-                                  </article>
-                                );
-                              })}
-                            </div>
+                            <TraceTimingPanel
+                              samples={traceSamples as TimingTraceSample[]}
+                              publisherProcessId={row.processId}
+                              publisherEndpointId={row.endpointId}
+                              topic={row.topic}
+                              windowSeconds={2.0}
+                            />
                           </>
                         )}
+                        {traceErrorMessage ? (
+                          <p className="patch-status err">{traceErrorMessage}</p>
+                        ) : null}
                       </div>
                     </details>
 

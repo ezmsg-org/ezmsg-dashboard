@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from uuid import UUID
 from typing import Any, AsyncIterator, Callable, Protocol
 
 from ezmsg.core.graphcontext import GraphContext
-from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl
+from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
 
 from ..models.events import (
     EventEnvelopeModel,
@@ -36,6 +37,10 @@ class SettingsPatchError(RuntimeError):
     """Raised when a settings patch request fails in GraphContext."""
 
 
+class ProfilingTraceControlError(RuntimeError):
+    """Raised when profiling trace control cannot be applied."""
+
+
 class GraphServiceProtocol(Protocol):
     async def startup(self) -> None: ...
 
@@ -53,6 +58,20 @@ class GraphServiceProtocol(Protocol):
         component_address: str,
         field_path: str,
         value: Any,
+        timeout: float,
+    ) -> dict[str, Any]: ...
+
+    async def set_profiling_trace_control(
+        self,
+        *,
+        process_id: str,
+        enabled: bool,
+        publisher_endpoint_id: str | None,
+        publisher_topic: str | None,
+        subscriber_topic: str | None,
+        metrics: list[str] | None,
+        sample_mod: int,
+        ttl_seconds: float | None,
         timeout: float,
     ) -> dict[str, Any]: ...
 
@@ -178,6 +197,81 @@ class GraphContextLifecycleService:
             "component_address": component_address,
             "field_path": field_path,
             "updated_value": adapt_settings_value(updated_value),
+        }
+
+    async def set_profiling_trace_control(
+        self,
+        *,
+        process_id: str,
+        enabled: bool,
+        publisher_endpoint_id: str | None,
+        publisher_topic: str | None,
+        subscriber_topic: str | None,
+        metrics: list[str] | None,
+        sample_mod: int = 1,
+        ttl_seconds: float | None = None,
+        timeout: float = 2.0,
+    ) -> dict[str, Any]:
+        context = self._require_context()
+        graph_snapshot = await context.snapshot()
+
+        try:
+            process_uuid = UUID(process_id)
+        except ValueError as exc:
+            raise ProfilingTraceControlError(f"Invalid process_id '{process_id}'.") from exc
+
+        process_meta = graph_snapshot.processes.get(process_uuid)
+        if process_meta is None:
+            raise ProfilingTraceControlError(
+                f"Process '{process_id}' is not present in the graph snapshot."
+            )
+        if len(process_meta.units) == 0:
+            raise ProfilingTraceControlError(
+                f"Process '{process_id}' has no routable units for control requests."
+            )
+
+        route_unit = process_meta.units[0]
+        control = ProfilingTraceControl(
+            enabled=enabled,
+            sample_mod=max(1, int(sample_mod)),
+            publisher_topics=[publisher_topic]
+            if publisher_topic
+            else None,
+            subscriber_topics=[subscriber_topic]
+            if subscriber_topic
+            else ([publisher_topic] if publisher_topic else None),
+            publisher_endpoint_ids=[publisher_endpoint_id]
+            if publisher_endpoint_id
+            else None,
+            metrics=metrics if metrics else None,
+            ttl_seconds=ttl_seconds,
+        )
+        try:
+            response = await context.process_set_profiling_trace(
+                route_unit,
+                control,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            raise ProfilingTraceControlError(str(exc)) from exc
+
+        if not response.ok:
+            raise ProfilingTraceControlError(
+                f"Process trace control rejected for '{process_id}': {response.error}"
+            )
+
+        return {
+            "process_id": process_id,
+            "unit_address": route_unit,
+            "enabled": enabled,
+            "control": {
+                "sample_mod": control.sample_mod,
+                "publisher_topics": control.publisher_topics,
+                "subscriber_topics": control.subscriber_topics,
+                "publisher_endpoint_ids": control.publisher_endpoint_ids,
+                "metrics": control.metrics,
+                "ttl_seconds": control.ttl_seconds,
+            },
         }
 
     def _settings_with_patchability(

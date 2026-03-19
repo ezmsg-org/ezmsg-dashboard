@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
-from .services.graph_context_service import GraphServiceUnavailableError, SettingsPatchError
+from .services.graph_context_service import (
+    GraphServiceUnavailableError,
+    ProfilingTraceControlError,
+    SettingsPatchError,
+)
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -32,6 +36,18 @@ GraphServiceDependency = Annotated[GraphServiceProtocol, Depends(get_graph_servi
 class SettingsFieldPatchRequest(BaseModel):
     field_path: str = Field(min_length=1)
     value: Any
+    timeout: float = Field(default=2.0, gt=0.0)
+
+
+class ProfilingTraceControlRequest(BaseModel):
+    process_id: str = Field(min_length=1)
+    enabled: bool = True
+    publisher_endpoint_id: str | None = None
+    publisher_topic: str | None = None
+    subscriber_topic: str | None = None
+    metrics: list[str] | None = None
+    sample_mod: int = Field(default=1, ge=1)
+    ttl_seconds: float | None = Field(default=30.0, gt=0.0)
     timeout: float = Field(default=2.0, gt=0.0)
 
 
@@ -86,6 +102,29 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
         except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (SettingsPatchError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+
+    @app.post("/api/profiling/trace-control")
+    async def api_profiling_trace_control(
+        body: ProfilingTraceControlRequest,
+        graph_service: GraphServiceDependency,
+    ) -> JSONResponse:
+        try:
+            payload = await graph_service.set_profiling_trace_control(
+                process_id=body.process_id,
+                enabled=body.enabled,
+                publisher_endpoint_id=body.publisher_endpoint_id,
+                publisher_topic=body.publisher_topic,
+                subscriber_topic=body.subscriber_topic,
+                metrics=body.metrics,
+                sample_mod=body.sample_mod,
+                ttl_seconds=body.ttl_seconds,
+                timeout=body.timeout,
+            )
+        except GraphServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (ProfilingTraceControlError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
