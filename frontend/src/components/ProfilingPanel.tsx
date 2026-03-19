@@ -62,6 +62,15 @@ function formatMs(ns: number): string {
   return `${nsToMs(ns).toFixed(2)} ms`;
 }
 
+function shortEndpointToken(endpointId: string): string {
+  const parts = endpointId.split(":");
+  const last = parts.length > 0 ? parts[parts.length - 1] : endpointId;
+  if (last.length >= 8) {
+    return last.slice(0, 8);
+  }
+  return endpointId.slice(0, 8);
+}
+
 function backpressureSeverity(backpressureNsWindow: number): Severity {
   if (backpressureNsWindow <= 0) {
     return "none";
@@ -246,14 +255,15 @@ export function ProfilingPanel({
                         <p className="mono publisher-topic" title={row.topic}>
                           {row.topic}
                         </p>
-                        <p
-                          className="muted mono publisher-subline"
-                          title={`${row.endpointId} · ${row.processId} · pid ${row.pid}`}
-                        >
-                          {row.endpointId} · {row.processId.slice(0, 8)} · pid {row.pid}
-                        </p>
-                      </div>
+                      <p
+                        className="muted mono publisher-subline"
+                        title={`endpoint ${row.endpointId} · process ${row.processId} · pid ${row.pid}`}
+                      >
+                        endpoint {shortEndpointToken(row.endpointId)} · process{" "}
+                        {row.processId.slice(0, 8)} · pid {row.pid}
+                      </p>
                     </div>
+                  </div>
                     <span className="publisher-caret">{expanded ? "▾" : "▸"}</span>
                   </div>
 
@@ -289,6 +299,12 @@ export function ProfilingPanel({
                       <article className="mini-kpi">
                         <span>Host</span>
                         <strong>{row.host}</strong>
+                      </article>
+                      <article className="mini-kpi">
+                        <span>Endpoint</span>
+                        <strong className="mono" title={row.endpointId}>
+                          {row.endpointId}
+                        </strong>
                       </article>
                       <article className="mini-kpi">
                         <span>Trace Batches</span>
