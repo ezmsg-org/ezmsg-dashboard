@@ -15,6 +15,7 @@ type TraceTimingPanelProps = {
   samples: TimingTraceSample[];
   publisherProcessId: string;
   publisherEndpointId: string;
+  nominalPublishRateHz: number;
   topic: string;
   topicScope?: string[];
   leaseColorMap?: Record<string, string>;
@@ -45,6 +46,7 @@ type RendererState = {
   publisherSignature: string;
   originNs: number | null;
   lastTimestamp: number;
+  lastWipeCycle: number;
   lastCursorCol: number | null;
   yMaxMs: number;
   columnCycle: Int32Array;
@@ -60,10 +62,8 @@ const LABEL_COLOR = "#cbd5e1";
 const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
-const MIN_Y_MAX_MS = 0.25;
+const MIN_Y_MAX_MS = 0.1;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
-const AUTO_Y_HEADROOM = 1.1;
-const AUTO_Y_DECAY = 0.97;
 
 function toMs(valueNs: number): number {
   return valueNs / 1_000_000;
@@ -129,6 +129,7 @@ function makeRendererState(
     publisherSignature,
     originNs: null,
     lastTimestamp: 0,
+    lastWipeCycle: 0,
     lastCursorCol: null,
     yMaxMs,
     columnCycle: cycle,
@@ -355,26 +356,6 @@ function drawLabelsAndCursor(
   context.fillText("0 ms", 8, layout.plotBottom + 4);
 }
 
-function addTraversedColumns(
-  changed: Set<number>,
-  fromCol: number,
-  toCol: number,
-  cols: number
-): void {
-  if (toCol >= fromCol) {
-    for (let col = fromCol; col <= toCol; col += 1) {
-      changed.add(col);
-    }
-    return;
-  }
-  for (let col = fromCol; col < cols; col += 1) {
-    changed.add(col);
-  }
-  for (let col = 0; col <= toCol; col += 1) {
-    changed.add(col);
-  }
-}
-
 function columnRanges(changed: Set<number>): Array<{ start: number; end: number }> {
   const sorted = Array.from(changed).sort((a, b) => a - b);
   if (sorted.length === 0) {
@@ -397,10 +378,33 @@ function columnRanges(changed: Set<number>): Array<{ start: number; end: number 
   return ranges;
 }
 
+function roundUpLog10Ms(valueMs: number): number {
+  if (!Number.isFinite(valueMs) || valueMs <= 0) {
+    return MIN_Y_MAX_MS;
+  }
+  const exponent = Math.floor(Math.log10(valueMs));
+  let scale = 10 ** exponent;
+  let mantissa = Math.ceil(valueMs / scale);
+  if (mantissa > 9) {
+    scale *= 10;
+    mantissa = 1;
+  }
+  return Math.max(MIN_Y_MAX_MS, mantissa * scale);
+}
+
+function estimateAutoYMaxMsFromRateHz(rateHz: number): number {
+  if (!Number.isFinite(rateHz) || rateHz <= 0) {
+    return DEFAULT_MANUAL_Y_MAX_MS;
+  }
+  const nominalPublishDeltaMs = 1000 / rateHz;
+  return roundUpLog10Ms(nominalPublishDeltaMs * 1.25);
+}
+
 export function TraceTimingPanel({
   samples,
   publisherProcessId,
   publisherEndpointId,
+  nominalPublishRateHz,
   topic,
   topicScope,
   leaseColorMap,
@@ -410,7 +414,7 @@ export function TraceTimingPanel({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<RendererState | null>(null);
   const lastBatchRef = useRef<TimingTraceSample[] | null>(null);
-  const autoYMaxMsRef = useRef<number | null>(null);
+  const previousAutoModeRef = useRef<boolean>(true);
   const [autoYAxis, setAutoYAxis] = useState(true);
   const [manualYMaxInput, setManualYMaxInput] = useState(
     `${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`
@@ -448,8 +452,9 @@ export function TraceTimingPanel({
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
     const windowNs = Math.max(1, windowSeconds * 1_000_000_000);
+    const estimatedAutoYMaxMs = estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
     const desiredY = autoYAxis
-      ? Math.max(MIN_Y_MAX_MS, autoYMaxMsRef.current ?? MIN_Y_MAX_MS)
+      ? estimatedAutoYMaxMs
       : Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
 
     let renderer = rendererRef.current;
@@ -470,7 +475,6 @@ export function TraceTimingPanel({
       );
       rendererRef.current = renderer;
       lastBatchRef.current = null;
-      autoYMaxMsRef.current = desiredY;
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, layout.width, layout.height);
     }
@@ -480,10 +484,9 @@ export function TraceTimingPanel({
     }
 
     const changedCols = new Set<number>();
-    let batchMaxMs = MIN_Y_MAX_MS;
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
-    let forceFullRedraw = needsReinit;
+    let maxCycleSeen = renderer.lastWipeCycle;
     const incoming = samples !== lastBatchRef.current ? samples : [];
     if (samples !== lastBatchRef.current) {
       lastBatchRef.current = samples;
@@ -529,6 +532,7 @@ export function TraceTimingPanel({
         renderer.columnCycle[col] = cycle;
         changedCols.add(col);
       }
+      maxCycleSeen = Math.max(maxCycleSeen, cycle);
 
       const valueMs = toMs(sample.value);
       if (!Number.isFinite(valueMs) || valueMs < 0) {
@@ -560,27 +564,21 @@ export function TraceTimingPanel({
         }
       }
 
-      batchMaxMs = Math.max(batchMaxMs, valueMs);
       newestTimestamp = Math.max(newestTimestamp, sample.timestamp);
       processedAny = true;
     }
 
-    let nextYMaxMs = renderer.yMaxMs;
+    const autoModeToggledOn = autoYAxis && !previousAutoModeRef.current;
+    previousAutoModeRef.current = autoYAxis;
     if (autoYAxis) {
-      const target = Math.max(MIN_Y_MAX_MS, batchMaxMs * AUTO_Y_HEADROOM);
-      const previous = autoYMaxMsRef.current;
-      if (previous === null || target >= previous) {
-        nextYMaxMs = target;
-      } else {
-        nextYMaxMs = Math.max(target, previous * AUTO_Y_DECAY);
+      if (autoModeToggledOn) {
+        renderer.yMaxMs = estimatedAutoYMaxMs;
+      } else if (maxCycleSeen > renderer.lastWipeCycle) {
+        renderer.lastWipeCycle = maxCycleSeen;
+        renderer.yMaxMs = estimatedAutoYMaxMs;
       }
-      autoYMaxMsRef.current = nextYMaxMs;
     } else {
-      nextYMaxMs = Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
-      autoYMaxMsRef.current = nextYMaxMs;
-    }
-    if (Math.abs(nextYMaxMs - renderer.yMaxMs) > 1e-9) {
-      renderer.yMaxMs = nextYMaxMs;
+      renderer.yMaxMs = Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
     }
 
     if (processedAny && renderer.originNs !== null) {
@@ -590,23 +588,7 @@ export function TraceTimingPanel({
         renderer.windowNs,
         renderer.layout.cols
       );
-      if (
-        renderer.lastCursorCol !== null
-        && newestTimestamp - renderer.lastTimestamp >= renderer.windowNs
-      ) {
-        for (let col = 0; col < renderer.layout.cols; col += 1) {
-          changedCols.add(col);
-        }
-      } else if (renderer.lastCursorCol !== null) {
-        addTraversedColumns(
-          changedCols,
-          renderer.lastCursorCol,
-          latest.col,
-          renderer.layout.cols
-        );
-      } else {
-        changedCols.add(latest.col);
-      }
+      changedCols.add(latest.col);
       if (renderer.lastCursorCol !== null) {
         changedCols.add(renderer.lastCursorCol);
       }
@@ -614,7 +596,7 @@ export function TraceTimingPanel({
       renderer.lastTimestamp = newestTimestamp;
     }
 
-    if (forceFullRedraw) {
+    if (needsReinit) {
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
       drawRange(context, renderer, 0, renderer.layout.cols - 1, leaseColorMap);
@@ -640,6 +622,7 @@ export function TraceTimingPanel({
     effectiveTopicScope,
     leaseColorMap,
     manualYMaxMs,
+    nominalPublishRateHz,
     publisherEndpointId,
     publisherProcessId,
     publisherSignature,

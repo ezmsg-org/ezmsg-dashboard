@@ -668,6 +668,7 @@ export function ProfilingPanel({
                               samples={traceSamples as TimingTraceSample[]}
                               publisherProcessId={row.processId}
                               publisherEndpointId={row.endpointId}
+                              nominalPublishRateHz={row.publishRateHzWindow}
                               topic={row.topic}
                               topicScope={traceTopicScope}
                               leaseColorMap={leaseColorMap}
