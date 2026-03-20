@@ -511,6 +511,53 @@ body {
   gap: 0.35rem;
 }
 
+.timing-trace__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+}
+
+.timing-trace__axis-btn {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  padding: 0.22rem 0.5rem;
+  cursor: pointer;
+}
+
+.timing-trace__axis-btn.is-active {
+  border-color: #60a5fa;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.timing-trace__axis-input {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: #475569;
+}
+
+.timing-trace__axis-input input {
+  width: 5.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0.18rem 0.35rem;
+  font-size: 0.74rem;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.timing-trace__axis-input input:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
 .timing-trace__canvas {
   width: 100%;
   height: 220px;

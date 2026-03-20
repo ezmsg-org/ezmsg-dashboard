@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type TimingTraceSample = {
   timestamp: number;
@@ -27,6 +27,10 @@ const LEASE_COLORS = [
   "#f9a8d4",
   "#fdba74",
 ];
+const MIN_Y_MAX_MS = 0.25;
+const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
+const AUTO_Y_HEADROOM = 1.1;
+const AUTO_Y_DECAY = 0.97;
 
 function shortEndpoint(endpointId: string): string {
   const parts = endpointId.split(":");
@@ -42,6 +46,14 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function parsePositiveFloat(value: string): number | null {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
 export function TraceTimingPanel({
   samples,
   publisherProcessId,
@@ -52,6 +64,16 @@ export function TraceTimingPanel({
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const originRef = useRef<number | null>(null);
+  const autoYMaxMsRef = useRef<number | null>(null);
+  const [autoYAxis, setAutoYAxis] = useState(true);
+  const [manualYMaxInput, setManualYMaxInput] = useState(
+    `${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`
+  );
+
+  const manualYMaxMs = useMemo(
+    () => parsePositiveFloat(manualYMaxInput),
+    [manualYMaxInput]
+  );
 
   const effectiveTopicScope = useMemo(
     () => (topicScope && topicScope.length > 0 ? topicScope : [topic]),
@@ -190,15 +212,29 @@ export function TraceTimingPanel({
       (sample) => sample.metric === "attributable_backpressure_ns"
     );
 
-    const pubMaxMs = Math.max(
-      0.25,
-      ...publisherSeries.map((sample) => toMs(sample.value))
-    );
-    const leaseMaxMs = Math.max(0.25, ...leaseSeries.map((sample) => toMs(sample.value)));
-    const attrMaxMs = Math.max(
-      0.25,
+    const maxObservedMs = Math.max(
+      MIN_Y_MAX_MS,
+      ...publisherSeries.map((sample) => toMs(sample.value)),
+      ...leaseSeries.map((sample) => toMs(sample.value)),
       ...attributableSeries.map((sample) => toMs(sample.value))
     );
+    let sharedYMaxMs = MIN_Y_MAX_MS;
+    if (autoYAxis) {
+      const target = Math.max(MIN_Y_MAX_MS, maxObservedMs * AUTO_Y_HEADROOM);
+      const previous = autoYMaxMsRef.current;
+      if (previous === null || target >= previous) {
+        sharedYMaxMs = target;
+      } else {
+        sharedYMaxMs = Math.max(target, previous * AUTO_Y_DECAY);
+      }
+      autoYMaxMsRef.current = sharedYMaxMs;
+    } else {
+      sharedYMaxMs = Math.max(
+        MIN_Y_MAX_MS,
+        manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS
+      );
+      autoYMaxMsRef.current = sharedYMaxMs;
+    }
 
     context.strokeStyle = "#38bdf8";
     context.lineWidth = 1.25;
@@ -207,7 +243,7 @@ export function TraceTimingPanel({
     let previousX = 0;
     for (const sample of publisherSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), pubTop + 2, pubBottom - 2, pubMaxMs);
+      const y = yFromMs(toMs(sample.value), pubTop + 2, pubBottom - 2, sharedYMaxMs);
       if (!started || x < previousX) {
         if (started) {
           context.stroke();
@@ -230,7 +266,12 @@ export function TraceTimingPanel({
 
     for (const sample of leaseSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), leaseTop + 2, leaseBottom - 2, leaseMaxMs);
+      const y = yFromMs(
+        toMs(sample.value),
+        leaseTop + 2,
+        leaseBottom - 2,
+        sharedYMaxMs
+      );
       context.fillStyle = endpointColorMap.get(sample.endpointId) ?? "#93c5fd";
       context.beginPath();
       context.arc(x, y, 2.8, 0, Math.PI * 2);
@@ -241,7 +282,12 @@ export function TraceTimingPanel({
     context.lineWidth = 1;
     for (const sample of attributableSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), attrTop + 2, attrBottom - 2, attrMaxMs);
+      const y = yFromMs(
+        toMs(sample.value),
+        attrTop + 2,
+        attrBottom - 2,
+        sharedYMaxMs
+      );
       context.beginPath();
       context.moveTo(x, attrBottom - 1);
       context.lineTo(x, y);
@@ -258,11 +304,51 @@ export function TraceTimingPanel({
       left + plotWidth - 24,
       top + plotHeight + 16
     );
-    context.fillText(`${pubMaxMs.toFixed(2)} ms`, 6, pubBottom - 4);
-  }, [filtered, publisherEndpointId, publisherProcessId, subscriberLegend, windowSeconds]);
+    context.fillText(`Y max ${sharedYMaxMs.toFixed(2)} ms`, left, top + plotHeight + 16);
+  }, [
+    autoYAxis,
+    filtered,
+    manualYMaxMs,
+    publisherEndpointId,
+    publisherProcessId,
+    subscriberLegend,
+    windowSeconds,
+  ]);
 
   return (
     <div className="timing-trace">
+      <div className="timing-trace__controls">
+        <button
+          type="button"
+          className={`timing-trace__axis-btn ${autoYAxis ? "is-active" : ""}`}
+          onClick={() => setAutoYAxis(true)}
+        >
+          Auto Y
+        </button>
+        <button
+          type="button"
+          className={`timing-trace__axis-btn ${autoYAxis ? "" : "is-active"}`}
+          onClick={() => setAutoYAxis(false)}
+        >
+          Fixed Y
+        </button>
+        <label className="timing-trace__axis-input">
+          <span>Y max (ms)</span>
+          <input
+            type="number"
+            min={MIN_Y_MAX_MS}
+            step="0.1"
+            value={manualYMaxInput}
+            onChange={(event) => setManualYMaxInput(event.target.value)}
+            onBlur={() => {
+              if (parsePositiveFloat(manualYMaxInput) === null) {
+                setManualYMaxInput(`${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`);
+              }
+            }}
+            disabled={autoYAxis}
+          />
+        </label>
+      </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
       {subscriberLegend.length > 0 ? (
         <div className="timing-trace__legend">
