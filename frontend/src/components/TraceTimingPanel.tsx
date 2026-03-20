@@ -150,6 +150,57 @@ function addColumnNeighborhood(changed: Set<number>, col: number, cols: number):
   }
 }
 
+function addColumnSpan(
+  changed: Set<number>,
+  cols: number,
+  startCol: number,
+  endCol: number
+): void {
+  const start = clamp(Math.min(startCol, endCol), 0, cols - 1);
+  const end = clamp(Math.max(startCol, endCol), 0, cols - 1);
+  for (let col = start; col <= end; col += 1) {
+    changed.add(col);
+  }
+}
+
+function nearestFiniteLeft(bins: Float32Array, col: number): number | null {
+  for (let cursor = col - 1; cursor >= 0; cursor -= 1) {
+    if (Number.isFinite(bins[cursor])) {
+      return cursor;
+    }
+  }
+  return null;
+}
+
+function nearestFiniteRight(
+  bins: Float32Array,
+  col: number,
+  cols: number
+): number | null {
+  for (let cursor = col + 1; cursor < cols; cursor += 1) {
+    if (Number.isFinite(bins[cursor])) {
+      return cursor;
+    }
+  }
+  return null;
+}
+
+function markSparseNeighborSpan(
+  changed: Set<number>,
+  bins: Float32Array,
+  col: number,
+  cols: number
+): void {
+  const left = nearestFiniteLeft(bins, col);
+  const right = nearestFiniteRight(bins, col, cols);
+  if (left !== null) {
+    addColumnSpan(changed, cols, left, col);
+  }
+  if (right !== null) {
+    addColumnSpan(changed, cols, col, right);
+  }
+}
+
 function matchesTopicScope(sampleTopic: string, topicScope: string[]): boolean {
   for (const topic of topicScope) {
     if (sampleTopic === topic || sampleTopic.startsWith(`${topic}:`)) {
@@ -248,12 +299,19 @@ function drawLineRange(
   let previousCol: number | null = null;
   let previousValue = Number.NaN;
   let previousWasOverflow = false;
+  for (let col = from - 1; col >= 0; col -= 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs)) {
+      continue;
+    }
+    previousCol = col;
+    previousValue = valueMs;
+    previousWasOverflow = valueMs > yMaxMs;
+    break;
+  }
   for (let col = from; col <= to; col += 1) {
     const valueMs = bins[col];
     if (!Number.isFinite(valueMs)) {
-      previousCol = null;
-      previousValue = Number.NaN;
-      previousWasOverflow = false;
       continue;
     }
     const isOverflow = valueMs > yMaxMs;
@@ -566,6 +624,9 @@ export function TraceTimingPanel({
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
     let maxCycleSeen = renderer.lastWipeCycle;
+    const sparseLineMode =
+      nominalPublishRateHz > 0
+      && nominalPublishRateHz <= renderer.layout.cols / Math.max(windowSeconds, 1e-6);
     const incoming = samples !== lastBatchRef.current ? samples : [];
     if (samples !== lastBatchRef.current) {
       lastBatchRef.current = samples;
@@ -623,12 +684,28 @@ export function TraceTimingPanel({
         if (!Number.isFinite(current) || valueMs > current) {
           renderer.publishBins[col] = valueMs;
           changedCols.add(col);
+          if (sparseLineMode) {
+            markSparseNeighborSpan(
+              changedCols,
+              renderer.publishBins,
+              col,
+              renderer.layout.cols
+            );
+          }
         }
       } else if (isAttrMetric) {
         const current = renderer.attrBins[col];
         if (!Number.isFinite(current) || valueMs > current) {
           renderer.attrBins[col] = valueMs;
           changedCols.add(col);
+          if (sparseLineMode) {
+            markSparseNeighborSpan(
+              changedCols,
+              renderer.attrBins,
+              col,
+              renderer.layout.cols
+            );
+          }
         }
       } else {
         let leaseBins = renderer.leaseBinsByEndpoint.get(sample.endpointId);
@@ -640,6 +717,9 @@ export function TraceTimingPanel({
         if (!Number.isFinite(current) || valueMs > current) {
           leaseBins[col] = valueMs;
           changedCols.add(col);
+          if (sparseLineMode) {
+            markSparseNeighborSpan(changedCols, leaseBins, col, renderer.layout.cols);
+          }
         }
       }
 
