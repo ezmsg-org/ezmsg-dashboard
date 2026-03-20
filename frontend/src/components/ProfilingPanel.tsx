@@ -281,6 +281,7 @@ export function ProfilingPanel({
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
   const [pressuredOnly, setPressuredOnly] = useState(false);
+  const [hideZeroContributorRows, setHideZeroContributorRows] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [activeTraceRowIds, setActiveTraceRowIds] = useState<string[]>([]);
   const [traceSamplesByRowId, setTraceSamplesByRowId] = useState<
@@ -491,6 +492,11 @@ export function ProfilingPanel({
             const traceBusy = Boolean(traceControlPending[row.id]);
             const traceErrorMessage = traceControlError[row.id] ?? null;
             const windowLabel = formatWindowSeconds(row.windowSeconds);
+            const visibleContributors = hideZeroContributorRows
+              ? row.contributors.filter(
+                  (contributor) => contributor.attributableBackpressureNsWindow > 0
+                )
+              : row.contributors;
             return (
               <article
                 key={row.id}
@@ -609,50 +615,93 @@ export function ProfilingPanel({
                     </details>
 
                     <div className="panel-section">
-                      <h3>Subscribers</h3>
+                      <div className="subscriber-section-header">
+                        <h3>Subscribers</h3>
+                        <button
+                          type="button"
+                          className={`subscriber-filter-btn ${
+                            hideZeroContributorRows ? "is-active" : ""
+                          }`}
+                          onClick={() =>
+                            setHideZeroContributorRows((previous) => !previous)
+                          }
+                        >
+                          {hideZeroContributorRows ? "Hide Zero BP: On" : "Hide Zero BP: Off"}
+                        </button>
+                      </div>
                       {row.contributors.length === 0 ? (
                         <p className="muted">
                           No subscriber profiling data is available for this topic.
                         </p>
+                      ) : visibleContributors.length === 0 ? (
+                        <p className="muted">
+                          No subscribers pass the current filter for this topic.
+                        </p>
                       ) : (
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Topic</th>
-                              <th>Process</th>
-                              <th>Attr. Backpressure</th>
-                              <th>Backpressure Events</th>
-                              <th>Msgs In (window)</th>
-                              <th>User Span Avg</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {row.contributors.map((contributor) => (
-                              <tr key={contributor.id}>
-                                <td>
-                                  <details className="topic-details">
-                                    <summary
-                                      className="mono topic-summary"
-                                      title={`endpoint ${contributor.endpointId}`}
-                                    >
-                                      {shortTopic(contributor.topic)}
-                                    </summary>
-                                    <div className="mono topic-full">
-                                      {contributor.topic}
-                                    </div>
-                                  </details>
-                                </td>
-                                <td className="mono">
-                                  {contributor.processId.slice(0, 8)} (pid {contributor.pid})
-                                </td>
-                                <td>{formatMs(contributor.attributableBackpressureNsWindow)}</td>
-                                <td>{contributor.attributableBackpressureEvents}</td>
-                                <td>{contributor.messagesWindow}</td>
-                                <td>{formatMs(contributor.userSpanNsAvgWindow)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        <div className="subscriber-list">
+                          {visibleContributors.map((contributor) => (
+                            <details className="subscriber-item" key={contributor.id}>
+                              <summary className="subscriber-item__summary">
+                                <div className="subscriber-item__identity">
+                                  <p
+                                    className="mono subscriber-topic-short"
+                                    title={contributor.topic}
+                                  >
+                                    {shortTopic(contributor.topic, 72)}
+                                  </p>
+                                  <p
+                                    className="muted mono subscriber-endpoint-token"
+                                    title={contributor.endpointId}
+                                  >
+                                    endpoint {shortEndpointToken(contributor.endpointId)}
+                                  </p>
+                                </div>
+                                <div className="subscriber-item__metrics">
+                                  <span>
+                                    <em>Attr BP</em>
+                                    <strong>
+                                      {formatMs(contributor.attributableBackpressureNsWindow)}
+                                    </strong>
+                                  </span>
+                                  <span>
+                                    <em>Events</em>
+                                    <strong>{contributor.attributableBackpressureEvents}</strong>
+                                  </span>
+                                  <span>
+                                    <em>Msgs</em>
+                                    <strong>{contributor.messagesWindow}</strong>
+                                  </span>
+                                </div>
+                              </summary>
+                              <div className="subscriber-item__detail">
+                                <dl>
+                                  <div>
+                                    <dt>Topic</dt>
+                                    <dd className="mono">{contributor.topic}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Endpoint</dt>
+                                    <dd className="mono">{contributor.endpointId}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Process</dt>
+                                    <dd className="mono">
+                                      {contributor.processId.slice(0, 8)} (pid {contributor.pid})
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Host</dt>
+                                    <dd>{contributor.host}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>User Span Avg</dt>
+                                    <dd>{formatMs(contributor.userSpanNsAvgWindow)}</dd>
+                                  </div>
+                                </dl>
+                              </div>
+                            </details>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </div>
