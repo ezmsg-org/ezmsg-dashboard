@@ -48,7 +48,6 @@ type RendererState = {
   lastTimestamp: number;
   lastWipeCycle: number;
   lastCursorCol: number | null;
-  sparseMode: boolean;
   yMaxMs: number;
   columnCycle: Int32Array;
   publishBins: Float32Array;
@@ -64,8 +63,6 @@ const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
 const CURSOR_LEAD_COLS = 2;
-const SPARSE_MODE_ENTER_SAMPLES_PER_PIXEL = 0.45;
-const SPARSE_MODE_EXIT_SAMPLES_PER_PIXEL = 0.8;
 const MIN_Y_MAX_MS = 0.1;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
 
@@ -135,7 +132,6 @@ function makeRendererState(
     lastTimestamp: 0,
     lastWipeCycle: 0,
     lastCursorCol: null,
-    sparseMode: false,
     yMaxMs,
     columnCycle: cycle,
     publishBins: makeNaNBins(layout.cols),
@@ -422,28 +418,6 @@ function drawLabelsAndCursor(
   context.fillText("0 ms", 8, layout.plotBottom + 4);
 }
 
-function columnRanges(changed: Set<number>): Array<{ start: number; end: number }> {
-  const sorted = Array.from(changed).sort((a, b) => a - b);
-  if (sorted.length === 0) {
-    return [];
-  }
-  const ranges: Array<{ start: number; end: number }> = [];
-  let start = sorted[0];
-  let end = sorted[0];
-  for (let i = 1; i < sorted.length; i += 1) {
-    const col = sorted[i];
-    if (col === end + 1) {
-      end = col;
-      continue;
-    }
-    ranges.push({ start, end });
-    start = col;
-    end = col;
-  }
-  ranges.push({ start, end });
-  return ranges;
-}
-
 function roundUpLog10Ms(valueMs: number): number {
   if (!Number.isFinite(valueMs) || valueMs <= 0) {
     return MIN_Y_MAX_MS;
@@ -579,14 +553,6 @@ export function TraceTimingPanel({
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
     let maxCycleSeen = renderer.lastWipeCycle;
-    const samplesPerPixel =
-      nominalPublishRateHz > 0
-        ? (nominalPublishRateHz * windowSeconds) / Math.max(renderer.layout.cols, 1)
-        : 0;
-    const sparseLineMode = renderer.sparseMode
-      ? samplesPerPixel <= SPARSE_MODE_EXIT_SAMPLES_PER_PIXEL
-      : samplesPerPixel <= SPARSE_MODE_ENTER_SAMPLES_PER_PIXEL;
-    renderer.sparseMode = sparseLineMode;
     const incoming = samples !== lastBatchRef.current ? samples : [];
     if (samples !== lastBatchRef.current) {
       lastBatchRef.current = samples;
@@ -708,14 +674,10 @@ export function TraceTimingPanel({
       renderer.lastTimestamp = newestTimestamp;
     }
 
-    if (needsReinit || (sparseLineMode && changedCols.size > 0)) {
+    if (needsReinit || changedCols.size > 0) {
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
       drawRange(context, renderer, 0, renderer.layout.cols - 1, leaseColorMap);
-    } else if (changedCols.size > 0) {
-      for (const range of columnRanges(changedCols)) {
-        drawRange(context, renderer, range.start, range.end, leaseColorMap);
-      }
     }
 
     if (renderer.lastTimestamp <= 0) {
