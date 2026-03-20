@@ -48,6 +48,7 @@ type RendererState = {
   lastTimestamp: number;
   lastWipeCycle: number;
   lastCursorCol: number | null;
+  sparseMode: boolean;
   yMaxMs: number;
   columnCycle: Int32Array;
   publishBins: Float32Array;
@@ -63,6 +64,8 @@ const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
 const CURSOR_LEAD_COLS = 2;
+const SPARSE_MODE_ENTER_SAMPLES_PER_PIXEL = 0.45;
+const SPARSE_MODE_EXIT_SAMPLES_PER_PIXEL = 0.8;
 const MIN_Y_MAX_MS = 0.1;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
 
@@ -85,7 +88,7 @@ function parsePositiveFloat(value: string): number | null {
 function makeLayout(canvas: HTMLCanvasElement, windowSeconds: number): PlotLayout {
   const width = Math.max(440, Math.floor(canvas.clientWidth));
   const height = 220;
-  const left = 52;
+  const left = 64;
   const right = 16;
   const top = 12;
   const bottom = 24;
@@ -132,6 +135,7 @@ function makeRendererState(
     lastTimestamp: 0,
     lastWipeCycle: 0,
     lastCursorCol: null,
+    sparseMode: false,
     yMaxMs,
     columnCycle: cycle,
     publishBins: makeNaNBins(layout.cols),
@@ -147,57 +151,6 @@ function addColumnNeighborhood(changed: Set<number>, col: number, cols: number):
   for (let offset = -1; offset <= 1; offset += 1) {
     const wrapped = (col + offset + cols) % cols;
     changed.add(wrapped);
-  }
-}
-
-function addColumnSpan(
-  changed: Set<number>,
-  cols: number,
-  startCol: number,
-  endCol: number
-): void {
-  const start = clamp(Math.min(startCol, endCol), 0, cols - 1);
-  const end = clamp(Math.max(startCol, endCol), 0, cols - 1);
-  for (let col = start; col <= end; col += 1) {
-    changed.add(col);
-  }
-}
-
-function nearestFiniteLeft(bins: Float32Array, col: number): number | null {
-  for (let cursor = col - 1; cursor >= 0; cursor -= 1) {
-    if (Number.isFinite(bins[cursor])) {
-      return cursor;
-    }
-  }
-  return null;
-}
-
-function nearestFiniteRight(
-  bins: Float32Array,
-  col: number,
-  cols: number
-): number | null {
-  for (let cursor = col + 1; cursor < cols; cursor += 1) {
-    if (Number.isFinite(bins[cursor])) {
-      return cursor;
-    }
-  }
-  return null;
-}
-
-function markSparseNeighborSpan(
-  changed: Set<number>,
-  bins: Float32Array,
-  col: number,
-  cols: number
-): void {
-  const left = nearestFiniteLeft(bins, col);
-  const right = nearestFiniteRight(bins, col, cols);
-  if (left !== null) {
-    addColumnSpan(changed, cols, left, col);
-  }
-  if (right !== null) {
-    addColumnSpan(changed, cols, col, right);
   }
 }
 
@@ -274,6 +227,7 @@ function clearRange(
 function drawLineRange(
   context: CanvasRenderingContext2D,
   bins: Float32Array,
+  columnCycle: Int32Array,
   {
     color,
     lineWidth,
@@ -299,6 +253,7 @@ function drawLineRange(
   let previousCol: number | null = null;
   let previousValue = Number.NaN;
   let previousWasOverflow = false;
+  let previousCycle: number | null = null;
   for (let col = from - 1; col >= 0; col -= 1) {
     const valueMs = bins[col];
     if (!Number.isFinite(valueMs)) {
@@ -307,6 +262,7 @@ function drawLineRange(
     previousCol = col;
     previousValue = valueMs;
     previousWasOverflow = valueMs > yMaxMs;
+    previousCycle = columnCycle[col];
     break;
   }
   for (let col = from; col <= to; col += 1) {
@@ -319,7 +275,9 @@ function drawLineRange(
       overflowStarts.push(col);
     }
 
-    if (previousCol !== null && Number.isFinite(previousValue)) {
+    const cycle = columnCycle[col];
+    const sameCycle = previousCycle !== null && previousCycle === cycle;
+    if (previousCol !== null && Number.isFinite(previousValue) && sameCycle) {
       const previousOverflow = previousValue > yMaxMs;
       if (!(previousOverflow && isOverflow)) {
         const x0 = layout.left + previousCol + 0.5;
@@ -335,6 +293,7 @@ function drawLineRange(
     previousCol = col;
     previousValue = valueMs;
     previousWasOverflow = isOverflow;
+    previousCycle = cycle;
   }
   context.stroke();
 
@@ -417,7 +376,7 @@ function drawRange(
     layout: state.layout,
   });
   for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
-    drawLineRange(context, bins, {
+    drawLineRange(context, bins, state.columnCycle, {
       color: leaseColorForEndpoint(endpointId, leaseColorMap),
       lineWidth: 1.1,
       startCol,
@@ -426,7 +385,7 @@ function drawRange(
       layout: state.layout,
     });
   }
-  drawLineRange(context, state.publishBins, {
+  drawLineRange(context, state.publishBins, state.columnCycle, {
     color: PUBLISH_COLOR,
     lineWidth: 1.25,
     startCol,
@@ -458,11 +417,13 @@ function drawLabelsAndCursor(
 
   context.fillStyle = LABEL_COLOR;
   context.font = '11px "Avenir Next", sans-serif';
+  context.textAlign = "right";
   context.fillText(
     `${windowSeconds.toFixed(1)}s`,
-    layout.left + layout.plotWidth - 24,
+    layout.left + layout.plotWidth - 2,
     layout.top + layout.plotHeight + 16
   );
+  context.textAlign = "left";
   context.fillText(`${state.yMaxMs.toFixed(2)} ms`, 6, layout.plotTop + 8);
   context.fillText("0 ms", 8, layout.plotBottom + 4);
 }
@@ -624,9 +585,14 @@ export function TraceTimingPanel({
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
     let maxCycleSeen = renderer.lastWipeCycle;
-    const sparseLineMode =
+    const samplesPerPixel =
       nominalPublishRateHz > 0
-      && nominalPublishRateHz <= renderer.layout.cols / Math.max(windowSeconds, 1e-6);
+        ? (nominalPublishRateHz * windowSeconds) / Math.max(renderer.layout.cols, 1)
+        : 0;
+    const sparseLineMode = renderer.sparseMode
+      ? samplesPerPixel <= SPARSE_MODE_EXIT_SAMPLES_PER_PIXEL
+      : samplesPerPixel <= SPARSE_MODE_ENTER_SAMPLES_PER_PIXEL;
+    renderer.sparseMode = sparseLineMode;
     const incoming = samples !== lastBatchRef.current ? samples : [];
     if (samples !== lastBatchRef.current) {
       lastBatchRef.current = samples;
@@ -684,28 +650,12 @@ export function TraceTimingPanel({
         if (!Number.isFinite(current) || valueMs > current) {
           renderer.publishBins[col] = valueMs;
           changedCols.add(col);
-          if (sparseLineMode) {
-            markSparseNeighborSpan(
-              changedCols,
-              renderer.publishBins,
-              col,
-              renderer.layout.cols
-            );
-          }
         }
       } else if (isAttrMetric) {
         const current = renderer.attrBins[col];
         if (!Number.isFinite(current) || valueMs > current) {
           renderer.attrBins[col] = valueMs;
           changedCols.add(col);
-          if (sparseLineMode) {
-            markSparseNeighborSpan(
-              changedCols,
-              renderer.attrBins,
-              col,
-              renderer.layout.cols
-            );
-          }
         }
       } else {
         let leaseBins = renderer.leaseBinsByEndpoint.get(sample.endpointId);
@@ -717,9 +667,6 @@ export function TraceTimingPanel({
         if (!Number.isFinite(current) || valueMs > current) {
           leaseBins[col] = valueMs;
           changedCols.add(col);
-          if (sparseLineMode) {
-            markSparseNeighborSpan(changedCols, leaseBins, col, renderer.layout.cols);
-          }
         }
       }
 
@@ -767,7 +714,7 @@ export function TraceTimingPanel({
       renderer.lastTimestamp = newestTimestamp;
     }
 
-    if (needsReinit) {
+    if (needsReinit || (sparseLineMode && changedCols.size > 0)) {
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
       drawRange(context, renderer, 0, renderer.layout.cols - 1, leaseColorMap);
