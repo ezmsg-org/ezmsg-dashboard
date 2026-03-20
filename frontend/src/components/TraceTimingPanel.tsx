@@ -46,7 +46,6 @@ type RendererState = {
   originNs: number | null;
   lastTimestamp: number;
   lastCursorCol: number | null;
-  lastSampleKey: string | null;
   yMaxMs: number;
   columnCycle: Int32Array;
   publishBins: Float32Array;
@@ -131,23 +130,12 @@ function makeRendererState(
     originNs: null,
     lastTimestamp: 0,
     lastCursorCol: null,
-    lastSampleKey: null,
     yMaxMs,
     columnCycle: cycle,
     publishBins: makeNaNBins(layout.cols),
     attrBins: makeNaNBins(layout.cols),
     leaseBinsByEndpoint: new Map<string, Float32Array>(),
   };
-}
-
-function sampleKey(sample: TimingTraceSample): string {
-  return [
-    sample.timestamp,
-    sample.metric,
-    sample.endpointId,
-    sample.sampleSeq ?? "",
-    sample.value,
-  ].join("|");
 }
 
 function matchesTopicScope(sampleTopic: string, topicScope: string[]): boolean {
@@ -421,6 +409,7 @@ export function TraceTimingPanel({
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<RendererState | null>(null);
+  const lastBatchRef = useRef<TimingTraceSample[] | null>(null);
   const autoYMaxMsRef = useRef<number | null>(null);
   const [autoYAxis, setAutoYAxis] = useState(true);
   const [manualYMaxInput, setManualYMaxInput] = useState(
@@ -480,6 +469,7 @@ export function TraceTimingPanel({
         desiredY
       );
       rendererRef.current = renderer;
+      lastBatchRef.current = null;
       autoYMaxMsRef.current = desiredY;
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, layout.width, layout.height);
@@ -494,37 +484,9 @@ export function TraceTimingPanel({
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
     let forceFullRedraw = needsReinit;
-
-    const lastKey = renderer.lastSampleKey;
-    let startIndex = 0;
-    if (lastKey !== null && samples.length > 0) {
-      let foundIndex = -1;
-      for (let idx = samples.length - 1; idx >= 0; idx -= 1) {
-        if (sampleKey(samples[idx]) === lastKey) {
-          foundIndex = idx;
-          break;
-        }
-      }
-      if (foundIndex >= 0) {
-        startIndex = foundIndex + 1;
-      } else {
-        renderer.publishBins.fill(Number.NaN);
-        renderer.attrBins.fill(Number.NaN);
-        renderer.columnCycle.fill(-2147483648);
-        for (const leaseBins of renderer.leaseBinsByEndpoint.values()) {
-          leaseBins.fill(Number.NaN);
-        }
-        renderer.originNs = null;
-        renderer.lastTimestamp = 0;
-        renderer.lastCursorCol = null;
-        forceFullRedraw = true;
-        startIndex = 0;
-      }
-    }
-
-    const incoming = samples.slice(startIndex);
-    if (incoming.length > 0) {
-      renderer.lastSampleKey = sampleKey(incoming[incoming.length - 1]);
+    const incoming = samples !== lastBatchRef.current ? samples : [];
+    if (samples !== lastBatchRef.current) {
+      lastBatchRef.current = samples;
     }
 
     for (const sample of incoming) {
@@ -619,7 +581,6 @@ export function TraceTimingPanel({
     }
     if (Math.abs(nextYMaxMs - renderer.yMaxMs) > 1e-9) {
       renderer.yMaxMs = nextYMaxMs;
-      forceFullRedraw = true;
     }
 
     if (processedAny && renderer.originNs !== null) {
@@ -633,7 +594,9 @@ export function TraceTimingPanel({
         renderer.lastCursorCol !== null
         && newestTimestamp - renderer.lastTimestamp >= renderer.windowNs
       ) {
-        forceFullRedraw = true;
+        for (let col = 0; col < renderer.layout.cols; col += 1) {
+          changedCols.add(col);
+        }
       } else if (renderer.lastCursorCol !== null) {
         addTraversedColumns(
           changedCols,
