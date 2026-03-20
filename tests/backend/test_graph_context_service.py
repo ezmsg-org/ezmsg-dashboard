@@ -15,10 +15,15 @@ class FakeContext:
     def __init__(self) -> None:
         self.update_calls: list[dict[str, object]] = []
         self.trace_control_calls: list[dict[str, object]] = []
+        self._profiling_snapshot: dict[UUID, object] = {}
         self._snapshot = SimpleNamespace(
+            graph={},
             processes={
                 UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(
                     units=["unit.patchable"]
+                ),
+                UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(
+                    units=["unit.remote"]
                 )
             },
             sessions={
@@ -39,6 +44,10 @@ class FakeContext:
 
     async def snapshot(self):
         return self._snapshot
+
+    async def profiling_snapshot_all(self, *, timeout_per_process: float):
+        _ = timeout_per_process
+        return self._profiling_snapshot
 
     async def update_setting(
         self,
@@ -197,3 +206,120 @@ async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filte
             "timeout": 1.25,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_processes() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    fake_context._profiling_snapshot = {
+        UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(subscribers={}),
+        UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(
+            subscribers={
+                "sub.remote": SimpleNamespace(topic="TOPIC"),
+            }
+        ),
+    }
+    service._context = fake_context  # controlled test context
+
+    payload = await service.set_profiling_trace_control(
+        process_id="00000000-0000-0000-0000-000000000123",
+        enabled=True,
+        publisher_endpoint_id="TOPIC:pub",
+        publisher_topic="TOPIC",
+        subscriber_topic=None,
+        metrics=[
+            "publish_delta_ns",
+            "lease_time_ns",
+            "attributable_backpressure_ns",
+        ],
+        sample_mod=1,
+        ttl_seconds=12.0,
+        timeout=1.25,
+    )
+
+    assert payload["process_id"] == "00000000-0000-0000-0000-000000000123"
+    assert set(payload["unit_addresses"]) == {"unit.patchable", "unit.remote"}
+    calls_by_unit = {
+        call["unit_address"]: call for call in fake_context.trace_control_calls
+    }
+    assert set(calls_by_unit.keys()) == {"unit.patchable", "unit.remote"}
+    assert calls_by_unit["unit.patchable"] == {
+        "unit_address": "unit.patchable",
+        "enabled": True,
+        "publisher_endpoint_ids": ["TOPIC:pub"],
+        "publisher_topics": ["TOPIC"],
+        "subscriber_topics": [],
+        "metrics": [
+            "publish_delta_ns",
+            "lease_time_ns",
+            "attributable_backpressure_ns",
+        ],
+        "sample_mod": 1,
+        "ttl_seconds": 12.0,
+        "timeout": 1.25,
+    }
+    assert calls_by_unit["unit.remote"] == {
+        "unit_address": "unit.remote",
+        "enabled": True,
+        "publisher_endpoint_ids": [],
+        "publisher_topics": [],
+        "subscriber_topics": ["TOPIC"],
+        "metrics": ["lease_time_ns", "attributable_backpressure_ns"],
+        "sample_mod": 1,
+        "ttl_seconds": 12.0,
+        "timeout": 1.25,
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_profiling_trace_control_disable_disables_all_active_route_units() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    fake_context._profiling_snapshot = {
+        UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(
+            subscribers={
+                "sub.remote": SimpleNamespace(topic="TOPIC"),
+            }
+        ),
+    }
+    service._context = fake_context  # controlled test context
+
+    await service.set_profiling_trace_control(
+        process_id="00000000-0000-0000-0000-000000000123",
+        enabled=True,
+        publisher_endpoint_id="TOPIC:pub",
+        publisher_topic="TOPIC",
+        subscriber_topic=None,
+        metrics=[
+            "publish_delta_ns",
+            "lease_time_ns",
+            "attributable_backpressure_ns",
+        ],
+        sample_mod=1,
+        ttl_seconds=12.0,
+        timeout=1.25,
+    )
+    fake_context.trace_control_calls.clear()
+
+    payload = await service.set_profiling_trace_control(
+        process_id="00000000-0000-0000-0000-000000000123",
+        enabled=False,
+        publisher_endpoint_id=None,
+        publisher_topic=None,
+        subscriber_topic=None,
+        metrics=None,
+        sample_mod=1,
+        ttl_seconds=12.0,
+        timeout=1.25,
+    )
+
+    assert payload["enabled"] is False
+    assert set(payload["unit_addresses"]) == {"unit.patchable", "unit.remote"}
+    assert len(fake_context.trace_control_calls) == 2
+    assert {call["unit_address"] for call in fake_context.trace_control_calls} == {
+        "unit.patchable",
+        "unit.remote",
+    }
+    for call in fake_context.trace_control_calls:
+        assert call["enabled"] is False

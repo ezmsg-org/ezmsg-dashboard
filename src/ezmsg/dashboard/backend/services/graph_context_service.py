@@ -103,6 +103,7 @@ class GraphContextLifecycleService:
         self._startup_lock = asyncio.Lock()
         self._shutdown_lock = asyncio.Lock()
         self._context: GraphContext | None = None
+        self._active_trace_route_units: set[str] = set()
 
     @property
     def is_started(self) -> bool:
@@ -125,6 +126,7 @@ class GraphContextLifecycleService:
             if context is None:
                 return
             self._context = None
+            self._active_trace_route_units.clear()
             await context.__aexit__(None, None, None)
 
     def _require_context(self) -> GraphContext:
@@ -231,48 +233,198 @@ class GraphContextLifecycleService:
             )
 
         route_unit = process_meta.units[0]
-        control = ProfilingTraceControl(
-            enabled=enabled,
-            sample_mod=max(1, int(sample_mod)),
-            publisher_topics=[publisher_topic]
-            if publisher_topic
-            else None,
-            subscriber_topics=[subscriber_topic]
-            if subscriber_topic
-            else None,
-            publisher_endpoint_ids=[publisher_endpoint_id]
-            if publisher_endpoint_id
-            else None,
+        normalized_sample_mod = max(1, int(sample_mod))
+
+        if not enabled:
+            targets = set(self._active_trace_route_units)
+            if len(targets) == 0:
+                targets = {route_unit}
+            await self._apply_disable_trace_controls(
+                context=context,
+                route_units=targets,
+                sample_mod=normalized_sample_mod,
+                timeout=timeout,
+            )
+            self._active_trace_route_units.clear()
+            return {
+                "process_id": process_id,
+                "unit_address": route_unit,
+                "unit_addresses": sorted(targets),
+                "enabled": False,
+                "control": {
+                    "sample_mod": normalized_sample_mod,
+                    "publisher_topics": [],
+                    "subscriber_topics": [],
+                    "publisher_endpoint_ids": [],
+                    "metrics": [],
+                    "ttl_seconds": ttl_seconds,
+                },
+            }
+
+        # Keep at most one active dashboard trace scope at a time across processes.
+        if len(self._active_trace_route_units) > 0:
+            await self._apply_disable_trace_controls(
+                context=context,
+                route_units=set(self._active_trace_route_units),
+                sample_mod=normalized_sample_mod,
+                timeout=timeout,
+            )
+            self._active_trace_route_units.clear()
+
+        publisher_control = ProfilingTraceControl(
+            enabled=True,
+            sample_mod=normalized_sample_mod,
+            publisher_topics=[publisher_topic] if publisher_topic else None,
+            subscriber_topics=[subscriber_topic] if subscriber_topic else None,
+            publisher_endpoint_ids=[publisher_endpoint_id] if publisher_endpoint_id else None,
             metrics=metrics if metrics else None,
             ttl_seconds=ttl_seconds,
         )
-        try:
-            response = await context.process_set_profiling_trace(
-                route_unit,
-                control,
-                timeout=timeout,
-            )
-        except Exception as exc:
-            raise ProfilingTraceControlError(str(exc)) from exc
 
-        if not response.ok:
-            raise ProfilingTraceControlError(
-                f"Process trace control rejected for '{process_id}': {response.error}"
-            )
+        controls_by_route_unit: dict[str, ProfilingTraceControl] = {
+            route_unit: publisher_control
+        }
 
+        subscriber_metrics = self._subscriber_trace_metrics(metrics)
+        subscriber_seed_topic = subscriber_topic or publisher_topic
+        if subscriber_seed_topic and len(subscriber_metrics) > 0:
+            candidate_topic_scope = self._topic_scope_for_seed(
+                graph_snapshot=graph_snapshot,
+                seed_topic=subscriber_seed_topic,
+            )
+            profiling_snapshot = await context.profiling_snapshot_all(
+                timeout_per_process=timeout
+            )
+            route_units_for_subscribers = self._route_units_with_subscribers_for_scope(
+                graph_snapshot=graph_snapshot,
+                profiling_snapshot=profiling_snapshot,
+                topic_scope=candidate_topic_scope,
+            )
+            route_units_for_subscribers.discard(route_unit)
+            for subscriber_route_unit in route_units_for_subscribers:
+                controls_by_route_unit[subscriber_route_unit] = ProfilingTraceControl(
+                    enabled=True,
+                    sample_mod=normalized_sample_mod,
+                    publisher_topics=None,
+                    subscriber_topics=sorted(candidate_topic_scope),
+                    publisher_endpoint_ids=None,
+                    metrics=subscriber_metrics,
+                    ttl_seconds=ttl_seconds,
+                )
+
+        for target_route_unit, control in controls_by_route_unit.items():
+            try:
+                response = await context.process_set_profiling_trace(
+                    target_route_unit,
+                    control,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                raise ProfilingTraceControlError(str(exc)) from exc
+
+            if not response.ok:
+                raise ProfilingTraceControlError(
+                    f"Process trace control rejected for '{process_id}': {response.error}"
+                )
+
+        self._active_trace_route_units = set(controls_by_route_unit.keys())
         return {
             "process_id": process_id,
             "unit_address": route_unit,
-            "enabled": enabled,
+            "unit_addresses": sorted(controls_by_route_unit.keys()),
+            "enabled": True,
             "control": {
-                "sample_mod": control.sample_mod,
-                "publisher_topics": control.publisher_topics,
-                "subscriber_topics": control.subscriber_topics,
-                "publisher_endpoint_ids": control.publisher_endpoint_ids,
-                "metrics": control.metrics,
-                "ttl_seconds": control.ttl_seconds,
+                "sample_mod": normalized_sample_mod,
+                "publisher_topics": publisher_control.publisher_topics,
+                "subscriber_topics": publisher_control.subscriber_topics,
+                "publisher_endpoint_ids": publisher_control.publisher_endpoint_ids,
+                "metrics": publisher_control.metrics,
+                "ttl_seconds": publisher_control.ttl_seconds,
+            },
+            "subscriber_scope": {
+                "seed_topic": subscriber_seed_topic,
+                "route_units": sorted(
+                    unit for unit in controls_by_route_unit.keys() if unit != route_unit
+                ),
+                "metrics": subscriber_metrics,
             },
         }
+
+    async def _apply_disable_trace_controls(
+        self,
+        *,
+        context: GraphContext,
+        route_units: set[str],
+        sample_mod: int,
+        timeout: float,
+    ) -> None:
+        disable_control = ProfilingTraceControl(
+            enabled=False,
+            sample_mod=sample_mod,
+            publisher_topics=None,
+            subscriber_topics=None,
+            publisher_endpoint_ids=None,
+            metrics=None,
+            ttl_seconds=None,
+        )
+        for target_route_unit in route_units:
+            try:
+                await context.process_set_profiling_trace(
+                    target_route_unit,
+                    disable_control,
+                    timeout=timeout,
+                )
+            except Exception:
+                continue
+
+    def _subscriber_trace_metrics(self, metrics: list[str] | None) -> list[str]:
+        allowed = {"lease_time_ns", "attributable_backpressure_ns"}
+        if metrics is None:
+            return ["lease_time_ns", "attributable_backpressure_ns"]
+        return [metric for metric in metrics if metric in allowed]
+
+    def _topic_scope_for_seed(
+        self,
+        *,
+        graph_snapshot: GraphSnapshot,
+        seed_topic: str,
+    ) -> set[str]:
+        out: set[str] = {seed_topic}
+        routed_topics = graph_snapshot.graph.get(seed_topic, [])
+        for routed_topic in routed_topics:
+            if isinstance(routed_topic, str):
+                out.add(routed_topic)
+        return out
+
+    def _route_units_with_subscribers_for_scope(
+        self,
+        *,
+        graph_snapshot: GraphSnapshot,
+        profiling_snapshot: dict[UUID, Any],
+        topic_scope: set[str],
+    ) -> set[str]:
+        route_units: set[str] = set()
+        for process_uuid, process_profile in profiling_snapshot.items():
+            process_meta = graph_snapshot.processes.get(process_uuid)
+            if process_meta is None or len(process_meta.units) == 0:
+                continue
+            subscribers = getattr(process_profile, "subscribers", {})
+            for subscriber in subscribers.values():
+                topic = getattr(subscriber, "topic", None)
+                if not isinstance(topic, str):
+                    continue
+                if self._topic_matches_scope(topic, topic_scope):
+                    route_units.add(process_meta.units[0])
+                    break
+        return route_units
+
+    def _topic_matches_scope(self, topic: str, topic_scope: set[str]) -> bool:
+        if topic in topic_scope:
+            return True
+        for scope_topic in topic_scope:
+            if topic.startswith(f"{scope_topic}:"):
+                return True
+        return False
 
     def _settings_with_patchability(
         self,

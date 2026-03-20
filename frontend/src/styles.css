@@ -623,11 +623,6 @@ body {
   display: inline-block;
 }
 
-.timing-trace__legend-meta {
-  font-size: 0.66rem;
-  color: #64748b;
-}
-
 .trace-metric-list {
   display: flex;
   flex-direction: column;

@@ -91,12 +91,6 @@ function parsePositiveFloat(value: string): number | null {
   return parsed;
 }
 
-function shortEndpointToken(endpointId: string): string {
-  const parts = endpointId.split(":");
-  const token = parts.length > 0 ? parts[parts.length - 1] : endpointId;
-  return token.slice(0, 8);
-}
-
 function makeLayout(canvas: HTMLCanvasElement, windowSeconds: number): PlotLayout {
   const width = Math.max(440, Math.floor(canvas.clientWidth));
   const height = 220;
@@ -996,11 +990,6 @@ export function TraceTimingPanel({
             }}
           />
           Subscribers
-          {selectedLeaseEndpointId ? (
-            <span className="timing-trace__legend-meta">
-              {shortEndpointToken(selectedLeaseEndpointId)}
-            </span>
-          ) : null}
         </button>
       </div>
     </div>
