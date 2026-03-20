@@ -704,6 +704,21 @@ body {
   text-overflow: ellipsis;
 }
 
+.subscriber-topic-with-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+}
+
+.subscriber-trace-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+
 .subscriber-endpoint-token {
   margin-top: 0.18rem;
   font-size: 0.76rem;

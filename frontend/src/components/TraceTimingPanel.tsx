@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { leaseColorForEndpoint } from "../utils/traceColors";
 
 export type TimingTraceSample = {
   timestamp: number;
@@ -22,18 +23,6 @@ type TraceTimingPanelProps = {
 const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
-const LEASE_SUBSCRIBER_COLORS = [
-  "#93c5fd",
-  "#a78bfa",
-  "#f9a8d4",
-  "#86efac",
-  "#fdba74",
-  "#67e8f9",
-  "#fca5a5",
-  "#c4b5fd",
-  "#fde68a",
-  "#6ee7b7",
-];
 const MIN_Y_MAX_MS = 0.25;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
 const AUTO_Y_HEADROOM = 1.1;
@@ -53,12 +42,6 @@ function parsePositiveFloat(value: string): number | null {
     return null;
   }
   return parsed;
-}
-
-function shortEndpoint(endpointId: string): string {
-  const parts = endpointId.split(":");
-  const token = parts.length > 1 ? parts[parts.length - 1] : endpointId;
-  return token.slice(0, 8);
 }
 
 export function TraceTimingPanel({
@@ -101,24 +84,6 @@ export function TraceTimingPanel({
       ),
     [effectiveTopicScope, samples]
   );
-  const leaseEndpointIds = useMemo(
-    () =>
-      [...new Set(
-        filtered
-          .filter((sample) => sample.metric === "lease_time_ns")
-          .map((sample) => sample.endpointId)
-      )].sort(),
-    [filtered]
-  );
-  const leaseColorMap = useMemo(() => {
-    return new Map<string, string>(
-      leaseEndpointIds.map((endpointId, index) => [
-        endpointId,
-        LEASE_SUBSCRIBER_COLORS[index % LEASE_SUBSCRIBER_COLORS.length],
-      ])
-    );
-  }, [leaseEndpointIds]);
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -201,14 +166,6 @@ export function TraceTimingPanel({
     context.lineTo(left + plotWidth, plotBottom);
     context.stroke();
 
-    const cursorX = xOf(latestTimestamp);
-    context.strokeStyle = CURSOR_COLOR;
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(cursorX, top);
-    context.lineTo(cursorX, top + plotHeight);
-    context.stroke();
-
     const publisherSeries = recent
       .filter(
         (sample) =>
@@ -221,6 +178,18 @@ export function TraceTimingPanel({
     const attributableSeries = recent.filter(
       (sample) => sample.metric === "attributable_backpressure_ns"
     );
+    const leaseSeriesByEndpoint = new Map<string, typeof leaseSeries>();
+    for (const sample of leaseSeries) {
+      const endpointSeries = leaseSeriesByEndpoint.get(sample.endpointId);
+      if (endpointSeries) {
+        endpointSeries.push(sample);
+      } else {
+        leaseSeriesByEndpoint.set(sample.endpointId, [sample]);
+      }
+    }
+    for (const endpointSeries of leaseSeriesByEndpoint.values()) {
+      endpointSeries.sort((a, b) => a.timestamp - b.timestamp);
+    }
 
     const maxObservedMs = Math.max(
       MIN_Y_MAX_MS,
@@ -244,6 +213,45 @@ export function TraceTimingPanel({
         manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS
       );
       autoYMaxMsRef.current = sharedYMaxMs;
+    }
+
+    context.strokeStyle = ATTR_BP_COLOR;
+    context.lineWidth = 1;
+    context.globalAlpha = 0.5;
+    for (const sample of attributableSeries) {
+      const x = xOf(sample.timestamp);
+      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
+      context.beginPath();
+      context.moveTo(x, plotBottom);
+      context.lineTo(x, y);
+      context.stroke();
+    }
+    context.globalAlpha = 1;
+
+    for (const [endpointId, endpointSeries] of leaseSeriesByEndpoint.entries()) {
+      context.strokeStyle = leaseColorForEndpoint(endpointId);
+      context.lineWidth = 1.1;
+      context.beginPath();
+      let started = false;
+      let previousX = 0;
+      for (const sample of endpointSeries) {
+        const x = xOf(sample.timestamp);
+        const y = yFromMs(toMs(sample.value), sharedYMaxMs);
+        if (!started || x < previousX) {
+          if (started) {
+            context.stroke();
+            context.beginPath();
+          }
+          context.moveTo(x, y);
+          started = true;
+        } else {
+          context.lineTo(x, y);
+        }
+        previousX = x;
+      }
+      if (started) {
+        context.stroke();
+      }
     }
 
     context.strokeStyle = PUBLISH_COLOR;
@@ -270,25 +278,13 @@ export function TraceTimingPanel({
       context.stroke();
     }
 
-    for (const sample of leaseSeries) {
-      const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
-      context.fillStyle = leaseColorMap.get(sample.endpointId) ?? "#93c5fd";
-      context.beginPath();
-      context.arc(x, y, 2.2, 0, Math.PI * 2);
-      context.fill();
-    }
-
-    context.strokeStyle = ATTR_BP_COLOR;
-    context.lineWidth = 1;
-    for (const sample of attributableSeries) {
-      const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
-      context.beginPath();
-      context.moveTo(x, plotBottom);
-      context.lineTo(x, y);
-      context.stroke();
-    }
+    const cursorX = xOf(latestTimestamp);
+    context.strokeStyle = CURSOR_COLOR;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(cursorX, top);
+    context.lineTo(cursorX, top + plotHeight);
+    context.stroke();
 
     context.fillStyle = "#cbd5e1";
     context.font = '11px "Avenir Next", sans-serif';
@@ -302,7 +298,6 @@ export function TraceTimingPanel({
   }, [
     autoYAxis,
     filtered,
-    leaseColorMap,
     manualYMaxMs,
     publisherEndpointId,
     publisherProcessId,
@@ -353,12 +348,6 @@ export function TraceTimingPanel({
           <i style={{ background: ATTR_BP_COLOR }} />
           Attr BP
         </span>
-        {leaseEndpointIds.map((endpointId) => (
-          <span key={endpointId} className="timing-trace__legend-item">
-            <i style={{ background: leaseColorMap.get(endpointId) ?? "#93c5fd" }} />
-            Lease {shortEndpoint(endpointId)}
-          </span>
-        ))}
       </div>
     </div>
   );

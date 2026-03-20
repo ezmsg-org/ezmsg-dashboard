@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Panel } from "./Panel";
 import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
+import { leaseColorForEndpoint } from "../utils/traceColors";
 import type {
   GraphSnapshotPayload,
   ProfilingTraceControlRequest,
@@ -677,7 +678,17 @@ export function ProfilingPanel({
                                     className="mono subscriber-topic-short"
                                     title={contributor.topic}
                                   >
-                                    {shortTopic(contributor.topic, 72)}
+                                    <span className="subscriber-topic-with-color">
+                                      <i
+                                        className="subscriber-trace-dot"
+                                        style={{
+                                          background: leaseColorForEndpoint(
+                                            contributor.endpointId
+                                          ),
+                                        }}
+                                      />
+                                      {shortTopic(contributor.topic, 72)}
+                                    </span>
                                   </p>
                                   <p
                                     className="muted mono subscriber-endpoint-token"
