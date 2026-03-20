@@ -72,7 +72,8 @@ const TRACE_WINDOW_MIN_SECONDS = 0.5;
 const TRACE_WINDOW_MAX_SECONDS = 30.0;
 const TRACE_HISTORY_RETENTION_MULTIPLIER = 1.35;
 const TRACE_HISTORY_HARD_MIN = 2_000;
-const TRACE_HISTORY_HARD_MAX = 30_000;
+const TRACE_HISTORY_HARD_MAX = 15_000;
+const TRACE_EXPECTED_METRICS_PER_MESSAGE = 3;
 const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set([
   "lease_time_ns",
@@ -118,8 +119,27 @@ function normalizeWindowSeconds(value: number): number {
 
 function traceHistoryHardMax(row: PublisherRow | undefined, windowSeconds: number): number {
   const publishRateHz = row ? Math.max(1, row.publishRateHzWindow) : 1;
-  const estimate = Math.ceil(publishRateHz * windowSeconds * 1.35);
+  const estimate = Math.ceil(
+    publishRateHz * windowSeconds * TRACE_EXPECTED_METRICS_PER_MESSAGE * 0.9
+  );
   return clamp(estimate, TRACE_HISTORY_HARD_MIN, TRACE_HISTORY_HARD_MAX);
+}
+
+function findFirstTimestampAtOrAfter(
+  samples: PublisherTraceSample[],
+  cutoffNs: number
+): number {
+  let low = 0;
+  let high = samples.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (samples[mid].timestamp < cutoffNs) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
 }
 
 function shortEndpointToken(endpointId: string): string {
@@ -444,10 +464,7 @@ export function ProfilingPanel({
         const retentionNs =
           windowSeconds * TRACE_HISTORY_RETENTION_MULTIPLIER * 1_000_000_000;
         const cutoffNs = latestTimestamp - retentionNs;
-        let keepFrom = 0;
-        while (keepFrom < merged.length && merged[keepFrom].timestamp < cutoffNs) {
-          keepFrom += 1;
-        }
+        const keepFrom = findFirstTimestampAtOrAfter(merged, cutoffNs);
         if (keepFrom > 0) {
           merged.splice(0, keepFrom);
         }

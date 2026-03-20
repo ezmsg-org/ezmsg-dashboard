@@ -22,6 +22,42 @@ type TraceTimingPanelProps = {
   onWindowSecondsChange?: (seconds: number) => void;
 };
 
+type PlotLayout = {
+  width: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  plotWidth: number;
+  plotHeight: number;
+  plotTop: number;
+  plotBottom: number;
+  cols: number;
+  xTicks: number;
+  yTicks: number;
+};
+
+type RendererState = {
+  layout: PlotLayout;
+  windowNs: number;
+  scopeSignature: string;
+  publisherSignature: string;
+  originNs: number | null;
+  lastTimestamp: number;
+  lastCursorCol: number | null;
+  lastSampleKey: string | null;
+  yMaxMs: number;
+  columnCycle: Int32Array;
+  publishBins: Float32Array;
+  attrBins: Float32Array;
+  leaseBinsByEndpoint: Map<string, Float32Array>;
+};
+
+const BG_COLOR = "#0f172a";
+const GRID_COLOR = "#1e293b";
+const AXIS_COLOR = "#334155";
+const LABEL_COLOR = "#cbd5e1";
 const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
@@ -46,44 +82,331 @@ function parsePositiveFloat(value: string): number | null {
   return parsed;
 }
 
-type SeriesBin = {
-  hasValue: boolean;
-  maxMs: number;
-};
-
-function buildSeriesBins(
-  series: TimingTraceSample[],
-  {
+function makeLayout(canvas: HTMLCanvasElement, windowSeconds: number): PlotLayout {
+  const width = Math.max(440, Math.floor(canvas.clientWidth));
+  const height = 220;
+  const left = 52;
+  const right = 16;
+  const top = 12;
+  const bottom = 24;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  return {
+    width,
+    height,
     left,
+    right,
+    top,
+    bottom,
     plotWidth,
+    plotHeight,
+    plotTop: top + 2,
+    plotBottom: top + plotHeight - 2,
+    cols: Math.max(1, Math.floor(plotWidth)),
+    xTicks: Math.max(2, Math.floor(windowSeconds / 0.5)),
+    yTicks: 4,
+  };
+}
+
+function makeNaNBins(cols: number): Float32Array {
+  const bins = new Float32Array(cols);
+  bins.fill(Number.NaN);
+  return bins;
+}
+
+function makeRendererState(
+  layout: PlotLayout,
+  windowNs: number,
+  scopeSignature: string,
+  publisherSignature: string,
+  yMaxMs: number
+): RendererState {
+  const cycle = new Int32Array(layout.cols);
+  cycle.fill(-2147483648);
+  return {
+    layout,
+    windowNs,
+    scopeSignature,
+    publisherSignature,
+    originNs: null,
+    lastTimestamp: 0,
+    lastCursorCol: null,
+    lastSampleKey: null,
     yMaxMs,
-    xOf,
-  }: {
-    left: number;
-    plotWidth: number;
-    yMaxMs: number;
-    xOf: (timestamp: number) => number;
+    columnCycle: cycle,
+    publishBins: makeNaNBins(layout.cols),
+    attrBins: makeNaNBins(layout.cols),
+    leaseBinsByEndpoint: new Map<string, Float32Array>(),
+  };
+}
+
+function sampleKey(sample: TimingTraceSample): string {
+  return [
+    sample.timestamp,
+    sample.metric,
+    sample.endpointId,
+    sample.sampleSeq ?? "",
+    sample.value,
+  ].join("|");
+}
+
+function matchesTopicScope(sampleTopic: string, topicScope: string[]): boolean {
+  for (const topic of topicScope) {
+    if (sampleTopic === topic || sampleTopic.startsWith(`${topic}:`)) {
+      return true;
+    }
   }
-): SeriesBin[] {
-  const widthCols = Math.max(1, Math.floor(plotWidth));
-  const bins: SeriesBin[] = Array.from({ length: widthCols }, () => ({
-    hasValue: false,
-    maxMs: 0,
-  }));
-  for (const sample of series) {
-    const valueMs = toMs(sample.value);
-    if (valueMs > yMaxMs) {
+  return false;
+}
+
+function colForTimestamp(
+  timestamp: number,
+  origin: number,
+  windowNs: number,
+  cols: number
+): { col: number; cycle: number } {
+  const delta = timestamp - origin;
+  const cycle = Math.floor(delta / windowNs);
+  const wrapped = ((delta % windowNs) + windowNs) % windowNs;
+  const col = clamp(Math.floor((wrapped / windowNs) * cols), 0, cols - 1);
+  return { col, cycle };
+}
+
+function yFromMs(valueMs: number, yMaxMs: number, layout: PlotLayout): number {
+  const ratio = clamp(valueMs / Math.max(yMaxMs, 1e-9), 0, 1);
+  return layout.plotBottom - ratio * (layout.plotBottom - layout.plotTop);
+}
+
+function clearRange(
+  context: CanvasRenderingContext2D,
+  layout: PlotLayout,
+  startCol: number,
+  endCol: number
+): void {
+  const start = clamp(startCol, 0, layout.cols - 1);
+  const end = clamp(endCol, 0, layout.cols - 1);
+  if (end < start) {
+    return;
+  }
+  const x0 = layout.left + start;
+  const width = end - start + 1;
+  context.fillStyle = BG_COLOR;
+  context.fillRect(x0, layout.top, width, layout.plotHeight);
+
+  context.strokeStyle = GRID_COLOR;
+  context.lineWidth = 1;
+  for (let i = 0; i <= layout.xTicks; i += 1) {
+    const x = layout.left + (i / layout.xTicks) * layout.plotWidth;
+    if (x < x0 - 1 || x > x0 + width + 1) {
       continue;
     }
-    const x = xOf(sample.timestamp);
-    const col = clamp(Math.floor(x - left), 0, widthCols - 1);
-    const bin = bins[col];
-    if (!bin.hasValue || valueMs > bin.maxMs) {
-      bin.hasValue = true;
-      bin.maxMs = valueMs;
+    context.beginPath();
+    context.moveTo(x, layout.top);
+    context.lineTo(x, layout.top + layout.plotHeight);
+    context.stroke();
+  }
+  for (let i = 0; i <= layout.yTicks; i += 1) {
+    const y =
+      layout.plotBottom - (i / layout.yTicks) * (layout.plotBottom - layout.plotTop);
+    context.beginPath();
+    context.moveTo(x0, y);
+    context.lineTo(x0 + width, y);
+    context.stroke();
+  }
+  context.strokeStyle = AXIS_COLOR;
+  context.beginPath();
+  context.moveTo(x0, layout.plotBottom);
+  context.lineTo(x0 + width, layout.plotBottom);
+  context.stroke();
+}
+
+function drawLineRange(
+  context: CanvasRenderingContext2D,
+  bins: Float32Array,
+  {
+    color,
+    lineWidth,
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  }: {
+    color: string;
+    lineWidth: number;
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+  }
+): void {
+  const from = Math.max(0, startCol - 1);
+  const to = Math.min(layout.cols - 1, endCol + 1);
+  context.strokeStyle = color;
+  context.lineWidth = lineWidth;
+  context.beginPath();
+  let started = false;
+  for (let col = from; col <= to; col += 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs) || valueMs > yMaxMs) {
+      if (started) {
+        context.stroke();
+        context.beginPath();
+        started = false;
+      }
+      continue;
+    }
+    const x = layout.left + col + 0.5;
+    const y = yFromMs(valueMs, yMaxMs, layout);
+    if (!started) {
+      context.moveTo(x, y);
+      started = true;
+    } else {
+      context.lineTo(x, y);
     }
   }
-  return bins;
+  if (started) {
+    context.stroke();
+  }
+}
+
+function drawAttrRange(
+  context: CanvasRenderingContext2D,
+  bins: Float32Array,
+  {
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  }: {
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+  }
+): void {
+  context.strokeStyle = ATTR_BP_COLOR;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.5;
+  for (let col = startCol; col <= endCol; col += 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs) || valueMs > yMaxMs) {
+      continue;
+    }
+    const x = layout.left + col + 0.5;
+    const y = yFromMs(valueMs, yMaxMs, layout);
+    context.beginPath();
+    context.moveTo(x, layout.plotBottom);
+    context.lineTo(x, y);
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+}
+
+function drawRange(
+  context: CanvasRenderingContext2D,
+  state: RendererState,
+  startCol: number,
+  endCol: number,
+  leaseColorMap?: Record<string, string>
+): void {
+  clearRange(context, state.layout, startCol, endCol);
+  drawAttrRange(context, state.attrBins, {
+    startCol,
+    endCol,
+    yMaxMs: state.yMaxMs,
+    layout: state.layout,
+  });
+  for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
+    drawLineRange(context, bins, {
+      color: leaseColorForEndpoint(endpointId, leaseColorMap),
+      lineWidth: 1.1,
+      startCol,
+      endCol,
+      yMaxMs: state.yMaxMs,
+      layout: state.layout,
+    });
+  }
+  drawLineRange(context, state.publishBins, {
+    color: PUBLISH_COLOR,
+    lineWidth: 1.25,
+    startCol,
+    endCol,
+    yMaxMs: state.yMaxMs,
+    layout: state.layout,
+  });
+}
+
+function drawLabelsAndCursor(
+  context: CanvasRenderingContext2D,
+  state: RendererState,
+  windowSeconds: number
+): void {
+  const { layout } = state;
+  context.fillStyle = BG_COLOR;
+  context.fillRect(0, 0, layout.left - 2, layout.height);
+  context.fillRect(layout.left, layout.plotBottom + 1, layout.plotWidth, layout.bottom + 6);
+
+  if (state.lastCursorCol !== null) {
+    const x = layout.left + state.lastCursorCol + 0.5;
+    context.strokeStyle = CURSOR_COLOR;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(x, layout.top);
+    context.lineTo(x, layout.top + layout.plotHeight);
+    context.stroke();
+  }
+
+  context.fillStyle = LABEL_COLOR;
+  context.font = '11px "Avenir Next", sans-serif';
+  context.fillText(
+    `${windowSeconds.toFixed(1)}s`,
+    layout.left + layout.plotWidth - 24,
+    layout.top + layout.plotHeight + 16
+  );
+  context.fillText(`${state.yMaxMs.toFixed(2)} ms`, 6, layout.plotTop + 8);
+  context.fillText("0 ms", 8, layout.plotBottom + 4);
+}
+
+function addTraversedColumns(
+  changed: Set<number>,
+  fromCol: number,
+  toCol: number,
+  cols: number
+): void {
+  if (toCol >= fromCol) {
+    for (let col = fromCol; col <= toCol; col += 1) {
+      changed.add(col);
+    }
+    return;
+  }
+  for (let col = fromCol; col < cols; col += 1) {
+    changed.add(col);
+  }
+  for (let col = 0; col <= toCol; col += 1) {
+    changed.add(col);
+  }
+}
+
+function columnRanges(changed: Set<number>): Array<{ start: number; end: number }> {
+  const sorted = Array.from(changed).sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    return [];
+  }
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const col = sorted[i];
+    if (col === end + 1) {
+      end = col;
+      continue;
+    }
+    ranges.push({ start, end });
+    start = col;
+    end = col;
+  }
+  ranges.push({ start, end });
+  return ranges;
 }
 
 export function TraceTimingPanel({
@@ -97,7 +420,7 @@ export function TraceTimingPanel({
   onWindowSecondsChange,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const originRef = useRef<number | null>(null);
+  const rendererRef = useRef<RendererState | null>(null);
   const autoYMaxMsRef = useRef<number | null>(null);
   const [autoYAxis, setAutoYAxis] = useState(true);
   const [manualYMaxInput, setManualYMaxInput] = useState(
@@ -113,262 +436,252 @@ export function TraceTimingPanel({
     () => (topicScope && topicScope.length > 0 ? topicScope : [topic]),
     [topic, topicScope]
   );
-
-  const filtered = useMemo(
-    () =>
-      samples.filter(
-        (sample) =>
-          effectiveTopicScope.some(
-            (candidateTopic) =>
-              sample.topic === candidateTopic
-              || sample.topic.startsWith(`${candidateTopic}:`)
-          )
-          && Number.isFinite(sample.timestamp)
-          && Number.isFinite(sample.value)
-      ),
-    [effectiveTopicScope, samples]
+  const scopeSignature = useMemo(
+    () => [...effectiveTopicScope].sort().join("|"),
+    [effectiveTopicScope]
   );
+  const publisherSignature = `${publisherProcessId}|${publisherEndpointId}`;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
     }
-    const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
-    const width = Math.max(440, Math.floor(canvas.clientWidth));
-    const height = 220;
-    canvas.width = Math.floor(width * devicePixelRatio);
-    canvas.height = Math.floor(height * devicePixelRatio);
-
     const context = canvas.getContext("2d");
     if (!context) {
       return;
     }
+
+    const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const layout = makeLayout(canvas, windowSeconds);
+    canvas.width = Math.floor(layout.width * devicePixelRatio);
+    canvas.height = Math.floor(layout.height * devicePixelRatio);
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    context.clearRect(0, 0, width, height);
-
-    const left = 52;
-    const right = 16;
-    const top = 12;
-    const bottom = 24;
-    const plotWidth = width - left - right;
-    const plotHeight = height - top - bottom;
-    const plotTop = top + 2;
-    const plotBottom = top + plotHeight - 2;
-
-    context.fillStyle = "#0f172a";
-    context.fillRect(0, 0, width, height);
 
     const windowNs = Math.max(1, windowSeconds * 1_000_000_000);
-    const latestTimestamp = filtered.reduce(
-      (latest, sample) => Math.max(latest, sample.timestamp),
-      0
-    );
-    if (!Number.isFinite(latestTimestamp) || latestTimestamp <= 0) {
-      context.fillStyle = "#94a3b8";
-      context.font = '12px "Avenir Next", sans-serif';
-      context.fillText("Waiting for trace samples...", left, top + 14);
+    const desiredY = autoYAxis
+      ? Math.max(MIN_Y_MAX_MS, autoYMaxMsRef.current ?? MIN_Y_MAX_MS)
+      : Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
+
+    let renderer = rendererRef.current;
+    const needsReinit =
+      renderer === null
+      || renderer.layout.cols !== layout.cols
+      || renderer.layout.width !== layout.width
+      || renderer.windowNs !== windowNs
+      || renderer.scopeSignature !== scopeSignature
+      || renderer.publisherSignature !== publisherSignature;
+    if (needsReinit) {
+      renderer = makeRendererState(
+        layout,
+        windowNs,
+        scopeSignature,
+        publisherSignature,
+        desiredY
+      );
+      rendererRef.current = renderer;
+      autoYMaxMsRef.current = desiredY;
+      context.fillStyle = BG_COLOR;
+      context.fillRect(0, 0, layout.width, layout.height);
+    }
+
+    if (renderer === null) {
       return;
     }
-    if (originRef.current === null || latestTimestamp < originRef.current) {
-      originRef.current = latestTimestamp;
-    }
-    const origin = originRef.current;
-    const minTs = latestTimestamp - windowNs;
-    const recent = filtered.filter((sample) => sample.timestamp >= minTs);
 
-    const xOf = (timestamp: number): number => {
-      const delta = timestamp - origin;
-      const wrapped = ((delta % windowNs) + windowNs) % windowNs;
-      return left + (wrapped / windowNs) * plotWidth;
-    };
-    const yFromMs = (valueMs: number, maxMs: number): number => {
-      const ratio = clamp(valueMs / Math.max(maxMs, 1e-9), 0, 1);
-      return plotBottom - ratio * (plotBottom - plotTop);
-    };
+    const changedCols = new Set<number>();
+    let batchMaxMs = MIN_Y_MAX_MS;
+    let newestTimestamp = renderer.lastTimestamp;
+    let processedAny = false;
+    let forceFullRedraw = needsReinit;
 
-    context.strokeStyle = "#1e293b";
-    context.lineWidth = 1;
-    const tickCount = Math.max(2, Math.floor(windowSeconds / 0.5));
-    for (let i = 0; i <= tickCount; i += 1) {
-      const x = left + (i / tickCount) * plotWidth;
-      context.beginPath();
-      context.moveTo(x, top);
-      context.lineTo(x, top + plotHeight);
-      context.stroke();
-    }
-    const yTickCount = 4;
-    for (let i = 0; i <= yTickCount; i += 1) {
-      const y = plotBottom - (i / yTickCount) * (plotBottom - plotTop);
-      context.beginPath();
-      context.moveTo(left, y);
-      context.lineTo(left + plotWidth, y);
-      context.stroke();
-    }
-    context.strokeStyle = "#334155";
-    context.beginPath();
-    context.moveTo(left, plotBottom);
-    context.lineTo(left + plotWidth, plotBottom);
-    context.stroke();
-
-    const publisherSeries = recent
-      .filter(
-        (sample) =>
-          sample.metric === "publish_delta_ns"
-          && sample.processId === publisherProcessId
-          && sample.endpointId === publisherEndpointId
-      );
-    const leaseSeries = recent
-      .filter((sample) => sample.metric === "lease_time_ns");
-    const attributableSeries = recent
-      .filter((sample) => sample.metric === "attributable_backpressure_ns");
-    const leaseSeriesByEndpoint = new Map<string, typeof leaseSeries>();
-    for (const sample of leaseSeries) {
-      const endpointSeries = leaseSeriesByEndpoint.get(sample.endpointId);
-      if (endpointSeries) {
-        endpointSeries.push(sample);
+    const lastKey = renderer.lastSampleKey;
+    let startIndex = 0;
+    if (lastKey !== null && samples.length > 0) {
+      let foundIndex = -1;
+      for (let idx = samples.length - 1; idx >= 0; idx -= 1) {
+        if (sampleKey(samples[idx]) === lastKey) {
+          foundIndex = idx;
+          break;
+        }
+      }
+      if (foundIndex >= 0) {
+        startIndex = foundIndex + 1;
       } else {
-        leaseSeriesByEndpoint.set(sample.endpointId, [sample]);
+        renderer.publishBins.fill(Number.NaN);
+        renderer.attrBins.fill(Number.NaN);
+        renderer.columnCycle.fill(-2147483648);
+        for (const leaseBins of renderer.leaseBinsByEndpoint.values()) {
+          leaseBins.fill(Number.NaN);
+        }
+        renderer.originNs = null;
+        renderer.lastTimestamp = 0;
+        renderer.lastCursorCol = null;
+        forceFullRedraw = true;
+        startIndex = 0;
       }
     }
-    const maxObservedMs = Math.max(
-      MIN_Y_MAX_MS,
-      ...publisherSeries.map((sample) => toMs(sample.value)),
-      ...leaseSeries.map((sample) => toMs(sample.value)),
-      ...attributableSeries.map((sample) => toMs(sample.value))
-    );
-    let sharedYMaxMs = MIN_Y_MAX_MS;
+
+    const incoming = samples.slice(startIndex);
+    if (incoming.length > 0) {
+      renderer.lastSampleKey = sampleKey(incoming[incoming.length - 1]);
+    }
+
+    for (const sample of incoming) {
+      if (
+        !Number.isFinite(sample.timestamp)
+        || !Number.isFinite(sample.value)
+        || !matchesTopicScope(sample.topic, effectiveTopicScope)
+      ) {
+        continue;
+      }
+      const isPublisherMetric =
+        sample.metric === "publish_delta_ns"
+        && sample.processId === publisherProcessId
+        && sample.endpointId === publisherEndpointId;
+      const isAttrMetric = sample.metric === "attributable_backpressure_ns";
+      const isLeaseMetric = sample.metric === "lease_time_ns";
+      if (!isPublisherMetric && !isAttrMetric && !isLeaseMetric) {
+        continue;
+      }
+
+      if (renderer.originNs === null) {
+        renderer.originNs = sample.timestamp;
+      }
+      if (renderer.originNs === null || sample.timestamp < renderer.originNs) {
+        continue;
+      }
+
+      const { col, cycle } = colForTimestamp(
+        sample.timestamp,
+        renderer.originNs,
+        renderer.windowNs,
+        renderer.layout.cols
+      );
+      if (cycle > renderer.columnCycle[col]) {
+        renderer.publishBins[col] = Number.NaN;
+        renderer.attrBins[col] = Number.NaN;
+        for (const leaseBins of renderer.leaseBinsByEndpoint.values()) {
+          leaseBins[col] = Number.NaN;
+        }
+        renderer.columnCycle[col] = cycle;
+        changedCols.add(col);
+      }
+
+      const valueMs = toMs(sample.value);
+      if (!Number.isFinite(valueMs) || valueMs < 0) {
+        continue;
+      }
+
+      if (isPublisherMetric) {
+        const current = renderer.publishBins[col];
+        if (!Number.isFinite(current) || valueMs > current) {
+          renderer.publishBins[col] = valueMs;
+          changedCols.add(col);
+        }
+      } else if (isAttrMetric) {
+        const current = renderer.attrBins[col];
+        if (!Number.isFinite(current) || valueMs > current) {
+          renderer.attrBins[col] = valueMs;
+          changedCols.add(col);
+        }
+      } else {
+        let leaseBins = renderer.leaseBinsByEndpoint.get(sample.endpointId);
+        if (!leaseBins) {
+          leaseBins = makeNaNBins(renderer.layout.cols);
+          renderer.leaseBinsByEndpoint.set(sample.endpointId, leaseBins);
+        }
+        const current = leaseBins[col];
+        if (!Number.isFinite(current) || valueMs > current) {
+          leaseBins[col] = valueMs;
+          changedCols.add(col);
+        }
+      }
+
+      batchMaxMs = Math.max(batchMaxMs, valueMs);
+      newestTimestamp = Math.max(newestTimestamp, sample.timestamp);
+      processedAny = true;
+    }
+
+    let nextYMaxMs = renderer.yMaxMs;
     if (autoYAxis) {
-      const target = Math.max(MIN_Y_MAX_MS, maxObservedMs * AUTO_Y_HEADROOM);
+      const target = Math.max(MIN_Y_MAX_MS, batchMaxMs * AUTO_Y_HEADROOM);
       const previous = autoYMaxMsRef.current;
       if (previous === null || target >= previous) {
-        sharedYMaxMs = target;
+        nextYMaxMs = target;
       } else {
-        sharedYMaxMs = Math.max(target, previous * AUTO_Y_DECAY);
+        nextYMaxMs = Math.max(target, previous * AUTO_Y_DECAY);
       }
-      autoYMaxMsRef.current = sharedYMaxMs;
+      autoYMaxMsRef.current = nextYMaxMs;
     } else {
-      sharedYMaxMs = Math.max(
-        MIN_Y_MAX_MS,
-        manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS
+      nextYMaxMs = Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
+      autoYMaxMsRef.current = nextYMaxMs;
+    }
+    if (Math.abs(nextYMaxMs - renderer.yMaxMs) > 1e-9) {
+      renderer.yMaxMs = nextYMaxMs;
+      forceFullRedraw = true;
+    }
+
+    if (processedAny && renderer.originNs !== null) {
+      const latest = colForTimestamp(
+        newestTimestamp,
+        renderer.originNs,
+        renderer.windowNs,
+        renderer.layout.cols
       );
-      autoYMaxMsRef.current = sharedYMaxMs;
-    }
-
-    context.strokeStyle = ATTR_BP_COLOR;
-    context.lineWidth = 1;
-    context.globalAlpha = 0.5;
-    const attributableBins = buildSeriesBins(attributableSeries, {
-      left,
-      plotWidth,
-      yMaxMs: sharedYMaxMs,
-      xOf,
-    });
-    for (let col = 0; col < attributableBins.length; col += 1) {
-      const bin = attributableBins[col];
-      if (!bin.hasValue) {
-        continue;
-      }
-      const x = left + col + 0.5;
-      const y = yFromMs(bin.maxMs, sharedYMaxMs);
-      context.beginPath();
-      context.moveTo(x, plotBottom);
-      context.lineTo(x, y);
-      context.stroke();
-    }
-    context.globalAlpha = 1;
-
-    for (const [endpointId, endpointSeries] of leaseSeriesByEndpoint.entries()) {
-      context.strokeStyle = leaseColorForEndpoint(endpointId, leaseColorMap);
-      context.lineWidth = 1.1;
-      const bins = buildSeriesBins(endpointSeries, {
-        left,
-        plotWidth,
-        yMaxMs: sharedYMaxMs,
-        xOf,
-      });
-      context.beginPath();
-      let started = false;
-      for (let col = 0; col < bins.length; col += 1) {
-        const bin = bins[col];
-        const x = left + col + 0.5;
-        if (!bin.hasValue) {
-          if (started) {
-            context.stroke();
-            context.beginPath();
-            started = false;
-          }
-          continue;
-        }
-        const y = yFromMs(bin.maxMs, sharedYMaxMs);
-        if (!started) {
-          context.moveTo(x, y);
-          started = true;
-        } else {
-          context.lineTo(x, y);
-        }
-      }
-      if (started) {
-        context.stroke();
-      }
-    }
-
-    context.strokeStyle = PUBLISH_COLOR;
-    context.lineWidth = 1.25;
-    const publishBins = buildSeriesBins(publisherSeries, {
-      left,
-      plotWidth,
-      yMaxMs: sharedYMaxMs,
-      xOf,
-    });
-    context.beginPath();
-    let started = false;
-    for (let col = 0; col < publishBins.length; col += 1) {
-      const bin = publishBins[col];
-      const x = left + col + 0.5;
-      if (!bin.hasValue) {
-        if (started) {
-          context.stroke();
-          context.beginPath();
-          started = false;
-        }
-        continue;
-      }
-      const y = yFromMs(bin.maxMs, sharedYMaxMs);
-      if (!started) {
-        context.moveTo(x, y);
-        started = true;
+      if (
+        renderer.lastCursorCol !== null
+        && newestTimestamp - renderer.lastTimestamp >= renderer.windowNs
+      ) {
+        forceFullRedraw = true;
+      } else if (renderer.lastCursorCol !== null) {
+        addTraversedColumns(
+          changedCols,
+          renderer.lastCursorCol,
+          latest.col,
+          renderer.layout.cols
+        );
       } else {
-        context.lineTo(x, y);
+        changedCols.add(latest.col);
+      }
+      if (renderer.lastCursorCol !== null) {
+        changedCols.add(renderer.lastCursorCol);
+      }
+      renderer.lastCursorCol = latest.col;
+      renderer.lastTimestamp = newestTimestamp;
+    }
+
+    if (forceFullRedraw) {
+      context.fillStyle = BG_COLOR;
+      context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
+      drawRange(context, renderer, 0, renderer.layout.cols - 1, leaseColorMap);
+    } else if (changedCols.size > 0) {
+      for (const range of columnRanges(changedCols)) {
+        drawRange(context, renderer, range.start, range.end, leaseColorMap);
       }
     }
-    if (started) {
-      context.stroke();
+
+    if (renderer.lastTimestamp <= 0) {
+      context.fillStyle = BG_COLOR;
+      context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
+      context.fillStyle = "#94a3b8";
+      context.font = '12px "Avenir Next", sans-serif';
+      context.fillText("Waiting for trace samples...", renderer.layout.left, 26);
+      drawLabelsAndCursor(context, renderer, windowSeconds);
+      return;
     }
 
-    const cursorX = xOf(latestTimestamp);
-    context.strokeStyle = CURSOR_COLOR;
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(cursorX, top);
-    context.lineTo(cursorX, top + plotHeight);
-    context.stroke();
-
-    context.fillStyle = "#cbd5e1";
-    context.font = '11px "Avenir Next", sans-serif';
-    context.fillText(
-      `${windowSeconds.toFixed(1)}s`,
-      left + plotWidth - 24,
-      top + plotHeight + 16
-    );
-    context.fillText(`${sharedYMaxMs.toFixed(2)} ms`, 6, plotTop + 8);
-    context.fillText("0 ms", 8, plotBottom + 4);
+    drawLabelsAndCursor(context, renderer, windowSeconds);
   }, [
     autoYAxis,
-    filtered,
-    manualYMaxMs,
+    effectiveTopicScope,
     leaseColorMap,
+    manualYMaxMs,
     publisherEndpointId,
     publisherProcessId,
+    publisherSignature,
+    samples,
+    scopeSignature,
     windowSeconds,
   ]);
 
