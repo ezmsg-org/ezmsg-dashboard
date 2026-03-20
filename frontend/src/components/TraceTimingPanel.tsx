@@ -162,38 +162,22 @@ export function TraceTimingPanel({
     context.fillRect(0, 0, width, height);
 
     const windowNs = Math.max(1, windowSeconds * 1_000_000_000);
-    const allPublisherSamples = filtered
-      .filter(
-        (sample) =>
-          sample.metric === "publish_delta_ns"
-          && sample.processId === publisherProcessId
-          && sample.endpointId === publisherEndpointId
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const latestPublisherTimestamp = allPublisherSamples.reduce(
+    const latestTimestamp = filtered.reduce(
       (latest, sample) => Math.max(latest, sample.timestamp),
       0
     );
-    if (
-      !Number.isFinite(latestPublisherTimestamp)
-      || latestPublisherTimestamp <= 0
-    ) {
+    if (!Number.isFinite(latestTimestamp) || latestTimestamp <= 0) {
       context.fillStyle = "#94a3b8";
       context.font = '12px "Avenir Next", sans-serif';
       context.fillText("Waiting for trace samples...", left, top + 14);
       return;
     }
-    if (
-      originRef.current === null
-      || latestPublisherTimestamp < originRef.current
-    ) {
-      originRef.current = latestPublisherTimestamp;
+    if (originRef.current === null || latestTimestamp < originRef.current) {
+      originRef.current = latestTimestamp;
     }
     const origin = originRef.current;
-    const minPublisherTs = latestPublisherTimestamp - windowNs;
-    const publisherSeries = allPublisherSamples.filter(
-      (sample) => sample.timestamp >= minPublisherTs
-    );
+    const minTs = latestTimestamp - windowNs;
+    const recent = filtered.filter((sample) => sample.timestamp >= minTs);
 
     const xOf = (timestamp: number): number => {
       const delta = timestamp - origin;
@@ -229,6 +213,14 @@ export function TraceTimingPanel({
     context.lineTo(left + plotWidth, plotBottom);
     context.stroke();
 
+    const publisherSeries = recent
+      .filter(
+        (sample) =>
+          sample.metric === "publish_delta_ns"
+          && sample.processId === publisherProcessId
+          && sample.endpointId === publisherEndpointId
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
     const publishTimestampBySeq = new Map<number, number>();
     for (const sample of publisherSeries) {
       if (typeof sample.sampleSeq === "number") {
@@ -236,25 +228,18 @@ export function TraceTimingPanel({
       }
     }
 
+    const leaseSeries = recent.filter((sample) => sample.metric === "lease_time_ns");
+    const attributableSeries = recent.filter(
+      (sample) => sample.metric === "attributable_backpressure_ns"
+    );
+
     const leaseSeriesByEndpoint = new Map<string, TracePoint[]>();
-    for (const sample of filtered) {
-      if (sample.metric !== "lease_time_ns") {
-        continue;
-      }
-      let alignedTimestamp = Number.NaN;
-      if (typeof sample.sampleSeq === "number") {
-        const mapped = publishTimestampBySeq.get(sample.sampleSeq);
-        if (typeof mapped === "number") {
-          alignedTimestamp = mapped;
-        }
-      } else if (sample.processId === publisherProcessId) {
-        alignedTimestamp = sample.timestamp;
-      }
-      if (
-        !Number.isFinite(alignedTimestamp)
-        || alignedTimestamp < minPublisherTs
-        || alignedTimestamp > latestPublisherTimestamp
-      ) {
+    for (const sample of leaseSeries) {
+      const alignedTimestamp =
+        typeof sample.sampleSeq === "number"
+          ? (publishTimestampBySeq.get(sample.sampleSeq) ?? sample.timestamp)
+          : sample.timestamp;
+      if (alignedTimestamp < minTs || alignedTimestamp > latestTimestamp) {
         continue;
       }
       const point: TracePoint = {
@@ -271,26 +256,13 @@ export function TraceTimingPanel({
     for (const endpointSeries of leaseSeriesByEndpoint.values()) {
       endpointSeries.sort((a, b) => a.timestamp - b.timestamp);
     }
-
     const attributablePoints: TracePoint[] = [];
-    for (const sample of filtered) {
-      if (sample.metric !== "attributable_backpressure_ns") {
-        continue;
-      }
-      let alignedTimestamp = Number.NaN;
-      if (typeof sample.sampleSeq === "number") {
-        const mapped = publishTimestampBySeq.get(sample.sampleSeq);
-        if (typeof mapped === "number") {
-          alignedTimestamp = mapped;
-        }
-      } else if (sample.processId === publisherProcessId) {
-        alignedTimestamp = sample.timestamp;
-      }
-      if (
-        !Number.isFinite(alignedTimestamp)
-        || alignedTimestamp < minPublisherTs
-        || alignedTimestamp > latestPublisherTimestamp
-      ) {
+    for (const sample of attributableSeries) {
+      const alignedTimestamp =
+        typeof sample.sampleSeq === "number"
+          ? (publishTimestampBySeq.get(sample.sampleSeq) ?? sample.timestamp)
+          : sample.timestamp;
+      if (alignedTimestamp < minTs || alignedTimestamp > latestTimestamp) {
         continue;
       }
       attributablePoints.push({
@@ -420,7 +392,7 @@ export function TraceTimingPanel({
       context.stroke();
     }
 
-    const cursorX = xOf(latestPublisherTimestamp);
+    const cursorX = xOf(latestTimestamp);
     context.strokeStyle = CURSOR_COLOR;
     context.lineWidth = 2;
     context.beginPath();

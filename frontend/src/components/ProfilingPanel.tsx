@@ -67,7 +67,7 @@ type PublisherTraceSample = {
   channelKind: string | null;
 };
 
-const TRACE_HISTORY_MAX = 500_000;
+const TRACE_HISTORY_MAX = 120_000;
 const TRACE_DISPLAY_WINDOW_SECONDS = 2.0;
 const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set([
