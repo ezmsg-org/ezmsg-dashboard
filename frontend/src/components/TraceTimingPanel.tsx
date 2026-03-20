@@ -227,7 +227,6 @@ function clearRange(
 function drawLineRange(
   context: CanvasRenderingContext2D,
   bins: Float32Array,
-  columnCycle: Int32Array,
   {
     color,
     lineWidth,
@@ -253,7 +252,6 @@ function drawLineRange(
   let previousCol: number | null = null;
   let previousValue = Number.NaN;
   let previousWasOverflow = false;
-  let previousCycle: number | null = null;
   for (let col = from - 1; col >= 0; col -= 1) {
     const valueMs = bins[col];
     if (!Number.isFinite(valueMs)) {
@@ -262,7 +260,6 @@ function drawLineRange(
     previousCol = col;
     previousValue = valueMs;
     previousWasOverflow = valueMs > yMaxMs;
-    previousCycle = columnCycle[col];
     break;
   }
   for (let col = from; col <= to; col += 1) {
@@ -275,9 +272,7 @@ function drawLineRange(
       overflowStarts.push(col);
     }
 
-    const cycle = columnCycle[col];
-    const sameCycle = previousCycle !== null && previousCycle === cycle;
-    if (previousCol !== null && Number.isFinite(previousValue) && sameCycle) {
+    if (previousCol !== null && Number.isFinite(previousValue)) {
       const previousOverflow = previousValue > yMaxMs;
       if (!(previousOverflow && isOverflow)) {
         const x0 = layout.left + previousCol + 0.5;
@@ -293,7 +288,6 @@ function drawLineRange(
     previousCol = col;
     previousValue = valueMs;
     previousWasOverflow = isOverflow;
-    previousCycle = cycle;
   }
   context.stroke();
 
@@ -376,7 +370,7 @@ function drawRange(
     layout: state.layout,
   });
   for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
-    drawLineRange(context, bins, state.columnCycle, {
+    drawLineRange(context, bins, {
       color: leaseColorForEndpoint(endpointId, leaseColorMap),
       lineWidth: 1.1,
       startCol,
@@ -385,7 +379,7 @@ function drawRange(
       layout: state.layout,
     });
   }
-  drawLineRange(context, state.publishBins, state.columnCycle, {
+  drawLineRange(context, state.publishBins, {
     color: PUBLISH_COLOR,
     lineWidth: 1.25,
     startCol,
