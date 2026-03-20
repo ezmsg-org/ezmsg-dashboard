@@ -17,6 +17,7 @@ type TraceTimingPanelProps = {
   publisherEndpointId: string;
   topic: string;
   topicScope?: string[];
+  leaseColorMap?: Record<string, string>;
   windowSeconds?: number;
 };
 
@@ -44,12 +45,29 @@ function parsePositiveFloat(value: string): number | null {
   return parsed;
 }
 
+function decimateByStep<T>(series: T[], maxPoints: number): T[] {
+  if (series.length <= maxPoints || maxPoints <= 0) {
+    return series;
+  }
+  const step = Math.ceil(series.length / maxPoints);
+  const out: T[] = [];
+  for (let index = 0; index < series.length; index += step) {
+    out.push(series[index]);
+  }
+  const last = series[series.length - 1];
+  if (out[out.length - 1] !== last) {
+    out.push(last);
+  }
+  return out;
+}
+
 export function TraceTimingPanel({
   samples,
   publisherProcessId,
   publisherEndpointId,
   topic,
   topicScope,
+  leaseColorMap,
   windowSeconds = 2.0,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -174,10 +192,14 @@ export function TraceTimingPanel({
           && sample.endpointId === publisherEndpointId
       )
       .sort((a, b) => a.timestamp - b.timestamp);
-    const leaseSeries = recent.filter((sample) => sample.metric === "lease_time_ns");
-    const attributableSeries = recent.filter(
-      (sample) => sample.metric === "attributable_backpressure_ns"
-    );
+    const leaseSeries = recent
+      .filter((sample) => sample.metric === "lease_time_ns")
+      .sort((a, b) => a.timestamp - b.timestamp);
+    const attributableSeries = recent
+      .filter(
+        (sample) => sample.metric === "attributable_backpressure_ns"
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
     const leaseSeriesByEndpoint = new Map<string, typeof leaseSeries>();
     for (const sample of leaseSeries) {
       const endpointSeries = leaseSeriesByEndpoint.get(sample.endpointId);
@@ -214,13 +236,18 @@ export function TraceTimingPanel({
       );
       autoYMaxMsRef.current = sharedYMaxMs;
     }
+    const renderBudget = Math.max(800, Math.floor(plotWidth * 2));
 
     context.strokeStyle = ATTR_BP_COLOR;
     context.lineWidth = 1;
     context.globalAlpha = 0.5;
-    for (const sample of attributableSeries) {
+    for (const sample of decimateByStep(attributableSeries, renderBudget * 2)) {
+      const valueMs = toMs(sample.value);
+      if (valueMs > sharedYMaxMs) {
+        continue;
+      }
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
+      const y = yFromMs(valueMs, sharedYMaxMs);
       context.beginPath();
       context.moveTo(x, plotBottom);
       context.lineTo(x, y);
@@ -229,14 +256,24 @@ export function TraceTimingPanel({
     context.globalAlpha = 1;
 
     for (const [endpointId, endpointSeries] of leaseSeriesByEndpoint.entries()) {
-      context.strokeStyle = leaseColorForEndpoint(endpointId);
+      context.strokeStyle = leaseColorForEndpoint(endpointId, leaseColorMap);
       context.lineWidth = 1.1;
       context.beginPath();
       let started = false;
       let previousX = 0;
-      for (const sample of endpointSeries) {
+      const renderSeries = decimateByStep(endpointSeries, renderBudget);
+      for (const sample of renderSeries) {
+        const valueMs = toMs(sample.value);
+        if (valueMs > sharedYMaxMs) {
+          if (started) {
+            context.stroke();
+            context.beginPath();
+            started = false;
+          }
+          continue;
+        }
         const x = xOf(sample.timestamp);
-        const y = yFromMs(toMs(sample.value), sharedYMaxMs);
+        const y = yFromMs(valueMs, sharedYMaxMs);
         if (!started || x < previousX) {
           if (started) {
             context.stroke();
@@ -259,9 +296,18 @@ export function TraceTimingPanel({
     context.beginPath();
     let started = false;
     let previousX = 0;
-    for (const sample of publisherSeries) {
+    for (const sample of decimateByStep(publisherSeries, renderBudget)) {
+      const valueMs = toMs(sample.value);
+      if (valueMs > sharedYMaxMs) {
+        if (started) {
+          context.stroke();
+          context.beginPath();
+          started = false;
+        }
+        continue;
+      }
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
+      const y = yFromMs(valueMs, sharedYMaxMs);
       if (!started || x < previousX) {
         if (started) {
           context.stroke();
@@ -299,6 +345,7 @@ export function TraceTimingPanel({
     autoYAxis,
     filtered,
     manualYMaxMs,
+    leaseColorMap,
     publisherEndpointId,
     publisherProcessId,
     windowSeconds,

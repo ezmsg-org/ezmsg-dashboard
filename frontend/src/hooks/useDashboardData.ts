@@ -20,21 +20,58 @@ type ConnectionState = "connecting" | "open" | "closed";
 const MAX_EVENTS = 120;
 const SNAPSHOT_REFRESH_DEBOUNCE_MS = 250;
 const RECONNECT_DELAY_MS = 1000;
+const WS_DEFAULT_PROFILING_INTERVAL = 0.05;
+const WS_DEFAULT_PROFILING_MAX_SAMPLES = 20000;
+
+function readPositiveNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+function withWsTraceQuery(baseUrl: string): string {
+  const interval = readPositiveNumber(
+    import.meta.env.VITE_WS_PROFILING_INTERVAL,
+    WS_DEFAULT_PROFILING_INTERVAL
+  );
+  const maxSamples = Math.max(
+    1,
+    Math.trunc(
+      readPositiveNumber(
+        import.meta.env.VITE_WS_PROFILING_MAX_SAMPLES,
+        WS_DEFAULT_PROFILING_MAX_SAMPLES
+      )
+    )
+  );
+  const query = new URLSearchParams({
+    profiling_interval: interval.toString(),
+    profiling_max_samples: maxSamples.toString(),
+  }).toString();
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}${query}`;
+}
 
 function wsUrl(): string {
   const configuredBaseUrl = import.meta.env.VITE_WS_BASE_URL as
     | string
     | undefined;
   if (configuredBaseUrl && configuredBaseUrl.length > 0) {
-    return `${configuredBaseUrl.replace(/\/$/, "")}/ws/events`;
+    return withWsTraceQuery(`${configuredBaseUrl.replace(/\/$/, "")}/ws/events`);
   }
 
   if (import.meta.env.DEV) {
-    return "ws://127.0.0.1:8000/ws/events";
+    return withWsTraceQuery("ws://127.0.0.1:8000/ws/events");
   }
 
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/ws/events`;
+  return withWsTraceQuery(`${scheme}://${window.location.host}/ws/events`);
 }
 
 async function fetchJsonNoStore<T>(path: string): Promise<T> {
