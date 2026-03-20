@@ -214,20 +214,12 @@ function contributorListForPublisher(
   topic: string,
   subscribers: SubscriberContributor[]
 ): SubscriberContributor[] {
-  const sameTopic = subscribers
+  return subscribers
     .filter((subscriber) => subscriber.topic === topic)
     .sort(
       (a, b) =>
         b.attributableBackpressureNsWindow - a.attributableBackpressureNsWindow
     );
-  if (sameTopic.length === 0) {
-    return [];
-  }
-
-  const pressured = sameTopic.filter(
-    (subscriber) => subscriber.attributableBackpressureNsWindow > 0
-  );
-  return pressured.length > 0 ? pressured : sameTopic.slice(0, 6);
 }
 
 function toPublisherRow(
