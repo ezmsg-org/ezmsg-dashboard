@@ -291,38 +291,6 @@ function drawLineRange(
   }
 }
 
-function drawOverflowTicks(
-  context: CanvasRenderingContext2D,
-  bins: Float32Array,
-  {
-    startCol,
-    endCol,
-    yMaxMs,
-    layout,
-    color,
-    alpha,
-  }: {
-    startCol: number;
-    endCol: number;
-    yMaxMs: number;
-    layout: PlotLayout;
-    color: string;
-    alpha: number;
-  }
-): void {
-  context.fillStyle = color;
-  context.globalAlpha = alpha;
-  for (let col = startCol; col <= endCol; col += 1) {
-    const valueMs = bins[col];
-    if (!Number.isFinite(valueMs) || valueMs <= yMaxMs) {
-      continue;
-    }
-    const x = layout.left + col;
-    context.fillRect(x, layout.plotTop, 1, 3);
-  }
-  context.globalAlpha = 1;
-}
-
 function drawAttrRange(
   context: CanvasRenderingContext2D,
   bins: Float32Array,
@@ -341,19 +309,23 @@ function drawAttrRange(
   context.strokeStyle = ATTR_BP_COLOR;
   context.lineWidth = 1;
   context.globalAlpha = 0.5;
+  const overflowStarts: number[] = [];
+  let previousWasOverflow = false;
   for (let col = startCol; col <= endCol; col += 1) {
     const valueMs = bins[col];
     if (!Number.isFinite(valueMs)) {
+      previousWasOverflow = false;
+      continue;
+    }
+    const isOverflow = valueMs > yMaxMs;
+    if (isOverflow && !previousWasOverflow) {
+      overflowStarts.push(col);
+    }
+    previousWasOverflow = isOverflow;
+    if (isOverflow) {
       continue;
     }
     const x = layout.left + col + 0.5;
-    if (valueMs > yMaxMs) {
-      context.beginPath();
-      context.moveTo(x, layout.plotBottom);
-      context.lineTo(x, layout.plotTop);
-      context.stroke();
-      continue;
-    }
     const y = yFromMs(valueMs, yMaxMs, layout);
     context.beginPath();
     context.moveTo(x, layout.plotBottom);
@@ -361,14 +333,15 @@ function drawAttrRange(
     context.stroke();
   }
   context.globalAlpha = 1;
-  drawOverflowTicks(context, bins, {
-    startCol,
-    endCol,
-    yMaxMs,
-    layout,
-    color: ATTR_BP_COLOR,
-    alpha: 0.75,
-  });
+  if (overflowStarts.length > 0) {
+    context.fillStyle = ATTR_BP_COLOR;
+    context.globalAlpha = 0.75;
+    for (const col of overflowStarts) {
+      const x = layout.left + col;
+      context.fillRect(x, layout.plotTop + 1, 1, 2);
+    }
+    context.globalAlpha = 1;
+  }
 }
 
 function drawRange(
@@ -515,6 +488,17 @@ export function TraceTimingPanel({
     [effectiveTopicScope]
   );
   const publisherSignature = `${publisherProcessId}|${publisherEndpointId}`;
+  const toggleYAxisMode = () => {
+    if (autoYAxis) {
+      const currentY =
+        rendererRef.current?.yMaxMs
+        ?? estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
+      setManualYMaxInput(currentY.toFixed(2));
+      setAutoYAxis(false);
+      return;
+    }
+    setAutoYAxis(true);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -675,6 +659,12 @@ export function TraceTimingPanel({
     } else {
       renderer.yMaxMs = Math.max(MIN_Y_MAX_MS, manualYMaxMs ?? DEFAULT_MANUAL_Y_MAX_MS);
     }
+    if (autoYAxis) {
+      const autoYText = renderer.yMaxMs.toFixed(2);
+      if (manualYMaxInput !== autoYText) {
+        setManualYMaxInput(autoYText);
+      }
+    }
 
     if (processedAny && renderer.originNs !== null) {
       const latest = colForTimestamp(
@@ -735,45 +725,23 @@ export function TraceTimingPanel({
   return (
     <div className="timing-trace">
       <div className="timing-trace__controls">
-        <div className="timing-trace__controls-left">
-          <label className="timing-trace__axis-input">
-            <span>Window (s)</span>
-            <input
-              type="number"
-              min={0.5}
-              max={30}
-              step="0.5"
-              value={windowSeconds.toFixed(1)}
-              onChange={(event) => {
-                const parsed = parsePositiveFloat(event.target.value);
-                if (parsed === null || !onWindowSecondsChange) {
-                  return;
-                }
-                onWindowSecondsChange(clamp(parsed, 0.5, 30));
-              }}
-            />
-          </label>
-          <button
-            type="button"
-            className={`timing-trace__axis-btn ${autoYAxis ? "is-active" : ""}`}
-            onClick={() => setAutoYAxis(true)}
-          >
-            Auto Y
-          </button>
-          <button
-            type="button"
-            className={`timing-trace__axis-btn ${autoYAxis ? "" : "is-active"}`}
-            onClick={() => {
-              const currentY =
-                rendererRef.current?.yMaxMs
-                ?? estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
-              setManualYMaxInput(currentY.toFixed(2));
-              setAutoYAxis(false);
+        <label className="timing-trace__axis-input">
+          <span>Window (s)</span>
+          <input
+            type="number"
+            min={0.5}
+            max={30}
+            step="0.5"
+            value={windowSeconds.toFixed(1)}
+            onChange={(event) => {
+              const parsed = parsePositiveFloat(event.target.value);
+              if (parsed === null || !onWindowSecondsChange) {
+                return;
+              }
+              onWindowSecondsChange(clamp(parsed, 0.5, 30));
             }}
-          >
-            Fixed Y
-          </button>
-        </div>
+          />
+        </label>
         <label className="timing-trace__axis-input timing-trace__axis-input--ymax">
           <span>Y max (ms)</span>
           <input
@@ -794,6 +762,19 @@ export function TraceTimingPanel({
             disabled={autoYAxis}
           />
         </label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoYAxis}
+          className={`timing-trace__mode-toggle ${autoYAxis ? "is-auto" : "is-fixed"}`}
+          onClick={toggleYAxisMode}
+          title={autoYAxis ? "Switch to Fixed Y" : "Switch to Auto Y"}
+        >
+          <span className="timing-trace__mode-toggle-knob" />
+          <span className="timing-trace__mode-toggle-label">
+            {autoYAxis ? "Auto Y" : "Fixed Y"}
+          </span>
+        </button>
       </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
       <div className="timing-trace__legend">

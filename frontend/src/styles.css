@@ -520,30 +520,6 @@ body {
   white-space: nowrap;
 }
 
-.timing-trace__controls-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
-.timing-trace__axis-btn {
-  border: 1px solid #cbd5e1;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #334155;
-  font-size: 0.72rem;
-  line-height: 1.1;
-  padding: 0.22rem 0.5rem;
-  cursor: pointer;
-}
-
-.timing-trace__axis-btn.is-active {
-  border-color: #60a5fa;
-  color: #1d4ed8;
-  background: #eff6ff;
-}
-
 .timing-trace__axis-input {
   display: inline-flex;
   align-items: center;
@@ -568,6 +544,43 @@ body {
 .timing-trace__axis-input input:disabled {
   background: #f1f5f9;
   color: #94a3b8;
+}
+
+.timing-trace__mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.18rem 0.45rem 0.18rem 0.18rem;
+  cursor: pointer;
+}
+
+.timing-trace__mode-toggle.is-auto {
+  border-color: #60a5fa;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.timing-trace__mode-toggle-knob {
+  width: 0.66rem;
+  height: 0.66rem;
+  border-radius: 999px;
+  display: inline-block;
+  background: #94a3b8;
+}
+
+.timing-trace__mode-toggle.is-auto .timing-trace__mode-toggle-knob {
+  background: #3b82f6;
+}
+
+.timing-trace__mode-toggle-label {
+  min-width: 3.5rem;
+  text-align: center;
 }
 
 .timing-trace__canvas {
