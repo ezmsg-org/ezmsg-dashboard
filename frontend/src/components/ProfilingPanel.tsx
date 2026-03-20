@@ -66,7 +66,8 @@ type PublisherTraceSample = {
   channelKind: string | null;
 };
 
-const TRACE_HISTORY_MAX = 800;
+const TRACE_HISTORY_MAX = 20_000;
+const TRACE_DISPLAY_WINDOW_SECONDS = 2.0;
 const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set([
   "lease_time_ns",
@@ -447,7 +448,7 @@ export function ProfilingPanel({
             ]
           : null,
         sample_mod: 1,
-        ttl_seconds: nextOpen ? 45.0 : null,
+        ttl_seconds: null,
         timeout: 2.0,
       });
     } catch (error) {
@@ -624,7 +625,8 @@ export function ProfilingPanel({
                         ) : (
                           <>
                             <p className="trace-inline__meta">
-                              {traceSamples.length} samples captured over {windowLabel || "window"}.
+                              {traceSamples.length} samples buffered (displaying last{" "}
+                              {TRACE_DISPLAY_WINDOW_SECONDS.toFixed(1)}s).
                             </p>
                             <TraceTimingPanel
                               samples={traceSamples as TimingTraceSample[]}
@@ -632,7 +634,7 @@ export function ProfilingPanel({
                               publisherEndpointId={row.endpointId}
                               topic={row.topic}
                               topicScope={traceTopicScope}
-                              windowSeconds={2.0}
+                              windowSeconds={TRACE_DISPLAY_WINDOW_SECONDS}
                             />
                           </>
                         )}
