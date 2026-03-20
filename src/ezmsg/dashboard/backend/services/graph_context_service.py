@@ -353,8 +353,8 @@ class GraphContextLifecycleService:
         *,
         topology_after_seq: int = 0,
         settings_after_seq: int = 0,
-        profiling_interval: float = 0.2,
-        profiling_max_samples: int = 1000,
+        profiling_interval: float = 0.05,
+        profiling_max_samples: int = 5000,
     ) -> AsyncIterator[dict[str, Any]]:
         context = self._require_context()
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)

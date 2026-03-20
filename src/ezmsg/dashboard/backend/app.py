@@ -133,8 +133,8 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
         websocket: WebSocket,
         topology_after_seq: Annotated[int, Query(ge=0)] = 0,
         settings_after_seq: Annotated[int, Query(ge=0)] = 0,
-        profiling_interval: Annotated[float, Query(gt=0.0)] = 0.2,
-        profiling_max_samples: Annotated[int, Query(gt=0)] = 1000,
+        profiling_interval: Annotated[float, Query(gt=0.0)] = 0.05,
+        profiling_max_samples: Annotated[int, Query(gt=0)] = 5000,
     ) -> None:
         await websocket.accept()
         graph_service = app.state.graph_service
