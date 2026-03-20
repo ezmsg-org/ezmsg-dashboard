@@ -19,24 +19,14 @@ type TraceTimingPanelProps = {
   windowSeconds?: number;
 };
 
-const LEASE_COLORS = [
-  "#7dd3fc",
-  "#a78bfa",
-  "#fca5a5",
-  "#86efac",
-  "#f9a8d4",
-  "#fdba74",
-];
+const PUBLISH_COLOR = "#38bdf8";
+const LEASE_COLOR = "#93c5fd";
+const ATTR_BP_COLOR = "#f59e0b";
+const CURSOR_COLOR = "#fbbf24";
 const MIN_Y_MAX_MS = 0.25;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
 const AUTO_Y_HEADROOM = 1.1;
 const AUTO_Y_DECAY = 0.97;
-
-function shortEndpoint(endpointId: string): string {
-  const parts = endpointId.split(":");
-  const token = parts.length > 1 ? parts[parts.length - 1] : endpointId;
-  return token.slice(0, 8);
-}
 
 function toMs(valueNs: number): number {
   return valueNs / 1_000_000;
@@ -95,24 +85,6 @@ export function TraceTimingPanel({
     [effectiveTopicScope, samples]
   );
 
-  const subscriberLegend = useMemo(() => {
-    const endpoints = [
-      ...new Set(
-        filtered
-          .filter(
-            (sample) =>
-              sample.metric === "lease_time_ns"
-              && sample.endpointId !== publisherEndpointId
-          )
-          .map((sample) => sample.endpointId)
-      ),
-    ];
-    return endpoints.slice(0, 6).map((endpointId, index) => ({
-      endpointId,
-      color: LEASE_COLORS[index % LEASE_COLORS.length],
-    }));
-  }, [filtered, publisherEndpointId]);
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -137,12 +109,8 @@ export function TraceTimingPanel({
     const bottom = 24;
     const plotWidth = width - left - right;
     const plotHeight = height - top - bottom;
-    const pubTop = top;
-    const pubBottom = top + plotHeight * 0.52;
-    const leaseTop = pubBottom + 8;
-    const leaseBottom = leaseTop + plotHeight * 0.2;
-    const attrTop = leaseBottom + 8;
-    const attrBottom = top + plotHeight;
+    const plotTop = top + 2;
+    const plotBottom = top + plotHeight - 2;
 
     context.fillStyle = "#0f172a";
     context.fillRect(0, 0, width, height);
@@ -170,14 +138,9 @@ export function TraceTimingPanel({
       const wrapped = ((delta % windowNs) + windowNs) % windowNs;
       return left + (wrapped / windowNs) * plotWidth;
     };
-    const yFromMs = (
-      valueMs: number,
-      laneTop: number,
-      laneBottom: number,
-      maxMs: number
-    ): number => {
+    const yFromMs = (valueMs: number, maxMs: number): number => {
       const ratio = clamp(valueMs / Math.max(maxMs, 1e-9), 0, 1);
-      return laneBottom - ratio * (laneBottom - laneTop);
+      return plotBottom - ratio * (plotBottom - plotTop);
     };
 
     context.strokeStyle = "#1e293b";
@@ -190,9 +153,22 @@ export function TraceTimingPanel({
       context.lineTo(x, top + plotHeight);
       context.stroke();
     }
+    const yTickCount = 4;
+    for (let i = 0; i <= yTickCount; i += 1) {
+      const y = plotBottom - (i / yTickCount) * (plotBottom - plotTop);
+      context.beginPath();
+      context.moveTo(left, y);
+      context.lineTo(left + plotWidth, y);
+      context.stroke();
+    }
+    context.strokeStyle = "#334155";
+    context.beginPath();
+    context.moveTo(left, plotBottom);
+    context.lineTo(left + plotWidth, plotBottom);
+    context.stroke();
 
     const cursorX = xOf(latestTimestamp);
-    context.strokeStyle = "#f59e0b";
+    context.strokeStyle = CURSOR_COLOR;
     context.lineWidth = 2;
     context.beginPath();
     context.moveTo(cursorX, top);
@@ -236,14 +212,14 @@ export function TraceTimingPanel({
       autoYMaxMsRef.current = sharedYMaxMs;
     }
 
-    context.strokeStyle = "#38bdf8";
+    context.strokeStyle = PUBLISH_COLOR;
     context.lineWidth = 1.25;
     context.beginPath();
     let started = false;
     let previousX = 0;
     for (const sample of publisherSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(toMs(sample.value), pubTop + 2, pubBottom - 2, sharedYMaxMs);
+      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
       if (!started || x < previousX) {
         if (started) {
           context.stroke();
@@ -260,50 +236,34 @@ export function TraceTimingPanel({
       context.stroke();
     }
 
-    const endpointColorMap = new Map<string, string>(
-      subscriberLegend.map((item) => [item.endpointId, item.color])
-    );
-
+    context.fillStyle = LEASE_COLOR;
     for (const sample of leaseSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(
-        toMs(sample.value),
-        leaseTop + 2,
-        leaseBottom - 2,
-        sharedYMaxMs
-      );
-      context.fillStyle = endpointColorMap.get(sample.endpointId) ?? "#93c5fd";
+      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
       context.beginPath();
-      context.arc(x, y, 2.8, 0, Math.PI * 2);
+      context.arc(x, y, 2.2, 0, Math.PI * 2);
       context.fill();
     }
 
-    context.strokeStyle = "#f59e0b";
+    context.strokeStyle = ATTR_BP_COLOR;
     context.lineWidth = 1;
     for (const sample of attributableSeries) {
       const x = xOf(sample.timestamp);
-      const y = yFromMs(
-        toMs(sample.value),
-        attrTop + 2,
-        attrBottom - 2,
-        sharedYMaxMs
-      );
+      const y = yFromMs(toMs(sample.value), sharedYMaxMs);
       context.beginPath();
-      context.moveTo(x, attrBottom - 1);
+      context.moveTo(x, plotBottom);
       context.lineTo(x, y);
       context.stroke();
     }
 
     context.fillStyle = "#cbd5e1";
     context.font = '11px "Avenir Next", sans-serif';
-    context.fillText("Publish Delta", 6, pubTop + 12);
-    context.fillText("Lease Delta", 10, leaseTop + 12);
-    context.fillText("Attr BP", 19, attrTop + 12);
     context.fillText(
       `${windowSeconds.toFixed(1)}s`,
       left + plotWidth - 24,
       top + plotHeight + 16
     );
+    context.fillText("0 ms", 8, plotBottom + 4);
     context.fillText(`Y max ${sharedYMaxMs.toFixed(2)} ms`, left, top + plotHeight + 16);
   }, [
     autoYAxis,
@@ -311,7 +271,6 @@ export function TraceTimingPanel({
     manualYMaxMs,
     publisherEndpointId,
     publisherProcessId,
-    subscriberLegend,
     windowSeconds,
   ]);
 
@@ -350,16 +309,20 @@ export function TraceTimingPanel({
         </label>
       </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
-      {subscriberLegend.length > 0 ? (
-        <div className="timing-trace__legend">
-          {subscriberLegend.map((entry) => (
-            <span key={entry.endpointId} className="timing-trace__legend-item">
-              <i style={{ background: entry.color }} />
-              {shortEndpoint(entry.endpointId)}
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <div className="timing-trace__legend">
+        <span className="timing-trace__legend-item">
+          <i style={{ background: PUBLISH_COLOR }} />
+          Publish Delta
+        </span>
+        <span className="timing-trace__legend-item">
+          <i style={{ background: LEASE_COLOR }} />
+          Lease Delta
+        </span>
+        <span className="timing-trace__legend-item">
+          <i style={{ background: ATTR_BP_COLOR }} />
+          Attr BP
+        </span>
+      </div>
     </div>
   );
 }
