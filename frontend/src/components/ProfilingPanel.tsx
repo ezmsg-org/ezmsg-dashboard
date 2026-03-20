@@ -659,27 +659,22 @@ export function ProfilingPanel({
                             Waiting for trace samples on this publisher endpoint.
                           </p>
                         ) : (
-                          <>
-                            <p className="trace-inline__meta">
-                              Showing {traceWindowSeconds.toFixed(1)}s.
-                            </p>
-                            <TraceTimingPanel
-                              samples={traceSamples as TimingTraceSample[]}
-                              publisherProcessId={row.processId}
-                              publisherEndpointId={row.endpointId}
-                              nominalPublishRateHz={row.publishRateHzWindow}
-                              topic={row.topic}
-                              topicScope={traceTopicScope}
-                              leaseColorMap={leaseColorMap}
-                              windowSeconds={traceWindowSeconds}
-                              onWindowSecondsChange={(nextSeconds) =>
-                                setTraceWindowSecondsByRowId((previous) => ({
-                                  ...previous,
-                                  [row.id]: normalizeWindowSeconds(nextSeconds),
-                                }))
-                              }
-                            />
-                          </>
+                          <TraceTimingPanel
+                            samples={traceSamples as TimingTraceSample[]}
+                            publisherProcessId={row.processId}
+                            publisherEndpointId={row.endpointId}
+                            nominalPublishRateHz={row.publishRateHzWindow}
+                            topic={row.topic}
+                            topicScope={traceTopicScope}
+                            leaseColorMap={leaseColorMap}
+                            windowSeconds={traceWindowSeconds}
+                            onWindowSecondsChange={(nextSeconds) =>
+                              setTraceWindowSecondsByRowId((previous) => ({
+                                ...previous,
+                                [row.id]: normalizeWindowSeconds(nextSeconds),
+                              }))
+                            }
+                          />
                         )}
                         {traceErrorMessage ? (
                           <p className="patch-status err">{traceErrorMessage}</p>

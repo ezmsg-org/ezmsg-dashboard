@@ -244,29 +244,83 @@ function drawLineRange(
   context.strokeStyle = color;
   context.lineWidth = lineWidth;
   context.beginPath();
-  let started = false;
+  const overflowStarts: number[] = [];
+  let previousCol: number | null = null;
+  let previousValue = Number.NaN;
+  let previousWasOverflow = false;
   for (let col = from; col <= to; col += 1) {
     const valueMs = bins[col];
-    if (!Number.isFinite(valueMs) || valueMs > yMaxMs) {
-      if (started) {
-        context.stroke();
-        context.beginPath();
-        started = false;
-      }
+    if (!Number.isFinite(valueMs)) {
+      previousCol = null;
+      previousValue = Number.NaN;
+      previousWasOverflow = false;
       continue;
     }
-    const x = layout.left + col + 0.5;
-    const y = yFromMs(valueMs, yMaxMs, layout);
-    if (!started) {
-      context.moveTo(x, y);
-      started = true;
-    } else {
-      context.lineTo(x, y);
+    const isOverflow = valueMs > yMaxMs;
+    if (isOverflow && !previousWasOverflow) {
+      overflowStarts.push(col);
     }
+
+    if (previousCol !== null && Number.isFinite(previousValue)) {
+      const previousOverflow = previousValue > yMaxMs;
+      if (!(previousOverflow && isOverflow)) {
+        const x0 = layout.left + previousCol + 0.5;
+        const y0 = previousOverflow
+          ? layout.plotTop
+          : yFromMs(previousValue, yMaxMs, layout);
+        const x1 = layout.left + col + 0.5;
+        const y1 = isOverflow ? layout.plotTop : yFromMs(valueMs, yMaxMs, layout);
+        context.moveTo(x0, y0);
+        context.lineTo(x1, y1);
+      }
+    }
+    previousCol = col;
+    previousValue = valueMs;
+    previousWasOverflow = isOverflow;
   }
-  if (started) {
-    context.stroke();
+  context.stroke();
+
+  if (overflowStarts.length > 0) {
+    context.fillStyle = color;
+    context.globalAlpha = 0.72;
+    for (const col of overflowStarts) {
+      const x = layout.left + col;
+      context.fillRect(x, layout.plotTop, 1, 3);
+    }
+    context.globalAlpha = 1;
   }
+}
+
+function drawOverflowTicks(
+  context: CanvasRenderingContext2D,
+  bins: Float32Array,
+  {
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+    color,
+    alpha,
+  }: {
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+    color: string;
+    alpha: number;
+  }
+): void {
+  context.fillStyle = color;
+  context.globalAlpha = alpha;
+  for (let col = startCol; col <= endCol; col += 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs) || valueMs <= yMaxMs) {
+      continue;
+    }
+    const x = layout.left + col;
+    context.fillRect(x, layout.plotTop, 1, 3);
+  }
+  context.globalAlpha = 1;
 }
 
 function drawAttrRange(
@@ -289,10 +343,17 @@ function drawAttrRange(
   context.globalAlpha = 0.5;
   for (let col = startCol; col <= endCol; col += 1) {
     const valueMs = bins[col];
-    if (!Number.isFinite(valueMs) || valueMs > yMaxMs) {
+    if (!Number.isFinite(valueMs)) {
       continue;
     }
     const x = layout.left + col + 0.5;
+    if (valueMs > yMaxMs) {
+      context.beginPath();
+      context.moveTo(x, layout.plotBottom);
+      context.lineTo(x, layout.plotTop);
+      context.stroke();
+      continue;
+    }
     const y = yFromMs(valueMs, yMaxMs, layout);
     context.beginPath();
     context.moveTo(x, layout.plotBottom);
@@ -300,6 +361,14 @@ function drawAttrRange(
     context.stroke();
   }
   context.globalAlpha = 1;
+  drawOverflowTicks(context, bins, {
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+    color: ATTR_BP_COLOR,
+    alpha: 0.75,
+  });
 }
 
 function drawRange(
@@ -666,44 +735,46 @@ export function TraceTimingPanel({
   return (
     <div className="timing-trace">
       <div className="timing-trace__controls">
-        <label className="timing-trace__axis-input">
-          <span>Window (s)</span>
-          <input
-            type="number"
-            min={0.5}
-            max={30}
-            step="0.5"
-            value={windowSeconds.toFixed(1)}
-            onChange={(event) => {
-              const parsed = parsePositiveFloat(event.target.value);
-              if (parsed === null || !onWindowSecondsChange) {
-                return;
-              }
-              onWindowSecondsChange(clamp(parsed, 0.5, 30));
+        <div className="timing-trace__controls-left">
+          <label className="timing-trace__axis-input">
+            <span>Window (s)</span>
+            <input
+              type="number"
+              min={0.5}
+              max={30}
+              step="0.5"
+              value={windowSeconds.toFixed(1)}
+              onChange={(event) => {
+                const parsed = parsePositiveFloat(event.target.value);
+                if (parsed === null || !onWindowSecondsChange) {
+                  return;
+                }
+                onWindowSecondsChange(clamp(parsed, 0.5, 30));
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className={`timing-trace__axis-btn ${autoYAxis ? "is-active" : ""}`}
+            onClick={() => setAutoYAxis(true)}
+          >
+            Auto Y
+          </button>
+          <button
+            type="button"
+            className={`timing-trace__axis-btn ${autoYAxis ? "" : "is-active"}`}
+            onClick={() => {
+              const currentY =
+                rendererRef.current?.yMaxMs
+                ?? estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
+              setManualYMaxInput(currentY.toFixed(2));
+              setAutoYAxis(false);
             }}
-          />
-        </label>
-        <button
-          type="button"
-          className={`timing-trace__axis-btn ${autoYAxis ? "is-active" : ""}`}
-          onClick={() => setAutoYAxis(true)}
-        >
-          Auto Y
-        </button>
-        <button
-          type="button"
-          className={`timing-trace__axis-btn ${autoYAxis ? "" : "is-active"}`}
-          onClick={() => {
-            const currentY =
-              rendererRef.current?.yMaxMs
-              ?? estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
-            setManualYMaxInput(currentY.toFixed(2));
-            setAutoYAxis(false);
-          }}
-        >
-          Fixed Y
-        </button>
-        <label className="timing-trace__axis-input">
+          >
+            Fixed Y
+          </button>
+        </div>
+        <label className="timing-trace__axis-input timing-trace__axis-input--ymax">
           <span>Y max (ms)</span>
           <input
             type="number"
