@@ -18,7 +18,8 @@ type TraceTimingPanelProps = {
   topic: string;
   topicScope?: string[];
   leaseColorMap?: Record<string, string>;
-  windowSeconds?: number;
+  windowSeconds: number;
+  onWindowSecondsChange?: (seconds: number) => void;
 };
 
 const PUBLISH_COLOR = "#38bdf8";
@@ -92,7 +93,8 @@ export function TraceTimingPanel({
   topic,
   topicScope,
   leaseColorMap,
-  windowSeconds = 2.0,
+  windowSeconds,
+  onWindowSecondsChange,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const originRef = useRef<number | null>(null);
@@ -373,6 +375,23 @@ export function TraceTimingPanel({
   return (
     <div className="timing-trace">
       <div className="timing-trace__controls">
+        <label className="timing-trace__axis-input">
+          <span>Window (s)</span>
+          <input
+            type="number"
+            min={0.5}
+            max={30}
+            step="0.5"
+            value={windowSeconds.toFixed(1)}
+            onChange={(event) => {
+              const parsed = parsePositiveFloat(event.target.value);
+              if (parsed === null || !onWindowSecondsChange) {
+                return;
+              }
+              onWindowSecondsChange(clamp(parsed, 0.5, 30));
+            }}
+          />
+        </label>
         <button
           type="button"
           className={`timing-trace__axis-btn ${autoYAxis ? "is-active" : ""}`}

@@ -67,11 +67,12 @@ type PublisherTraceSample = {
   channelKind: string | null;
 };
 
-const TRACE_DISPLAY_WINDOW_SECONDS = 2.0;
-const TRACE_HISTORY_RETENTION_SECONDS = TRACE_DISPLAY_WINDOW_SECONDS * 2.5;
-const TRACE_HISTORY_RETENTION_NS =
-  TRACE_HISTORY_RETENTION_SECONDS * 1_000_000_000;
-const TRACE_HISTORY_HARD_MAX = 40_000;
+const TRACE_DEFAULT_WINDOW_SECONDS = 2.0;
+const TRACE_WINDOW_MIN_SECONDS = 0.5;
+const TRACE_WINDOW_MAX_SECONDS = 30.0;
+const TRACE_HISTORY_RETENTION_MULTIPLIER = 1.35;
+const TRACE_HISTORY_HARD_MIN = 2_000;
+const TRACE_HISTORY_HARD_MAX = 30_000;
 const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set([
   "lease_time_ns",
@@ -102,6 +103,23 @@ function formatWindowSeconds(seconds: number): string {
     return `${Math.round(seconds)}s`;
   }
   return `${seconds.toFixed(1)}s`;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function normalizeWindowSeconds(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return TRACE_DEFAULT_WINDOW_SECONDS;
+  }
+  return clamp(value, TRACE_WINDOW_MIN_SECONDS, TRACE_WINDOW_MAX_SECONDS);
+}
+
+function traceHistoryHardMax(row: PublisherRow | undefined, windowSeconds: number): number {
+  const publishRateHz = row ? Math.max(1, row.publishRateHzWindow) : 1;
+  const estimate = Math.ceil(publishRateHz * windowSeconds * 1.35);
+  return clamp(estimate, TRACE_HISTORY_HARD_MIN, TRACE_HISTORY_HARD_MAX);
 }
 
 function shortEndpointToken(endpointId: string): string {
@@ -317,6 +335,9 @@ export function ProfilingPanel({
   const [traceControlError, setTraceControlError] = useState<
     Record<string, string | null>
   >({});
+  const [traceWindowSecondsByRowId, setTraceWindowSecondsByRowId] = useState<
+    Record<string, number>
+  >({});
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
@@ -382,6 +403,7 @@ export function ProfilingPanel({
     setTraceSamplesByRowId((previous) => {
       let changed = false;
       const next: Record<string, PublisherTraceSample[]> = { ...previous };
+      const pendingByRowId: Record<string, PublisherTraceSample[]> = {};
       for (const sample of extracted) {
         const matchedRowIds = new Set<string>();
         const publisherRow = rowById.get(sample.rowId);
@@ -401,29 +423,44 @@ export function ProfilingPanel({
           }
         }
         for (const rowId of matchedRowIds) {
-          const priorSamples = next[rowId] ?? [];
-          const merged = [...priorSamples, sample];
-          const cutoffNs = sample.timestamp - TRACE_HISTORY_RETENTION_NS;
-          let keepFrom = 0;
-          while (
-            keepFrom < merged.length
-            && merged[keepFrom].timestamp < cutoffNs
-          ) {
-            keepFrom += 1;
+          const pending = pendingByRowId[rowId];
+          if (pending) {
+            pending.push(sample);
+          } else {
+            pendingByRowId[rowId] = [sample];
           }
-          if (keepFrom > 0) {
-            merged.splice(0, keepFrom);
-          }
-          if (merged.length > TRACE_HISTORY_HARD_MAX) {
-            merged.splice(0, merged.length - TRACE_HISTORY_HARD_MAX);
-          }
-          next[rowId] = merged;
-          changed = true;
         }
+      }
+      for (const [rowId, pending] of Object.entries(pendingByRowId)) {
+        if (pending.length === 0) {
+          continue;
+        }
+        const priorSamples = next[rowId] ?? [];
+        const merged = priorSamples.concat(pending);
+        const latestTimestamp = pending[pending.length - 1]?.timestamp ?? 0;
+        const windowSeconds = normalizeWindowSeconds(
+          traceWindowSecondsByRowId[rowId] ?? TRACE_DEFAULT_WINDOW_SECONDS
+        );
+        const retentionNs =
+          windowSeconds * TRACE_HISTORY_RETENTION_MULTIPLIER * 1_000_000_000;
+        const cutoffNs = latestTimestamp - retentionNs;
+        let keepFrom = 0;
+        while (keepFrom < merged.length && merged[keepFrom].timestamp < cutoffNs) {
+          keepFrom += 1;
+        }
+        if (keepFrom > 0) {
+          merged.splice(0, keepFrom);
+        }
+        const hardMax = traceHistoryHardMax(rowById.get(rowId), windowSeconds);
+        if (merged.length > hardMax) {
+          merged.splice(0, merged.length - hardMax);
+        }
+        next[rowId] = merged;
+        changed = true;
       }
       return changed ? next : previous;
     });
-  }, [activeTraceRowIds, latestTraceEvent, rowById]);
+  }, [activeTraceRowIds, latestTraceEvent, rowById, traceWindowSecondsByRowId]);
 
   const applyTraceControl = async (
     row: PublisherRow,
@@ -436,6 +473,11 @@ export function ProfilingPanel({
     setTraceControlError((previous) => ({ ...previous, [row.id]: null }));
     if (nextOpen) {
       setTraceSamplesByRowId((previous) => ({ ...previous, [row.id]: [] }));
+      setTraceWindowSecondsByRowId((previous) =>
+        previous[row.id] !== undefined
+          ? previous
+          : { ...previous, [row.id]: TRACE_DEFAULT_WINDOW_SECONDS }
+      );
       setActiveTraceRowIds((previous) =>
         previous.includes(row.id) ? previous : [...previous, row.id]
       );
@@ -530,6 +572,9 @@ export function ProfilingPanel({
             const traceBusy = Boolean(traceControlPending[row.id]);
             const traceErrorMessage = traceControlError[row.id] ?? null;
             const windowLabel = formatWindowSeconds(row.windowSeconds);
+            const traceWindowSeconds = normalizeWindowSeconds(
+              traceWindowSecondsByRowId[row.id] ?? TRACE_DEFAULT_WINDOW_SECONDS
+            );
             const traceTopicScope = Array.from(
               topicScopeForPublisher(row.topic, graphSnapshot)
             );
@@ -645,9 +690,8 @@ export function ProfilingPanel({
                         ) : (
                           <>
                             <p className="trace-inline__meta">
-                              {traceSamples.length} samples buffered (retaining ~
-                              {TRACE_HISTORY_RETENTION_SECONDS.toFixed(1)}s, showing{" "}
-                              {TRACE_DISPLAY_WINDOW_SECONDS.toFixed(1)}s).
+                              {traceSamples.length} samples buffered (showing{" "}
+                              {traceWindowSeconds.toFixed(1)}s).
                             </p>
                             <TraceTimingPanel
                               samples={traceSamples as TimingTraceSample[]}
@@ -656,7 +700,13 @@ export function ProfilingPanel({
                               topic={row.topic}
                               topicScope={traceTopicScope}
                               leaseColorMap={leaseColorMap}
-                              windowSeconds={TRACE_DISPLAY_WINDOW_SECONDS}
+                              windowSeconds={traceWindowSeconds}
+                              onWindowSecondsChange={(nextSeconds) =>
+                                setTraceWindowSecondsByRowId((previous) => ({
+                                  ...previous,
+                                  [row.id]: normalizeWindowSeconds(nextSeconds),
+                                }))
+                              }
                             />
                           </>
                         )}
