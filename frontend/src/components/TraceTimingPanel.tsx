@@ -50,8 +50,13 @@ type SeriesBin = {
   maxMs: number;
 };
 
+type TracePoint = {
+  timestamp: number;
+  valueMs: number;
+};
+
 function buildSeriesBins(
-  series: TimingTraceSample[],
+  series: TracePoint[],
   {
     left,
     plotWidth,
@@ -70,7 +75,7 @@ function buildSeriesBins(
     maxMs: 0,
   }));
   for (const sample of series) {
-    const valueMs = toMs(sample.value);
+    const valueMs = sample.valueMs;
     if (valueMs > yMaxMs) {
       continue;
     }
@@ -216,32 +221,67 @@ export function TraceTimingPanel({
           && sample.endpointId === publisherEndpointId
       )
       .sort((a, b) => a.timestamp - b.timestamp);
-    const leaseSeries = recent
-      .filter((sample) => sample.metric === "lease_time_ns")
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const attributableSeries = recent
-      .filter(
-        (sample) => sample.metric === "attributable_backpressure_ns"
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const leaseSeriesByEndpoint = new Map<string, typeof leaseSeries>();
+    const publishTimestampBySeq = new Map<number, number>();
+    for (const sample of publisherSeries) {
+      if (typeof sample.sampleSeq === "number") {
+        publishTimestampBySeq.set(sample.sampleSeq, sample.timestamp);
+      }
+    }
+
+    const leaseSeries = recent.filter((sample) => sample.metric === "lease_time_ns");
+    const attributableSeries = recent.filter(
+      (sample) => sample.metric === "attributable_backpressure_ns"
+    );
+
+    const leaseSeriesByEndpoint = new Map<string, TracePoint[]>();
     for (const sample of leaseSeries) {
+      const alignedTimestamp =
+        typeof sample.sampleSeq === "number"
+          ? (publishTimestampBySeq.get(sample.sampleSeq) ?? sample.timestamp)
+          : sample.timestamp;
+      if (alignedTimestamp < minTs || alignedTimestamp > latestTimestamp) {
+        continue;
+      }
+      const point: TracePoint = {
+        timestamp: alignedTimestamp,
+        valueMs: toMs(sample.value),
+      };
       const endpointSeries = leaseSeriesByEndpoint.get(sample.endpointId);
       if (endpointSeries) {
-        endpointSeries.push(sample);
+        endpointSeries.push(point);
       } else {
-        leaseSeriesByEndpoint.set(sample.endpointId, [sample]);
+        leaseSeriesByEndpoint.set(sample.endpointId, [point]);
       }
     }
     for (const endpointSeries of leaseSeriesByEndpoint.values()) {
       endpointSeries.sort((a, b) => a.timestamp - b.timestamp);
     }
+    const attributablePoints: TracePoint[] = [];
+    for (const sample of attributableSeries) {
+      const alignedTimestamp =
+        typeof sample.sampleSeq === "number"
+          ? (publishTimestampBySeq.get(sample.sampleSeq) ?? sample.timestamp)
+          : sample.timestamp;
+      if (alignedTimestamp < minTs || alignedTimestamp > latestTimestamp) {
+        continue;
+      }
+      attributablePoints.push({
+        timestamp: alignedTimestamp,
+        valueMs: toMs(sample.value),
+      });
+    }
+    attributablePoints.sort((a, b) => a.timestamp - b.timestamp);
+    const publisherPoints: TracePoint[] = publisherSeries.map((sample) => ({
+      timestamp: sample.timestamp,
+      valueMs: toMs(sample.value),
+    }));
+    const leasePoints = [...leaseSeriesByEndpoint.values()].flat();
 
     const maxObservedMs = Math.max(
       MIN_Y_MAX_MS,
-      ...publisherSeries.map((sample) => toMs(sample.value)),
-      ...leaseSeries.map((sample) => toMs(sample.value)),
-      ...attributableSeries.map((sample) => toMs(sample.value))
+      ...publisherPoints.map((sample) => sample.valueMs),
+      ...leasePoints.map((sample) => sample.valueMs),
+      ...attributablePoints.map((sample) => sample.valueMs)
     );
     let sharedYMaxMs = MIN_Y_MAX_MS;
     if (autoYAxis) {
@@ -264,7 +304,7 @@ export function TraceTimingPanel({
     context.strokeStyle = ATTR_BP_COLOR;
     context.lineWidth = 1;
     context.globalAlpha = 0.5;
-    const attributableBins = buildSeriesBins(attributableSeries, {
+    const attributableBins = buildSeriesBins(attributablePoints, {
       left,
       plotWidth,
       yMaxMs: sharedYMaxMs,
@@ -321,7 +361,7 @@ export function TraceTimingPanel({
 
     context.strokeStyle = PUBLISH_COLOR;
     context.lineWidth = 1.25;
-    const publishBins = buildSeriesBins(publisherSeries, {
+    const publishBins = buildSeriesBins(publisherPoints, {
       left,
       plotWidth,
       yMaxMs: sharedYMaxMs,
