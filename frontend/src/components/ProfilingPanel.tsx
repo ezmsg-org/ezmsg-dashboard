@@ -113,6 +113,14 @@ function normalizeWindowSeconds(value: number): number {
   return clamp(value, TRACE_WINDOW_MIN_SECONDS, TRACE_WINDOW_MAX_SECONDS);
 }
 
+function defaultTraceWindowSecondsForRate(rateHz: number): number {
+  if (!Number.isFinite(rateHz) || rateHz <= 0) {
+    return TRACE_DEFAULT_WINDOW_SECONDS;
+  }
+  const targetSeconds = Math.max(TRACE_DEFAULT_WINDOW_SECONDS, Math.round(10 / rateHz));
+  return normalizeWindowSeconds(targetSeconds);
+}
+
 function shortEndpointToken(endpointId: string): string {
   const parts = endpointId.split(":");
   const last = parts.length > 0 ? parts[parts.length - 1] : endpointId;
@@ -391,6 +399,9 @@ export function ProfilingPanel({
         row,
         topicScope: topicScopeForPublisher(row.topic, graphSnapshot),
       }));
+    const topicScopeByRowId = new Map(
+      activeRowsWithTopicScope.map((entry) => [entry.row.id, entry.topicScope])
+    );
     setTraceSamplesByRowId((previous) => {
       let changed = false;
       const next: Record<string, PublisherTraceSample[]> = { ...previous };
@@ -398,10 +409,12 @@ export function ProfilingPanel({
       for (const sample of extracted) {
         const matchedRowIds = new Set<string>();
         const publisherRow = rowById.get(sample.rowId);
+        const publisherTopicScope = topicScopeByRowId.get(sample.rowId);
         if (
           publisherRow
           && activeIds.has(sample.rowId)
-          && publisherRow.topic === sample.topic
+          && publisherTopicScope
+          && sampleTopicMatchesScope(sample.topic, publisherTopicScope)
           && TRACE_PUBLISHER_METRICS.has(sample.metric)
         ) {
           matchedRowIds.add(sample.rowId);
@@ -431,7 +444,7 @@ export function ProfilingPanel({
       }
       return changed ? next : previous;
     });
-  }, [activeTraceRowIds, latestTraceEvent, rowById]);
+  }, [activeTraceRowIds, graphSnapshot, latestTraceEvent, rowById]);
 
   const applyTraceControl = async (
     row: PublisherRow,
@@ -447,11 +460,12 @@ export function ProfilingPanel({
       setTraceWindowSecondsByRowId((previous) =>
         previous[row.id] !== undefined
           ? previous
-          : { ...previous, [row.id]: TRACE_DEFAULT_WINDOW_SECONDS }
+          : {
+              ...previous,
+              [row.id]: defaultTraceWindowSecondsForRate(row.publishRateHzWindow),
+            }
       );
-      setActiveTraceRowIds((previous) =>
-        previous.includes(row.id) ? previous : [...previous, row.id]
-      );
+      setActiveTraceRowIds([row.id]);
     } else {
       setActiveTraceRowIds((previous) =>
         previous.includes(row.id)
@@ -460,11 +474,32 @@ export function ProfilingPanel({
       );
     }
     try {
+      if (nextOpen) {
+        const previousActiveId = activeTraceRowIds.find(
+          (activeId) => activeId !== row.id
+        );
+        if (previousActiveId) {
+          const previousRow = rowById.get(previousActiveId);
+          if (previousRow) {
+            await setProfilingTraceControl({
+              process_id: previousRow.processId,
+              enabled: false,
+              publisher_endpoint_id: null,
+              publisher_topic: null,
+              subscriber_topic: null,
+              metrics: null,
+              sample_mod: 1,
+              ttl_seconds: null,
+              timeout: 2.0,
+            });
+          }
+        }
+      }
       await setProfilingTraceControl({
         process_id: row.processId,
         enabled: nextOpen,
-        publisher_endpoint_id: row.endpointId,
-        publisher_topic: row.topic,
+        publisher_endpoint_id: nextOpen ? row.endpointId : null,
+        publisher_topic: nextOpen ? row.topic : null,
         subscriber_topic: null,
         metrics: nextOpen
           ? [

@@ -49,10 +49,18 @@ type RendererState = {
   lastWipeCycle: number;
   lastCursorCol: number | null;
   yMaxMs: number;
-  columnCycle: Int32Array;
+  publishCycle: Int32Array;
+  attrCycle: Int32Array;
+  leaseCycleByEndpoint: Map<string, Int32Array>;
   publishBins: Float32Array;
+  publishPeakBins: Float32Array;
+  publishSumBins: Float64Array;
+  publishCountBins: Uint16Array;
   attrBins: Float32Array;
   leaseBinsByEndpoint: Map<string, Float32Array>;
+  leasePeakBinsByEndpoint: Map<string, Float32Array>;
+  leaseSumByEndpoint: Map<string, Float64Array>;
+  leaseCountByEndpoint: Map<string, Uint16Array>;
 };
 
 const BG_COLOR = "#0f172a";
@@ -80,6 +88,12 @@ function parsePositiveFloat(value: string): number | null {
     return null;
   }
   return parsed;
+}
+
+function shortEndpointToken(endpointId: string): string {
+  const parts = endpointId.split(":");
+  const token = parts.length > 0 ? parts[parts.length - 1] : endpointId;
+  return token.slice(0, 8);
 }
 
 function makeLayout(canvas: HTMLCanvasElement, windowSeconds: number): PlotLayout {
@@ -133,10 +147,18 @@ function makeRendererState(
     lastWipeCycle: 0,
     lastCursorCol: null,
     yMaxMs,
-    columnCycle: cycle,
+    publishCycle: new Int32Array(cycle),
+    attrCycle: new Int32Array(cycle),
+    leaseCycleByEndpoint: new Map<string, Int32Array>(),
     publishBins: makeNaNBins(layout.cols),
+    publishPeakBins: makeNaNBins(layout.cols),
+    publishSumBins: new Float64Array(layout.cols),
+    publishCountBins: new Uint16Array(layout.cols),
     attrBins: makeNaNBins(layout.cols),
     leaseBinsByEndpoint: new Map<string, Float32Array>(),
+    leasePeakBinsByEndpoint: new Map<string, Float32Array>(),
+    leaseSumByEndpoint: new Map<string, Float64Array>(),
+    leaseCountByEndpoint: new Map<string, Uint16Array>(),
   };
 }
 
@@ -351,30 +373,99 @@ function drawAttrRange(
   }
 }
 
+function drawPeakWhiskersRange(
+  context: CanvasRenderingContext2D,
+  avgBins: Float32Array,
+  peakBins: Float32Array,
+  {
+    color,
+    alpha,
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  }: {
+    color: string;
+    alpha: number;
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+  }
+): void {
+  context.strokeStyle = color;
+  context.lineWidth = 1;
+  context.globalAlpha = alpha;
+  for (let col = startCol; col <= endCol; col += 1) {
+    const avgMs = avgBins[col];
+    const peakMs = peakBins[col];
+    if (!Number.isFinite(avgMs) || !Number.isFinite(peakMs) || peakMs <= avgMs) {
+      continue;
+    }
+    const x = layout.left + col + 0.5;
+    const yLow = avgMs > yMaxMs ? layout.plotTop : yFromMs(avgMs, yMaxMs, layout);
+    const yHigh = peakMs > yMaxMs ? layout.plotTop : yFromMs(peakMs, yMaxMs, layout);
+    context.beginPath();
+    context.moveTo(x, yLow);
+    context.lineTo(x, yHigh);
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+}
+
 function drawRange(
   context: CanvasRenderingContext2D,
   state: RendererState,
   startCol: number,
   endCol: number,
+  showAttrBp: boolean,
+  showSubscribers: boolean,
+  hiddenLeaseEndpoints: Set<string>,
   leaseColorMap?: Record<string, string>
 ): void {
   clearRange(context, state.layout, startCol, endCol);
-  drawAttrRange(context, state.attrBins, {
-    startCol,
-    endCol,
-    yMaxMs: state.yMaxMs,
-    layout: state.layout,
-  });
-  for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
-    drawLineRange(context, bins, {
-      color: leaseColorForEndpoint(endpointId, leaseColorMap),
-      lineWidth: 1.1,
+  if (showAttrBp) {
+    drawAttrRange(context, state.attrBins, {
       startCol,
       endCol,
       yMaxMs: state.yMaxMs,
       layout: state.layout,
     });
   }
+  if (showSubscribers) {
+    for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
+      if (hiddenLeaseEndpoints.has(endpointId)) {
+        continue;
+      }
+      const peakBins = state.leasePeakBinsByEndpoint.get(endpointId);
+      if (peakBins) {
+        drawPeakWhiskersRange(context, bins, peakBins, {
+          color: leaseColorForEndpoint(endpointId, leaseColorMap),
+          alpha: 0.3,
+          startCol,
+          endCol,
+          yMaxMs: state.yMaxMs,
+          layout: state.layout,
+        });
+      }
+      drawLineRange(context, bins, {
+        color: leaseColorForEndpoint(endpointId, leaseColorMap),
+        lineWidth: 1.1,
+        startCol,
+        endCol,
+        yMaxMs: state.yMaxMs,
+        layout: state.layout,
+      });
+    }
+  }
+  drawPeakWhiskersRange(context, state.publishBins, state.publishPeakBins, {
+    color: PUBLISH_COLOR,
+    alpha: 0.35,
+    startCol,
+    endCol,
+    yMaxMs: state.yMaxMs,
+    layout: state.layout,
+  });
   drawLineRange(context, state.publishBins, {
     color: PUBLISH_COLOR,
     lineWidth: 1.25,
@@ -456,10 +547,14 @@ export function TraceTimingPanel({
   const rendererRef = useRef<RendererState | null>(null);
   const lastBatchRef = useRef<TimingTraceSample[] | null>(null);
   const previousAutoModeRef = useRef<boolean>(true);
+  const [windowInput, setWindowInput] = useState(() => windowSeconds.toFixed(1));
   const [autoYAxis, setAutoYAxis] = useState(true);
   const [manualYMaxInput, setManualYMaxInput] = useState(
     `${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`
   );
+  const [showAttrBp, setShowAttrBp] = useState(true);
+  const [showSubscribers, setShowSubscribers] = useState(true);
+  const [hiddenLeaseEndpointIds, setHiddenLeaseEndpointIds] = useState<string[]>([]);
 
   const manualYMaxMs = useMemo(
     () => parsePositiveFloat(manualYMaxInput),
@@ -474,7 +569,28 @@ export function TraceTimingPanel({
     () => [...effectiveTopicScope].sort().join("|"),
     [effectiveTopicScope]
   );
+  const leaseEndpointIds = useMemo(() => {
+    const ids = new Set(
+      samples
+        .filter((sample) => sample.metric === "lease_time_ns")
+        .map((sample) => sample.endpointId)
+    );
+    return Array.from(ids).sort();
+  }, [samples]);
+  const hiddenLeaseEndpointSet = useMemo(
+    () => new Set(hiddenLeaseEndpointIds),
+    [hiddenLeaseEndpointIds]
+  );
   const publisherSignature = `${publisherProcessId}|${publisherEndpointId}`;
+  const commitWindowInput = () => {
+    const parsed = parsePositiveFloat(windowInput);
+    if (parsed === null || !onWindowSecondsChange) {
+      setWindowInput(windowSeconds.toFixed(1));
+      return;
+    }
+    onWindowSecondsChange(clamp(parsed, 0.5, 30));
+    setWindowInput(clamp(parsed, 0.5, 30).toFixed(1));
+  };
   const toggleYAxisMode = () => {
     if (autoYAxis) {
       const currentY =
@@ -486,6 +602,16 @@ export function TraceTimingPanel({
     }
     setAutoYAxis(true);
   };
+
+  useEffect(() => {
+    setWindowInput(windowSeconds.toFixed(1));
+  }, [windowSeconds]);
+
+  useEffect(() => {
+    setHiddenLeaseEndpointIds((previous) =>
+      previous.filter((endpointId) => leaseEndpointIds.includes(endpointId))
+    );
+  }, [leaseEndpointIds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -589,15 +715,6 @@ export function TraceTimingPanel({
         renderer.windowNs,
         renderer.layout.cols
       );
-      if (cycle > renderer.columnCycle[col]) {
-        renderer.publishBins[col] = Number.NaN;
-        renderer.attrBins[col] = Number.NaN;
-        for (const leaseBins of renderer.leaseBinsByEndpoint.values()) {
-          leaseBins[col] = Number.NaN;
-        }
-        renderer.columnCycle[col] = cycle;
-        changedCols.add(col);
-      }
       maxCycleSeen = Math.max(maxCycleSeen, cycle);
 
       const valueMs = toMs(sample.value);
@@ -606,12 +723,34 @@ export function TraceTimingPanel({
       }
 
       if (isPublisherMetric) {
-        const current = renderer.publishBins[col];
-        if (!Number.isFinite(current) || valueMs > current) {
-          renderer.publishBins[col] = valueMs;
+        if (cycle > renderer.publishCycle[col]) {
+          renderer.publishCycle[col] = cycle;
+          renderer.publishBins[col] = Number.NaN;
+          renderer.publishPeakBins[col] = Number.NaN;
+          renderer.publishSumBins[col] = 0;
+          renderer.publishCountBins[col] = 0;
+          changedCols.add(col);
+        }
+        const nextCount = Math.min(65535, renderer.publishCountBins[col] + 1);
+        renderer.publishCountBins[col] = nextCount;
+        renderer.publishSumBins[col] += valueMs;
+        const nextAvg = renderer.publishSumBins[col] / nextCount;
+        const currentAvg = renderer.publishBins[col];
+        if (!Number.isFinite(currentAvg) || Math.abs(nextAvg - currentAvg) > 1e-6) {
+          renderer.publishBins[col] = nextAvg;
+          changedCols.add(col);
+        }
+        const currentPeak = renderer.publishPeakBins[col];
+        if (!Number.isFinite(currentPeak) || valueMs > currentPeak) {
+          renderer.publishPeakBins[col] = valueMs;
           changedCols.add(col);
         }
       } else if (isAttrMetric) {
+        if (cycle > renderer.attrCycle[col]) {
+          renderer.attrCycle[col] = cycle;
+          renderer.attrBins[col] = Number.NaN;
+          changedCols.add(col);
+        }
         const current = renderer.attrBins[col];
         if (!Number.isFinite(current) || valueMs > current) {
           renderer.attrBins[col] = valueMs;
@@ -619,13 +758,51 @@ export function TraceTimingPanel({
         }
       } else {
         let leaseBins = renderer.leaseBinsByEndpoint.get(sample.endpointId);
+        let leasePeakBins = renderer.leasePeakBinsByEndpoint.get(sample.endpointId);
+        let leaseSumBins = renderer.leaseSumByEndpoint.get(sample.endpointId);
+        let leaseCountBins = renderer.leaseCountByEndpoint.get(sample.endpointId);
+        let leaseCycle = renderer.leaseCycleByEndpoint.get(sample.endpointId);
         if (!leaseBins) {
           leaseBins = makeNaNBins(renderer.layout.cols);
           renderer.leaseBinsByEndpoint.set(sample.endpointId, leaseBins);
         }
-        const current = leaseBins[col];
-        if (!Number.isFinite(current) || valueMs > current) {
-          leaseBins[col] = valueMs;
+        if (!leasePeakBins) {
+          leasePeakBins = makeNaNBins(renderer.layout.cols);
+          renderer.leasePeakBinsByEndpoint.set(sample.endpointId, leasePeakBins);
+        }
+        if (!leaseSumBins) {
+          leaseSumBins = new Float64Array(renderer.layout.cols);
+          renderer.leaseSumByEndpoint.set(sample.endpointId, leaseSumBins);
+        }
+        if (!leaseCountBins) {
+          leaseCountBins = new Uint16Array(renderer.layout.cols);
+          renderer.leaseCountByEndpoint.set(sample.endpointId, leaseCountBins);
+        }
+        if (!leaseCycle) {
+          leaseCycle = new Int32Array(renderer.layout.cols);
+          leaseCycle.fill(-2147483648);
+          renderer.leaseCycleByEndpoint.set(sample.endpointId, leaseCycle);
+        }
+        if (cycle > leaseCycle[col]) {
+          leaseCycle[col] = cycle;
+          leaseBins[col] = Number.NaN;
+          leasePeakBins[col] = Number.NaN;
+          leaseSumBins[col] = 0;
+          leaseCountBins[col] = 0;
+          changedCols.add(col);
+        }
+        const nextCount = Math.min(65535, leaseCountBins[col] + 1);
+        leaseCountBins[col] = nextCount;
+        leaseSumBins[col] += valueMs;
+        const nextAvg = leaseSumBins[col] / nextCount;
+        const currentAvg = leaseBins[col];
+        if (!Number.isFinite(currentAvg) || Math.abs(nextAvg - currentAvg) > 1e-6) {
+          leaseBins[col] = nextAvg;
+          changedCols.add(col);
+        }
+        const currentPeak = leasePeakBins[col];
+        if (!Number.isFinite(currentPeak) || valueMs > currentPeak) {
+          leasePeakBins[col] = valueMs;
           changedCols.add(col);
         }
       }
@@ -677,7 +854,16 @@ export function TraceTimingPanel({
     if (needsReinit || changedCols.size > 0) {
       context.fillStyle = BG_COLOR;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
-      drawRange(context, renderer, 0, renderer.layout.cols - 1, leaseColorMap);
+      drawRange(
+        context,
+        renderer,
+        0,
+        renderer.layout.cols - 1,
+        showAttrBp,
+        showSubscribers,
+        hiddenLeaseEndpointSet,
+        leaseColorMap
+      );
     }
 
     if (renderer.lastTimestamp <= 0) {
@@ -694,6 +880,7 @@ export function TraceTimingPanel({
   }, [
     autoYAxis,
     effectiveTopicScope,
+    hiddenLeaseEndpointSet,
     leaseColorMap,
     manualYMaxMs,
     nominalPublishRateHz,
@@ -701,6 +888,8 @@ export function TraceTimingPanel({
     publisherProcessId,
     publisherSignature,
     samples,
+    showAttrBp,
+    showSubscribers,
     scopeSignature,
     windowSeconds,
   ]);
@@ -715,13 +904,13 @@ export function TraceTimingPanel({
             min={0.5}
             max={30}
             step="0.5"
-            value={windowSeconds.toFixed(1)}
-            onChange={(event) => {
-              const parsed = parsePositiveFloat(event.target.value);
-              if (parsed === null || !onWindowSecondsChange) {
-                return;
+            value={windowInput}
+            onChange={(event) => setWindowInput(event.target.value)}
+            onBlur={commitWindowInput}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                commitWindowInput();
               }
-              onWindowSecondsChange(clamp(parsed, 0.5, 30));
             }}
           />
         </label>
@@ -757,6 +946,46 @@ export function TraceTimingPanel({
             {autoYAxis ? "Auto" : "Fixed"}
           </span>
         </button>
+      </div>
+      <div className="timing-trace__series-controls">
+        <button
+          type="button"
+          className={`timing-trace__series-btn ${showAttrBp ? "is-active" : ""}`}
+          onClick={() => setShowAttrBp((previous) => !previous)}
+        >
+          Attr BP
+        </button>
+        <button
+          type="button"
+          className={`timing-trace__series-btn ${showSubscribers ? "is-active" : ""}`}
+          onClick={() => setShowSubscribers((previous) => !previous)}
+        >
+          Subscribers
+        </button>
+        {showSubscribers
+          ? leaseEndpointIds.map((endpointId) => {
+              const hidden = hiddenLeaseEndpointSet.has(endpointId);
+              return (
+                <button
+                  key={endpointId}
+                  type="button"
+                  className={`timing-trace__series-chip ${hidden ? "" : "is-active"}`}
+                  onClick={() =>
+                    setHiddenLeaseEndpointIds((previous) =>
+                      previous.includes(endpointId)
+                        ? previous.filter((existing) => existing !== endpointId)
+                        : [...previous, endpointId]
+                    )
+                  }
+                >
+                  <i
+                    style={{ background: leaseColorForEndpoint(endpointId, leaseColorMap) }}
+                  />
+                  {shortEndpointToken(endpointId)}
+                </button>
+              );
+            })
+          : null}
       </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
       <div className="timing-trace__legend">

@@ -21,7 +21,7 @@ const MAX_EVENTS = 120;
 const SNAPSHOT_REFRESH_DEBOUNCE_MS = 250;
 const RECONNECT_DELAY_MS = 1000;
 const WS_DEFAULT_PROFILING_INTERVAL = 0.05;
-const WS_DEFAULT_PROFILING_MAX_SAMPLES = 2000;
+const WS_DEFAULT_PROFILING_MAX_SAMPLES = 5000;
 
 function readPositiveNumber(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
