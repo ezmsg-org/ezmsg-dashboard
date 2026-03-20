@@ -670,7 +670,13 @@ export function ProfilingPanel({
                         </p>
                       ) : (
                         <div className="subscriber-list">
-                          {visibleContributors.map((contributor) => (
+                          {visibleContributors.map((contributor) => {
+                            const attrBpAvgPerMessageNs =
+                              contributor.messagesWindow > 0
+                                ? contributor.attributableBackpressureNsWindow
+                                  / contributor.messagesWindow
+                                : 0;
+                            return (
                             <details className="subscriber-item" key={contributor.id}>
                               <summary className="subscriber-item__summary">
                                 <div className="subscriber-item__identity">
@@ -699,13 +705,13 @@ export function ProfilingPanel({
                                 </div>
                                 <div className="subscriber-item__metrics">
                                   <span>
-                                    <em>Attr BP</em>
+                                    <em>Attr BP Avg</em>
                                     <strong>
-                                      {formatMs(contributor.attributableBackpressureNsWindow)}
+                                      {formatMs(attrBpAvgPerMessageNs)}
                                     </strong>
                                   </span>
                                   <span>
-                                    <em>Events</em>
+                                    <em>Events (total)</em>
                                     <strong>{contributor.attributableBackpressureEvents}</strong>
                                   </span>
                                   <span>
@@ -738,10 +744,15 @@ export function ProfilingPanel({
                                     <dt>User Span Avg</dt>
                                     <dd>{formatMs(contributor.userSpanNsAvgWindow)}</dd>
                                   </div>
+                                  <div>
+                                    <dt>Attr BP Sum (Window)</dt>
+                                    <dd>{formatMs(contributor.attributableBackpressureNsWindow)}</dd>
+                                  </div>
                                 </dl>
                               </div>
                             </details>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>

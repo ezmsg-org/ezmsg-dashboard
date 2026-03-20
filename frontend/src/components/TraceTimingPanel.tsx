@@ -346,7 +346,7 @@ export function TraceTimingPanel({
         </span>
         <span className="timing-trace__legend-item">
           <i style={{ background: ATTR_BP_COLOR }} />
-          Attr BP
+          Attr BP (all subs)
         </span>
       </div>
     </div>
