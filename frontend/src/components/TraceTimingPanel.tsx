@@ -45,20 +45,44 @@ function parsePositiveFloat(value: string): number | null {
   return parsed;
 }
 
-function decimateByStep<T>(series: T[], maxPoints: number): T[] {
-  if (series.length <= maxPoints || maxPoints <= 0) {
-    return series;
+type SeriesBin = {
+  hasValue: boolean;
+  maxMs: number;
+};
+
+function buildSeriesBins(
+  series: TimingTraceSample[],
+  {
+    left,
+    plotWidth,
+    yMaxMs,
+    xOf,
+  }: {
+    left: number;
+    plotWidth: number;
+    yMaxMs: number;
+    xOf: (timestamp: number) => number;
   }
-  const step = Math.ceil(series.length / maxPoints);
-  const out: T[] = [];
-  for (let index = 0; index < series.length; index += step) {
-    out.push(series[index]);
+): SeriesBin[] {
+  const widthCols = Math.max(1, Math.floor(plotWidth));
+  const bins: SeriesBin[] = Array.from({ length: widthCols }, () => ({
+    hasValue: false,
+    maxMs: 0,
+  }));
+  for (const sample of series) {
+    const valueMs = toMs(sample.value);
+    if (valueMs > yMaxMs) {
+      continue;
+    }
+    const x = xOf(sample.timestamp);
+    const col = clamp(Math.floor(x - left), 0, widthCols - 1);
+    const bin = bins[col];
+    if (!bin.hasValue || valueMs > bin.maxMs) {
+      bin.hasValue = true;
+      bin.maxMs = valueMs;
+    }
   }
-  const last = series[series.length - 1];
-  if (out[out.length - 1] !== last) {
-    out.push(last);
-  }
-  return out;
+  return bins;
 }
 
 export function TraceTimingPanel({
@@ -236,18 +260,23 @@ export function TraceTimingPanel({
       );
       autoYMaxMsRef.current = sharedYMaxMs;
     }
-    const renderBudget = Math.max(800, Math.floor(plotWidth * 2));
 
     context.strokeStyle = ATTR_BP_COLOR;
     context.lineWidth = 1;
     context.globalAlpha = 0.5;
-    for (const sample of decimateByStep(attributableSeries, renderBudget * 2)) {
-      const valueMs = toMs(sample.value);
-      if (valueMs > sharedYMaxMs) {
+    const attributableBins = buildSeriesBins(attributableSeries, {
+      left,
+      plotWidth,
+      yMaxMs: sharedYMaxMs,
+      xOf,
+    });
+    for (let col = 0; col < attributableBins.length; col += 1) {
+      const bin = attributableBins[col];
+      if (!bin.hasValue) {
         continue;
       }
-      const x = xOf(sample.timestamp);
-      const y = yFromMs(valueMs, sharedYMaxMs);
+      const x = left + col + 0.5;
+      const y = yFromMs(bin.maxMs, sharedYMaxMs);
       context.beginPath();
       context.moveTo(x, plotBottom);
       context.lineTo(x, y);
@@ -258,13 +287,18 @@ export function TraceTimingPanel({
     for (const [endpointId, endpointSeries] of leaseSeriesByEndpoint.entries()) {
       context.strokeStyle = leaseColorForEndpoint(endpointId, leaseColorMap);
       context.lineWidth = 1.1;
+      const bins = buildSeriesBins(endpointSeries, {
+        left,
+        plotWidth,
+        yMaxMs: sharedYMaxMs,
+        xOf,
+      });
       context.beginPath();
       let started = false;
-      let previousX = 0;
-      const renderSeries = decimateByStep(endpointSeries, renderBudget);
-      for (const sample of renderSeries) {
-        const valueMs = toMs(sample.value);
-        if (valueMs > sharedYMaxMs) {
+      for (let col = 0; col < bins.length; col += 1) {
+        const bin = bins[col];
+        const x = left + col + 0.5;
+        if (!bin.hasValue) {
           if (started) {
             context.stroke();
             context.beginPath();
@@ -272,19 +306,13 @@ export function TraceTimingPanel({
           }
           continue;
         }
-        const x = xOf(sample.timestamp);
-        const y = yFromMs(valueMs, sharedYMaxMs);
-        if (!started || x < previousX) {
-          if (started) {
-            context.stroke();
-            context.beginPath();
-          }
+        const y = yFromMs(bin.maxMs, sharedYMaxMs);
+        if (!started) {
           context.moveTo(x, y);
           started = true;
         } else {
           context.lineTo(x, y);
         }
-        previousX = x;
       }
       if (started) {
         context.stroke();
@@ -293,12 +321,18 @@ export function TraceTimingPanel({
 
     context.strokeStyle = PUBLISH_COLOR;
     context.lineWidth = 1.25;
+    const publishBins = buildSeriesBins(publisherSeries, {
+      left,
+      plotWidth,
+      yMaxMs: sharedYMaxMs,
+      xOf,
+    });
     context.beginPath();
     let started = false;
-    let previousX = 0;
-    for (const sample of decimateByStep(publisherSeries, renderBudget)) {
-      const valueMs = toMs(sample.value);
-      if (valueMs > sharedYMaxMs) {
+    for (let col = 0; col < publishBins.length; col += 1) {
+      const bin = publishBins[col];
+      const x = left + col + 0.5;
+      if (!bin.hasValue) {
         if (started) {
           context.stroke();
           context.beginPath();
@@ -306,19 +340,13 @@ export function TraceTimingPanel({
         }
         continue;
       }
-      const x = xOf(sample.timestamp);
-      const y = yFromMs(valueMs, sharedYMaxMs);
-      if (!started || x < previousX) {
-        if (started) {
-          context.stroke();
-          context.beginPath();
-        }
+      const y = yFromMs(bin.maxMs, sharedYMaxMs);
+      if (!started) {
         context.moveTo(x, y);
         started = true;
       } else {
         context.lineTo(x, y);
       }
-      previousX = x;
     }
     if (started) {
       context.stroke();
@@ -377,9 +405,13 @@ export function TraceTimingPanel({
             value={manualYMaxInput}
             onChange={(event) => setManualYMaxInput(event.target.value)}
             onBlur={() => {
-              if (parsePositiveFloat(manualYMaxInput) === null) {
+              const parsed = parsePositiveFloat(manualYMaxInput);
+              if (parsed === null) {
                 setManualYMaxInput(`${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`);
+                return;
               }
+              const clamped = Math.max(MIN_Y_MAX_MS, parsed);
+              setManualYMaxInput(clamped.toFixed(2));
             }}
             disabled={autoYAxis}
           />
