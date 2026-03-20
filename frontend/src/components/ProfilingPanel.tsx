@@ -722,11 +722,11 @@ export function ProfilingPanel({
                               </summary>
                               <div className="subscriber-item__detail">
                                 <dl>
-                                  <div>
+                                  <div className="subscriber-item__detail-row-full">
                                     <dt>Topic</dt>
                                     <dd className="mono">{contributor.topic}</dd>
                                   </div>
-                                  <div>
+                                  <div className="subscriber-item__detail-row-full">
                                     <dt>Endpoint</dt>
                                     <dd className="mono">{contributor.endpointId}</dd>
                                   </div>

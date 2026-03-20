@@ -774,6 +774,10 @@ body {
   word-break: break-word;
 }
 
+.subscriber-item__detail-row-full {
+  grid-column: 1 / -1;
+}
+
 .topic-details {
   display: block;
 }
