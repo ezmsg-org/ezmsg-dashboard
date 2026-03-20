@@ -163,3 +163,37 @@ async def test_set_profiling_trace_control_routes_to_process_unit() -> None:
             "timeout": 1.25,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filter() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    payload = await service.set_profiling_trace_control(
+        process_id="00000000-0000-0000-0000-000000000123",
+        enabled=True,
+        publisher_endpoint_id="TOPIC:pub",
+        publisher_topic="TOPIC",
+        subscriber_topic=None,
+        metrics=["publish_delta_ns", "lease_time_ns"],
+        sample_mod=1,
+        ttl_seconds=12.0,
+        timeout=1.25,
+    )
+
+    assert payload["process_id"] == "00000000-0000-0000-0000-000000000123"
+    assert fake_context.trace_control_calls == [
+        {
+            "unit_address": "unit.patchable",
+            "enabled": True,
+            "publisher_endpoint_ids": ["TOPIC:pub"],
+            "publisher_topics": ["TOPIC"],
+            "subscriber_topics": [],
+            "metrics": ["publish_delta_ns", "lease_time_ns"],
+            "sample_mod": 1,
+            "ttl_seconds": 12.0,
+            "timeout": 1.25,
+        }
+    ]

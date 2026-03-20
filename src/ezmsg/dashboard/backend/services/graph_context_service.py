@@ -239,7 +239,7 @@ class GraphContextLifecycleService:
             else None,
             subscriber_topics=[subscriber_topic]
             if subscriber_topic
-            else ([publisher_topic] if publisher_topic else None),
+            else None,
             publisher_endpoint_ids=[publisher_endpoint_id]
             if publisher_endpoint_id
             else None,

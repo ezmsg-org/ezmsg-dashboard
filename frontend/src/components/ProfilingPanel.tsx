@@ -212,11 +212,10 @@ function toContributor(
   };
 }
 
-function contributorListForPublisher(
+function topicScopeForPublisher(
   topic: string,
-  subscribers: SubscriberContributor[],
   graphSnapshot: GraphSnapshotPayload | null
-): SubscriberContributor[] {
+): Set<string> {
   const candidateTopics = new Set<string>([topic]);
   const routedTopics = graphSnapshot?.graph[topic];
   if (Array.isArray(routedTopics)) {
@@ -226,6 +225,27 @@ function contributorListForPublisher(
       }
     }
   }
+  return candidateTopics;
+}
+
+function sampleTopicMatchesScope(sampleTopic: string, topicScope: Set<string>): boolean {
+  if (topicScope.has(sampleTopic)) {
+    return true;
+  }
+  for (const candidateTopic of topicScope) {
+    if (sampleTopic.startsWith(`${candidateTopic}:`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function contributorListForPublisher(
+  topic: string,
+  subscribers: SubscriberContributor[],
+  graphSnapshot: GraphSnapshotPayload | null
+): SubscriberContributor[] {
+  const candidateTopics = topicScopeForPublisher(topic, graphSnapshot);
 
   return subscribers
     .filter((subscriber) => candidateTopics.has(subscriber.topic))
@@ -348,9 +368,13 @@ export function ProfilingPanel({
       return;
     }
     const activeIds = new Set(activeTraceRowIds);
-    const activeRows = activeTraceRowIds
+    const activeRowsWithTopicScope = activeTraceRowIds
       .map((rowId) => rowById.get(rowId))
-      .filter((row): row is PublisherRow => row !== undefined);
+      .filter((row): row is PublisherRow => row !== undefined)
+      .map((row) => ({
+        row,
+        topicScope: topicScopeForPublisher(row.topic, graphSnapshot),
+      }));
     setTraceSamplesByRowId((previous) => {
       let changed = false;
       const next: Record<string, PublisherTraceSample[]> = { ...previous };
@@ -366,9 +390,9 @@ export function ProfilingPanel({
           matchedRowIds.add(sample.rowId);
         }
         if (TRACE_SUBSCRIBER_METRICS.has(sample.metric)) {
-          for (const activeRow of activeRows) {
-            if (activeRow.topic === sample.topic) {
-              matchedRowIds.add(activeRow.id);
+          for (const activeRow of activeRowsWithTopicScope) {
+            if (sampleTopicMatchesScope(sample.topic, activeRow.topicScope)) {
+              matchedRowIds.add(activeRow.row.id);
             }
           }
         }
@@ -413,7 +437,7 @@ export function ProfilingPanel({
         enabled: nextOpen,
         publisher_endpoint_id: row.endpointId,
         publisher_topic: row.topic,
-        subscriber_topic: row.topic,
+        subscriber_topic: null,
         metrics: nextOpen
           ? [
               "publish_delta_ns",
@@ -492,6 +516,9 @@ export function ProfilingPanel({
             const traceBusy = Boolean(traceControlPending[row.id]);
             const traceErrorMessage = traceControlError[row.id] ?? null;
             const windowLabel = formatWindowSeconds(row.windowSeconds);
+            const traceTopicScope = Array.from(
+              topicScopeForPublisher(row.topic, graphSnapshot)
+            );
             const visibleContributors = hideZeroContributorRows
               ? row.contributors.filter(
                   (contributor) => contributor.attributableBackpressureNsWindow > 0
@@ -604,6 +631,7 @@ export function ProfilingPanel({
                               publisherProcessId={row.processId}
                               publisherEndpointId={row.endpointId}
                               topic={row.topic}
+                              topicScope={traceTopicScope}
                               windowSeconds={2.0}
                             />
                           </>

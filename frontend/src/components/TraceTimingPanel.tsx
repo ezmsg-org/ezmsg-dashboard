@@ -15,6 +15,7 @@ type TraceTimingPanelProps = {
   publisherProcessId: string;
   publisherEndpointId: string;
   topic: string;
+  topicScope?: string[];
   windowSeconds?: number;
 };
 
@@ -46,20 +47,30 @@ export function TraceTimingPanel({
   publisherProcessId,
   publisherEndpointId,
   topic,
+  topicScope,
   windowSeconds = 2.0,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const originRef = useRef<number | null>(null);
 
+  const effectiveTopicScope = useMemo(
+    () => (topicScope && topicScope.length > 0 ? topicScope : [topic]),
+    [topic, topicScope]
+  );
+
   const filtered = useMemo(
     () =>
       samples.filter(
         (sample) =>
-          sample.topic === topic
+          effectiveTopicScope.some(
+            (candidateTopic) =>
+              sample.topic === candidateTopic
+              || sample.topic.startsWith(`${candidateTopic}:`)
+          )
           && Number.isFinite(sample.timestamp)
           && Number.isFinite(sample.value)
       ),
-    [samples, topic]
+    [effectiveTopicScope, samples]
   );
 
   const subscriberLegend = useMemo(() => {
@@ -248,7 +259,7 @@ export function TraceTimingPanel({
       top + plotHeight + 16
     );
     context.fillText(`${pubMaxMs.toFixed(2)} ms`, 6, pubBottom - 4);
-  }, [filtered, publisherEndpointId, publisherProcessId, subscriberLegend, topic, windowSeconds]);
+  }, [filtered, publisherEndpointId, publisherProcessId, subscriberLegend, windowSeconds]);
 
   return (
     <div className="timing-trace">
