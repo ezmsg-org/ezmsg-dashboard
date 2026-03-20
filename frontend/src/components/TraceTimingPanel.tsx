@@ -770,9 +770,8 @@ export function TraceTimingPanel({
           onClick={toggleYAxisMode}
           title={autoYAxis ? "Switch to Fixed Y" : "Switch to Auto Y"}
         >
-          <span className="timing-trace__mode-toggle-knob" />
           <span className="timing-trace__mode-toggle-label">
-            {autoYAxis ? "Auto Y" : "Fixed Y"}
+            {autoYAxis ? "Auto" : "Fixed"}
           </span>
         </button>
       </div>

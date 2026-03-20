@@ -549,14 +549,13 @@ body {
 .timing-trace__mode-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #ffffff;
   color: #334155;
   font-size: 0.72rem;
   line-height: 1;
-  padding: 0.18rem 0.45rem 0.18rem 0.18rem;
+  padding: 0.2rem 0.55rem;
   cursor: pointer;
 }
 
@@ -566,20 +565,8 @@ body {
   background: #eff6ff;
 }
 
-.timing-trace__mode-toggle-knob {
-  width: 0.66rem;
-  height: 0.66rem;
-  border-radius: 999px;
-  display: inline-block;
-  background: #94a3b8;
-}
-
-.timing-trace__mode-toggle.is-auto .timing-trace__mode-toggle-knob {
-  background: #3b82f6;
-}
-
 .timing-trace__mode-toggle-label {
-  min-width: 3.5rem;
+  min-width: 2.6rem;
   text-align: center;
 }
 
