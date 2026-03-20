@@ -62,6 +62,7 @@ const LABEL_COLOR = "#cbd5e1";
 const PUBLISH_COLOR = "#38bdf8";
 const ATTR_BP_COLOR = "#f59e0b";
 const CURSOR_COLOR = "#fbbf24";
+const CURSOR_LEAD_COLS = 2;
 const MIN_Y_MAX_MS = 0.1;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
 
@@ -137,6 +138,16 @@ function makeRendererState(
     attrBins: makeNaNBins(layout.cols),
     leaseBinsByEndpoint: new Map<string, Float32Array>(),
   };
+}
+
+function addColumnNeighborhood(changed: Set<number>, col: number, cols: number): void {
+  if (cols <= 0) {
+    return;
+  }
+  for (let offset = -1; offset <= 1; offset += 1) {
+    const wrapped = (col + offset + cols) % cols;
+    changed.add(wrapped);
+  }
 }
 
 function matchesTopicScope(sampleTopic: string, topicScope: string[]): boolean {
@@ -605,9 +616,15 @@ export function TraceTimingPanel({
       );
       changedCols.add(latest.col);
       if (renderer.lastCursorCol !== null) {
-        changedCols.add(renderer.lastCursorCol);
+        addColumnNeighborhood(
+          changedCols,
+          renderer.lastCursorCol,
+          renderer.layout.cols
+        );
       }
-      renderer.lastCursorCol = latest.col;
+      const cursorCol = (latest.col + CURSOR_LEAD_COLS) % renderer.layout.cols;
+      addColumnNeighborhood(changedCols, cursorCol, renderer.layout.cols);
+      renderer.lastCursorCol = cursorCol;
       renderer.lastTimestamp = newestTimestamp;
     }
 
