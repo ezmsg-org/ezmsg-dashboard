@@ -19,6 +19,7 @@ type TraceTimingPanelProps = {
   topic: string;
   topicScope?: string[];
   leaseColorMap?: Record<string, string>;
+  selectedLeaseEndpointId?: string | null;
   windowSeconds: number;
   onWindowSecondsChange?: (seconds: number) => void;
 };
@@ -420,7 +421,7 @@ function drawRange(
   endCol: number,
   showAttrBp: boolean,
   showSubscribers: boolean,
-  hiddenLeaseEndpoints: Set<string>,
+  selectedLeaseEndpointId: string | null,
   leaseColorMap?: Record<string, string>
 ): void {
   clearRange(context, state.layout, startCol, endCol);
@@ -434,7 +435,7 @@ function drawRange(
   }
   if (showSubscribers) {
     for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
-      if (hiddenLeaseEndpoints.has(endpointId)) {
+      if (selectedLeaseEndpointId && endpointId !== selectedLeaseEndpointId) {
         continue;
       }
       const peakBins = state.leasePeakBinsByEndpoint.get(endpointId);
@@ -539,6 +540,7 @@ export function TraceTimingPanel({
   topic,
   topicScope,
   leaseColorMap,
+  selectedLeaseEndpointId = null,
   windowSeconds,
   onWindowSecondsChange,
 }: TraceTimingPanelProps) {
@@ -547,6 +549,7 @@ export function TraceTimingPanel({
   const rendererRef = useRef<RendererState | null>(null);
   const lastBatchRef = useRef<TimingTraceSample[] | null>(null);
   const previousAutoModeRef = useRef<boolean>(true);
+  const windowInputKeyboardEditRef = useRef(false);
   const [windowInput, setWindowInput] = useState(() => windowSeconds.toFixed(1));
   const [autoYAxis, setAutoYAxis] = useState(true);
   const [manualYMaxInput, setManualYMaxInput] = useState(
@@ -554,7 +557,6 @@ export function TraceTimingPanel({
   );
   const [showAttrBp, setShowAttrBp] = useState(true);
   const [showSubscribers, setShowSubscribers] = useState(true);
-  const [hiddenLeaseEndpointIds, setHiddenLeaseEndpointIds] = useState<string[]>([]);
 
   const manualYMaxMs = useMemo(
     () => parsePositiveFloat(manualYMaxInput),
@@ -569,27 +571,16 @@ export function TraceTimingPanel({
     () => [...effectiveTopicScope].sort().join("|"),
     [effectiveTopicScope]
   );
-  const leaseEndpointIds = useMemo(() => {
-    const ids = new Set(
-      samples
-        .filter((sample) => sample.metric === "lease_time_ns")
-        .map((sample) => sample.endpointId)
-    );
-    return Array.from(ids).sort();
-  }, [samples]);
-  const hiddenLeaseEndpointSet = useMemo(
-    () => new Set(hiddenLeaseEndpointIds),
-    [hiddenLeaseEndpointIds]
-  );
   const publisherSignature = `${publisherProcessId}|${publisherEndpointId}`;
-  const commitWindowInput = () => {
-    const parsed = parsePositiveFloat(windowInput);
+  const commitWindowInput = (rawValue?: string) => {
+    const parsed = parsePositiveFloat(rawValue ?? windowInput);
     if (parsed === null || !onWindowSecondsChange) {
       setWindowInput(windowSeconds.toFixed(1));
       return;
     }
-    onWindowSecondsChange(clamp(parsed, 0.5, 30));
-    setWindowInput(clamp(parsed, 0.5, 30).toFixed(1));
+    const clamped = clamp(parsed, 0.5, 30);
+    onWindowSecondsChange(clamped);
+    setWindowInput(clamped.toFixed(1));
   };
   const toggleYAxisMode = () => {
     if (autoYAxis) {
@@ -606,12 +597,6 @@ export function TraceTimingPanel({
   useEffect(() => {
     setWindowInput(windowSeconds.toFixed(1));
   }, [windowSeconds]);
-
-  useEffect(() => {
-    setHiddenLeaseEndpointIds((previous) =>
-      previous.filter((endpointId) => leaseEndpointIds.includes(endpointId))
-    );
-  }, [leaseEndpointIds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -861,7 +846,7 @@ export function TraceTimingPanel({
         renderer.layout.cols - 1,
         showAttrBp,
         showSubscribers,
-        hiddenLeaseEndpointSet,
+        selectedLeaseEndpointId,
         leaseColorMap
       );
     }
@@ -880,13 +865,13 @@ export function TraceTimingPanel({
   }, [
     autoYAxis,
     effectiveTopicScope,
-    hiddenLeaseEndpointSet,
     leaseColorMap,
     manualYMaxMs,
     nominalPublishRateHz,
     publisherEndpointId,
     publisherProcessId,
     publisherSignature,
+    selectedLeaseEndpointId,
     samples,
     showAttrBp,
     showSubscribers,
@@ -905,11 +890,42 @@ export function TraceTimingPanel({
             max={30}
             step="0.5"
             value={windowInput}
-            onChange={(event) => setWindowInput(event.target.value)}
-            onBlur={commitWindowInput}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setWindowInput(nextValue);
+              if (!windowInputKeyboardEditRef.current) {
+                commitWindowInput(nextValue);
+              }
+            }}
+            onMouseDown={() => {
+              windowInputKeyboardEditRef.current = false;
+            }}
+            onBlur={() => {
+              windowInputKeyboardEditRef.current = false;
+              commitWindowInput();
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
+                windowInputKeyboardEditRef.current = false;
                 commitWindowInput();
+                return;
+              }
+              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                event.preventDefault();
+                windowInputKeyboardEditRef.current = false;
+                const current = parsePositiveFloat(windowInput) ?? windowSeconds;
+                const delta = event.key === "ArrowUp" ? 0.5 : -0.5;
+                const next = clamp(current + delta, 0.5, 30);
+                setWindowInput(next.toFixed(1));
+                onWindowSecondsChange?.(next);
+                return;
+              }
+              if (
+                event.key.length === 1
+                || event.key === "Backspace"
+                || event.key === "Delete"
+              ) {
+                windowInputKeyboardEditRef.current = true;
               }
             }}
           />
@@ -947,56 +963,45 @@ export function TraceTimingPanel({
           </span>
         </button>
       </div>
-      <div className="timing-trace__series-controls">
-        <button
-          type="button"
-          className={`timing-trace__series-btn ${showAttrBp ? "is-active" : ""}`}
-          onClick={() => setShowAttrBp((previous) => !previous)}
-        >
-          Attr BP
-        </button>
-        <button
-          type="button"
-          className={`timing-trace__series-btn ${showSubscribers ? "is-active" : ""}`}
-          onClick={() => setShowSubscribers((previous) => !previous)}
-        >
-          Subscribers
-        </button>
-        {showSubscribers
-          ? leaseEndpointIds.map((endpointId) => {
-              const hidden = hiddenLeaseEndpointSet.has(endpointId);
-              return (
-                <button
-                  key={endpointId}
-                  type="button"
-                  className={`timing-trace__series-chip ${hidden ? "" : "is-active"}`}
-                  onClick={() =>
-                    setHiddenLeaseEndpointIds((previous) =>
-                      previous.includes(endpointId)
-                        ? previous.filter((existing) => existing !== endpointId)
-                        : [...previous, endpointId]
-                    )
-                  }
-                >
-                  <i
-                    style={{ background: leaseColorForEndpoint(endpointId, leaseColorMap) }}
-                  />
-                  {shortEndpointToken(endpointId)}
-                </button>
-              );
-            })
-          : null}
-      </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
       <div className="timing-trace__legend">
-        <span className="timing-trace__legend-item">
+        <span className="timing-trace__legend-item is-static">
           <i style={{ background: PUBLISH_COLOR }} />
           Publish Delta
         </span>
-        <span className="timing-trace__legend-item">
+        <button
+          type="button"
+          className={`timing-trace__legend-item timing-trace__legend-toggle ${
+            showAttrBp ? "is-active" : ""
+          }`}
+          onClick={() => setShowAttrBp((previous) => !previous)}
+          aria-pressed={showAttrBp}
+        >
           <i style={{ background: ATTR_BP_COLOR }} />
-          Attr BP (all subs)
-        </span>
+          Backpressure (all subs)
+        </button>
+        <button
+          type="button"
+          className={`timing-trace__legend-item timing-trace__legend-toggle ${
+            showSubscribers ? "is-active" : ""
+          }`}
+          onClick={() => setShowSubscribers((previous) => !previous)}
+          aria-pressed={showSubscribers}
+        >
+          <i
+            style={{
+              background: selectedLeaseEndpointId
+                ? leaseColorForEndpoint(selectedLeaseEndpointId, leaseColorMap)
+                : "#93c5fd",
+            }}
+          />
+          Subscribers
+          {selectedLeaseEndpointId ? (
+            <span className="timing-trace__legend-meta">
+              {shortEndpointToken(selectedLeaseEndpointId)}
+            </span>
+          ) : null}
+        </button>
       </div>
     </div>
   );

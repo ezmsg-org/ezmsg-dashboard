@@ -337,6 +337,8 @@ export function ProfilingPanel({
   const [traceWindowSecondsByRowId, setTraceWindowSecondsByRowId] = useState<
     Record<string, number>
   >({});
+  const [expandedContributorEndpointByRowId, setExpandedContributorEndpointByRowId] =
+    useState<Record<string, string | null>>({});
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
@@ -535,6 +537,12 @@ export function ProfilingPanel({
         ? previous.filter((existingId) => existingId !== row.id)
         : [...previous, row.id]
     );
+    if (!nextExpanded) {
+      setExpandedContributorEndpointByRowId((previous) => ({
+        ...previous,
+        [row.id]: null,
+      }));
+    }
     if (!nextExpanded && activeTraceRowIds.includes(row.id)) {
       void applyTraceControl(row, false);
     }
@@ -596,6 +604,13 @@ export function ProfilingPanel({
                   (contributor) => contributor.attributableBackpressureNsWindow > 0
                 )
               : row.contributors;
+            const expandedContributorEndpointId =
+              expandedContributorEndpointByRowId[row.id] ?? null;
+            const selectedContributorEndpointId = visibleContributors.some(
+              (contributor) => contributor.endpointId === expandedContributorEndpointId
+            )
+              ? expandedContributorEndpointId
+              : null;
             return (
               <article
                 key={row.id}
@@ -702,6 +717,7 @@ export function ProfilingPanel({
                             topic={row.topic}
                             topicScope={traceTopicScope}
                             leaseColorMap={leaseColorMap}
+                            selectedLeaseEndpointId={selectedContributorEndpointId}
                             windowSeconds={traceWindowSeconds}
                             onWindowSecondsChange={(nextSeconds) =>
                               setTraceWindowSecondsByRowId((previous) => ({
@@ -748,9 +764,29 @@ export function ProfilingPanel({
                                 ? contributor.attributableBackpressureNsWindow
                                   / contributor.messagesWindow
                                 : 0;
+                            const contributorExpanded =
+                              selectedContributorEndpointId === contributor.endpointId;
                             return (
-                              <details className="subscriber-item" key={contributor.id}>
-                                <summary className="subscriber-item__summary">
+                              <article
+                                className={`subscriber-item ${
+                                  contributorExpanded ? "is-expanded" : ""
+                                }`}
+                                key={contributor.id}
+                              >
+                                <button
+                                  type="button"
+                                  className="subscriber-item__summary"
+                                  onClick={() =>
+                                    setExpandedContributorEndpointByRowId(
+                                      (previous) => ({
+                                        ...previous,
+                                        [row.id]: contributorExpanded
+                                          ? null
+                                          : contributor.endpointId,
+                                      })
+                                    )
+                                  }
+                                >
                                   <div className="subscriber-item__identity">
                                     <p
                                       className="mono subscriber-topic-short"
@@ -778,7 +814,7 @@ export function ProfilingPanel({
                                   </div>
                                   <div className="subscriber-item__metrics">
                                     <span>
-                                      <em>Attr BP Avg</em>
+                                      <em>Backpressure Avg</em>
                                       <strong>
                                         {formatMs(attrBpAvgPerMessageNs)}
                                       </strong>
@@ -792,38 +828,40 @@ export function ProfilingPanel({
                                       <strong>{contributor.messagesWindow}</strong>
                                     </span>
                                   </div>
-                                </summary>
-                                <div className="subscriber-item__detail">
-                                  <dl>
-                                    <div className="subscriber-item__detail-row-full">
-                                      <dt>Topic</dt>
-                                      <dd className="mono">{contributor.topic}</dd>
-                                    </div>
-                                    <div className="subscriber-item__detail-row-full">
-                                      <dt>Endpoint</dt>
-                                      <dd className="mono">{contributor.endpointId}</dd>
-                                    </div>
-                                    <div>
-                                      <dt>Process</dt>
-                                      <dd className="mono">
-                                        {contributor.processId.slice(0, 8)} (pid {contributor.pid})
-                                      </dd>
-                                    </div>
-                                    <div>
-                                      <dt>Host</dt>
-                                      <dd>{contributor.host}</dd>
-                                    </div>
-                                    <div>
-                                      <dt>User Span Avg</dt>
-                                      <dd>{formatMs(contributor.userSpanNsAvgWindow)}</dd>
-                                    </div>
-                                    <div>
-                                      <dt>Attr BP Sum (Window)</dt>
-                                      <dd>{formatMs(contributor.attributableBackpressureNsWindow)}</dd>
-                                    </div>
-                                  </dl>
-                                </div>
-                              </details>
+                                </button>
+                                {contributorExpanded ? (
+                                  <div className="subscriber-item__detail">
+                                    <dl>
+                                      <div className="subscriber-item__detail-row-full">
+                                        <dt>Topic</dt>
+                                        <dd className="mono">{contributor.topic}</dd>
+                                      </div>
+                                      <div className="subscriber-item__detail-row-full">
+                                        <dt>Endpoint</dt>
+                                        <dd className="mono">{contributor.endpointId}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>Process</dt>
+                                        <dd className="mono">
+                                          {contributor.processId.slice(0, 8)} (pid {contributor.pid})
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt>Host</dt>
+                                        <dd>{contributor.host}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>User Span Avg</dt>
+                                        <dd>{formatMs(contributor.userSpanNsAvgWindow)}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>Backpressure Sum (Window)</dt>
+                                        <dd>{formatMs(contributor.attributableBackpressureNsWindow)}</dd>
+                                      </div>
+                                    </dl>
+                                  </div>
+                                ) : null}
+                              </article>
                             );
                           })}
                         </div>
