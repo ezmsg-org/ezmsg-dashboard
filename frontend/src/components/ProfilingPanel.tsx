@@ -661,8 +661,7 @@ export function ProfilingPanel({
                         ) : (
                           <>
                             <p className="trace-inline__meta">
-                              {traceSamples.length} samples in latest batch (showing{" "}
-                              {traceWindowSeconds.toFixed(1)}s).
+                              Showing {traceWindowSeconds.toFixed(1)}s.
                             </p>
                             <TraceTimingPanel
                               samples={traceSamples as TimingTraceSample[]}

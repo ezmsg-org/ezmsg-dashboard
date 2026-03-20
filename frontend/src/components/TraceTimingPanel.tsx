@@ -412,6 +412,7 @@ export function TraceTimingPanel({
   onWindowSecondsChange,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasPixelSizeRef = useRef<{ width: number; height: number } | null>(null);
   const rendererRef = useRef<RendererState | null>(null);
   const lastBatchRef = useRef<TimingTraceSample[] | null>(null);
   const previousAutoModeRef = useRef<boolean>(true);
@@ -447,8 +448,21 @@ export function TraceTimingPanel({
 
     const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const layout = makeLayout(canvas, windowSeconds);
-    canvas.width = Math.floor(layout.width * devicePixelRatio);
-    canvas.height = Math.floor(layout.height * devicePixelRatio);
+    const targetPixelWidth = Math.floor(layout.width * devicePixelRatio);
+    const targetPixelHeight = Math.floor(layout.height * devicePixelRatio);
+    const previousPixelSize = canvasPixelSizeRef.current;
+    const sizeChanged =
+      !previousPixelSize
+      || previousPixelSize.width !== targetPixelWidth
+      || previousPixelSize.height !== targetPixelHeight;
+    if (sizeChanged) {
+      canvas.width = targetPixelWidth;
+      canvas.height = targetPixelHeight;
+      canvasPixelSizeRef.current = {
+        width: targetPixelWidth,
+        height: targetPixelHeight,
+      };
+    }
     context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
     const windowNs = Math.max(1, windowSeconds * 1_000_000_000);
@@ -460,6 +474,7 @@ export function TraceTimingPanel({
     let renderer = rendererRef.current;
     const needsReinit =
       renderer === null
+      || sizeChanged
       || renderer.layout.cols !== layout.cols
       || renderer.layout.width !== layout.width
       || renderer.windowNs !== windowNs
@@ -661,7 +676,13 @@ export function TraceTimingPanel({
         <button
           type="button"
           className={`timing-trace__axis-btn ${autoYAxis ? "" : "is-active"}`}
-          onClick={() => setAutoYAxis(false)}
+          onClick={() => {
+            const currentY =
+              rendererRef.current?.yMaxMs
+              ?? estimateAutoYMaxMsFromRateHz(nominalPublishRateHz);
+            setManualYMaxInput(currentY.toFixed(2));
+            setAutoYAxis(false);
+          }}
         >
           Fixed Y
         </button>
