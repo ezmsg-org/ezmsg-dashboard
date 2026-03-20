@@ -54,6 +54,7 @@ export function App() {
           recentEvents={topologyEvents}
         />
         <ProfilingPanel
+          graphSnapshot={snapshot?.snapshot ?? null}
           profilingSnapshot={snapshot?.profiling ?? null}
           latestTraceEvent={latestTraceEvent}
           setProfilingTraceControl={setProfilingTraceControl}

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Panel } from "./Panel";
 import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
 import type {
+  GraphSnapshotPayload,
   ProfilingTraceControlRequest,
   ProcessProfilingSnapshotPayload,
   ProfilingSnapshotPayload,
@@ -12,6 +13,7 @@ import type {
 import type { ProfilingTraceEnvelope } from "../types/events";
 
 type ProfilingPanelProps = {
+  graphSnapshot: GraphSnapshotPayload | null;
   profilingSnapshot: ProfilingSnapshotPayload | null;
   latestTraceEvent: ProfilingTraceEnvelope | null;
   setProfilingTraceControl: (
@@ -212,10 +214,21 @@ function toContributor(
 
 function contributorListForPublisher(
   topic: string,
-  subscribers: SubscriberContributor[]
+  subscribers: SubscriberContributor[],
+  graphSnapshot: GraphSnapshotPayload | null
 ): SubscriberContributor[] {
+  const candidateTopics = new Set<string>([topic]);
+  const routedTopics = graphSnapshot?.graph[topic];
+  if (Array.isArray(routedTopics)) {
+    for (const routedTopic of routedTopics) {
+      if (typeof routedTopic === "string") {
+        candidateTopics.add(routedTopic);
+      }
+    }
+  }
+
   return subscribers
-    .filter((subscriber) => subscriber.topic === topic)
+    .filter((subscriber) => candidateTopics.has(subscriber.topic))
     .sort(
       (a, b) =>
         b.attributableBackpressureNsWindow - a.attributableBackpressureNsWindow
@@ -225,7 +238,8 @@ function contributorListForPublisher(
 function toPublisherRow(
   process: ProcessProfilingSnapshotPayload,
   publisher: PublisherProfilingSnapshot,
-  allSubscribers: SubscriberContributor[]
+  allSubscribers: SubscriberContributor[],
+  graphSnapshot: GraphSnapshotPayload | null
 ): PublisherRow {
   const backpressureNsWindow = toNumber(publisher.backpressure_wait_ns_window);
   const severity = backpressureSeverity(backpressureNsWindow);
@@ -251,11 +265,16 @@ function toPublisherRow(
     inflightDisplayTotal: numBuffers ?? inflightPeakWindow,
     backpressureNsWindow,
     severity,
-    contributors: contributorListForPublisher(publisher.topic, allSubscribers),
+    contributors: contributorListForPublisher(
+      publisher.topic,
+      allSubscribers,
+      graphSnapshot
+    ),
   };
 }
 
 export function ProfilingPanel({
+  graphSnapshot,
   profilingSnapshot,
   latestTraceEvent,
   setProfilingTraceControl,
@@ -290,12 +309,12 @@ export function ProfilingPanel({
     const rows: PublisherRow[] = [];
     for (const process of processRows) {
       for (const publisher of Object.values(process.publishers)) {
-        rows.push(toPublisherRow(process, publisher, allSubscribers));
+        rows.push(toPublisherRow(process, publisher, allSubscribers, graphSnapshot));
       }
     }
 
     return rows.sort((a, b) => b.backpressureNsWindow - a.backpressureNsWindow);
-  }, [processRows]);
+  }, [graphSnapshot, processRows]);
 
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
