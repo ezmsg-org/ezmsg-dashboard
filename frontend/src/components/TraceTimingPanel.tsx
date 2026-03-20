@@ -214,16 +214,11 @@ export function TraceTimingPanel({
           sample.metric === "publish_delta_ns"
           && sample.processId === publisherProcessId
           && sample.endpointId === publisherEndpointId
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
+      );
     const leaseSeries = recent
-      .filter((sample) => sample.metric === "lease_time_ns")
-      .sort((a, b) => a.timestamp - b.timestamp);
+      .filter((sample) => sample.metric === "lease_time_ns");
     const attributableSeries = recent
-      .filter(
-        (sample) => sample.metric === "attributable_backpressure_ns"
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
+      .filter((sample) => sample.metric === "attributable_backpressure_ns");
     const leaseSeriesByEndpoint = new Map<string, typeof leaseSeries>();
     for (const sample of leaseSeries) {
       const endpointSeries = leaseSeriesByEndpoint.get(sample.endpointId);
@@ -233,10 +228,6 @@ export function TraceTimingPanel({
         leaseSeriesByEndpoint.set(sample.endpointId, [sample]);
       }
     }
-    for (const endpointSeries of leaseSeriesByEndpoint.values()) {
-      endpointSeries.sort((a, b) => a.timestamp - b.timestamp);
-    }
-
     const maxObservedMs = Math.max(
       MIN_Y_MAX_MS,
       ...publisherSeries.map((sample) => toMs(sample.value)),

@@ -67,13 +67,15 @@ type PublisherTraceSample = {
   channelKind: string | null;
 };
 
-const TRACE_HISTORY_MAX = 120_000;
 const TRACE_DISPLAY_WINDOW_SECONDS = 2.0;
+const TRACE_HISTORY_RETENTION_SECONDS = TRACE_DISPLAY_WINDOW_SECONDS * 2.5;
+const TRACE_HISTORY_RETENTION_NS =
+  TRACE_HISTORY_RETENTION_SECONDS * 1_000_000_000;
+const TRACE_HISTORY_HARD_MAX = 40_000;
 const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set([
   "lease_time_ns",
   "attributable_backpressure_ns",
-  "user_span_ns",
 ]);
 
 function toNumber(value: unknown): number {
@@ -401,8 +403,19 @@ export function ProfilingPanel({
         for (const rowId of matchedRowIds) {
           const priorSamples = next[rowId] ?? [];
           const merged = [...priorSamples, sample];
-          if (merged.length > TRACE_HISTORY_MAX) {
-            merged.splice(0, merged.length - TRACE_HISTORY_MAX);
+          const cutoffNs = sample.timestamp - TRACE_HISTORY_RETENTION_NS;
+          let keepFrom = 0;
+          while (
+            keepFrom < merged.length
+            && merged[keepFrom].timestamp < cutoffNs
+          ) {
+            keepFrom += 1;
+          }
+          if (keepFrom > 0) {
+            merged.splice(0, keepFrom);
+          }
+          if (merged.length > TRACE_HISTORY_HARD_MAX) {
+            merged.splice(0, merged.length - TRACE_HISTORY_HARD_MAX);
           }
           next[rowId] = merged;
           changed = true;
@@ -445,7 +458,6 @@ export function ProfilingPanel({
               "publish_delta_ns",
               "lease_time_ns",
               "attributable_backpressure_ns",
-              "user_span_ns",
             ]
           : null,
         sample_mod: 1,
@@ -633,7 +645,8 @@ export function ProfilingPanel({
                         ) : (
                           <>
                             <p className="trace-inline__meta">
-                              {traceSamples.length} samples buffered (displaying last{" "}
+                              {traceSamples.length} samples buffered (retaining ~
+                              {TRACE_HISTORY_RETENTION_SECONDS.toFixed(1)}s, showing{" "}
                               {TRACE_DISPLAY_WINDOW_SECONDS.toFixed(1)}s).
                             </p>
                             <TraceTimingPanel
