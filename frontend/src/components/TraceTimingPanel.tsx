@@ -93,7 +93,8 @@ function parsePositiveFloat(value: string): number | null {
 
 function makeLayout(canvas: HTMLCanvasElement, windowSeconds: number): PlotLayout {
   const width = Math.max(440, Math.floor(canvas.clientWidth));
-  const height = 220;
+  const measuredHeight = Math.floor(canvas.clientHeight || 320);
+  const height = clamp(measuredHeight, 240, 460);
   const left = 64;
   const right = 16;
   const top = 12;
@@ -876,122 +877,124 @@ export function TraceTimingPanel({
   return (
     <div className="timing-trace">
       <div className="timing-trace__controls">
-        <label className="timing-trace__axis-input">
-          <span>Window (s)</span>
-          <input
-            type="number"
-            min={0.5}
-            max={30}
-            step="0.5"
-            value={windowInput}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              setWindowInput(nextValue);
-              if (!windowInputKeyboardEditRef.current) {
-                commitWindowInput(nextValue);
-              }
-            }}
-            onMouseDown={() => {
-              windowInputKeyboardEditRef.current = false;
-            }}
-            onBlur={() => {
-              windowInputKeyboardEditRef.current = false;
-              commitWindowInput();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
+        <div className="timing-trace__controls-left">
+          <label className="timing-trace__axis-input">
+            <span>Window (s)</span>
+            <input
+              type="number"
+              min={0.5}
+              max={30}
+              step="0.5"
+              value={windowInput}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setWindowInput(nextValue);
+                if (!windowInputKeyboardEditRef.current) {
+                  commitWindowInput(nextValue);
+                }
+              }}
+              onMouseDown={() => {
+                windowInputKeyboardEditRef.current = false;
+              }}
+              onBlur={() => {
                 windowInputKeyboardEditRef.current = false;
                 commitWindowInput();
-                return;
-              }
-              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-                event.preventDefault();
-                windowInputKeyboardEditRef.current = false;
-                const current = parsePositiveFloat(windowInput) ?? windowSeconds;
-                const delta = event.key === "ArrowUp" ? 0.5 : -0.5;
-                const next = clamp(current + delta, 0.5, 30);
-                setWindowInput(next.toFixed(1));
-                onWindowSecondsChange?.(next);
-                return;
-              }
-              if (
-                event.key.length === 1
-                || event.key === "Backspace"
-                || event.key === "Delete"
-              ) {
-                windowInputKeyboardEditRef.current = true;
-              }
-            }}
-          />
-        </label>
-        <label className="timing-trace__axis-input timing-trace__axis-input--ymax">
-          <span>Y max (ms)</span>
-          <input
-            type="number"
-            min={MIN_Y_MAX_MS}
-            step="0.1"
-            value={manualYMaxInput}
-            onChange={(event) => setManualYMaxInput(event.target.value)}
-            onBlur={() => {
-              const parsed = parsePositiveFloat(manualYMaxInput);
-              if (parsed === null) {
-                setManualYMaxInput(`${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`);
-                return;
-              }
-              const clamped = Math.max(MIN_Y_MAX_MS, parsed);
-              setManualYMaxInput(clamped.toFixed(2));
-            }}
-            disabled={autoYAxis}
-          />
-        </label>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={autoYAxis}
-          className={`timing-trace__mode-toggle ${autoYAxis ? "is-auto" : "is-fixed"}`}
-          onClick={toggleYAxisMode}
-          title={autoYAxis ? "Switch to Fixed Y" : "Switch to Auto Y"}
-        >
-          <span className="timing-trace__mode-toggle-label">
-            {autoYAxis ? "Auto" : "Fixed"}
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  windowInputKeyboardEditRef.current = false;
+                  commitWindowInput();
+                  return;
+                }
+                if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  windowInputKeyboardEditRef.current = false;
+                  const current = parsePositiveFloat(windowInput) ?? windowSeconds;
+                  const delta = event.key === "ArrowUp" ? 0.5 : -0.5;
+                  const next = clamp(current + delta, 0.5, 30);
+                  setWindowInput(next.toFixed(1));
+                  onWindowSecondsChange?.(next);
+                  return;
+                }
+                if (
+                  event.key.length === 1
+                  || event.key === "Backspace"
+                  || event.key === "Delete"
+                ) {
+                  windowInputKeyboardEditRef.current = true;
+                }
+              }}
+            />
+          </label>
+        </div>
+        <div className="timing-trace__controls-right">
+          <span className="timing-trace__legend-item is-static">
+            <i style={{ background: PUBLISH_COLOR }} />
+            Publish Delta
           </span>
-        </button>
+          <button
+            type="button"
+            className={`timing-trace__legend-item timing-trace__legend-toggle ${
+              showAttrBp ? "is-active" : ""
+            }`}
+            onClick={() => setShowAttrBp((previous) => !previous)}
+            aria-pressed={showAttrBp}
+          >
+            <i style={{ background: ATTR_BP_COLOR }} />
+            Backpressure (all subs)
+          </button>
+          <button
+            type="button"
+            className={`timing-trace__legend-item timing-trace__legend-toggle ${
+              showSubscribers ? "is-active" : ""
+            }`}
+            onClick={() => setShowSubscribers((previous) => !previous)}
+            aria-pressed={showSubscribers}
+          >
+            <i
+              style={{
+                background: selectedLeaseEndpointId
+                  ? leaseColorForEndpoint(selectedLeaseEndpointId, leaseColorMap)
+                  : "#93c5fd",
+              }}
+            />
+            Subscribers
+          </button>
+          <label className="timing-trace__axis-input timing-trace__axis-input--ymax">
+            <span>Y max (ms)</span>
+            <input
+              type="number"
+              min={MIN_Y_MAX_MS}
+              step="0.1"
+              value={manualYMaxInput}
+              onChange={(event) => setManualYMaxInput(event.target.value)}
+              onBlur={() => {
+                const parsed = parsePositiveFloat(manualYMaxInput);
+                if (parsed === null) {
+                  setManualYMaxInput(`${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`);
+                  return;
+                }
+                const clamped = Math.max(MIN_Y_MAX_MS, parsed);
+                setManualYMaxInput(clamped.toFixed(2));
+              }}
+              disabled={autoYAxis}
+            />
+          </label>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoYAxis}
+            className={`timing-trace__mode-toggle ${autoYAxis ? "is-auto" : "is-fixed"}`}
+            onClick={toggleYAxisMode}
+            title={autoYAxis ? "Switch to Fixed Y" : "Switch to Auto Y"}
+          >
+            <span className="timing-trace__mode-toggle-label">
+              {autoYAxis ? "Auto" : "Fixed"}
+            </span>
+          </button>
+        </div>
       </div>
       <canvas ref={canvasRef} className="timing-trace__canvas" />
-      <div className="timing-trace__legend">
-        <span className="timing-trace__legend-item is-static">
-          <i style={{ background: PUBLISH_COLOR }} />
-          Publish Delta
-        </span>
-        <button
-          type="button"
-          className={`timing-trace__legend-item timing-trace__legend-toggle ${
-            showAttrBp ? "is-active" : ""
-          }`}
-          onClick={() => setShowAttrBp((previous) => !previous)}
-          aria-pressed={showAttrBp}
-        >
-          <i style={{ background: ATTR_BP_COLOR }} />
-          Backpressure (all subs)
-        </button>
-        <button
-          type="button"
-          className={`timing-trace__legend-item timing-trace__legend-toggle ${
-            showSubscribers ? "is-active" : ""
-          }`}
-          onClick={() => setShowSubscribers((previous) => !previous)}
-          aria-pressed={showSubscribers}
-        >
-          <i
-            style={{
-              background: selectedLeaseEndpointId
-                ? leaseColorForEndpoint(selectedLeaseEndpointId, leaseColorMap)
-                : "#93c5fd",
-            }}
-          />
-          Subscribers
-        </button>
-      </div>
     </div>
   );
 }

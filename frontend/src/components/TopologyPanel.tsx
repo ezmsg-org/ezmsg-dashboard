@@ -42,7 +42,6 @@ type TopologyPanelProps = {
   showLegend?: boolean;
   showMiniMap?: boolean;
   defaultLayout?: LayoutMode;
-  collectionOpenMode?: "single" | "double";
   autoFitOnLayoutScopeChange?: boolean;
   onEntitySelect?: (selection: TopologyEntitySelection | null) => void;
 };
@@ -1775,7 +1774,6 @@ export function TopologyPanel({
   showLegend = true,
   showMiniMap = true,
   defaultLayout = "tb",
-  collectionOpenMode = "double",
   autoFitOnLayoutScopeChange = true,
   onEntitySelect,
 }: TopologyPanelProps) {
@@ -2105,11 +2103,6 @@ export function TopologyPanel({
                 kind: "collection",
                 collectionAddress: node.id.slice("collection:".length),
               });
-              if (collectionOpenMode === "single") {
-                openCollectionScope(node.id);
-                lastCollectionClickRef.current = null;
-                return;
-              }
               const now = Date.now();
               const previous = lastCollectionClickRef.current;
               if (previous && previous.id === node.id && now - previous.ts <= 380) {

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Panel } from "./Panel";
 import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
@@ -25,8 +26,15 @@ type ProfilingPanelProps = {
   focusSubscriberEndpointId?: string | null;
   focusActionId?: number;
   hideFilters?: boolean;
-  defaultTraceTtlSeconds?: number;
   defaultTraceMetrics?: string[];
+  traceDockHost?: HTMLElement | null;
+  onTraceDockStateChange?: (state: {
+    active: boolean;
+    topic: string;
+    endpointId: string;
+    status: "capturing" | "stopped" | "applying";
+  } | null) => void;
+  traceCloseSignal?: number;
 };
 
 type Severity = "none" | "low" | "medium" | "high";
@@ -331,15 +339,16 @@ export function ProfilingPanel({
   focusSubscriberEndpointId = null,
   focusActionId = 0,
   hideFilters = false,
-  defaultTraceTtlSeconds = 10.0,
   defaultTraceMetrics = [
     "publish_delta_ns",
     "lease_time_ns",
     "attributable_backpressure_ns",
   ],
+  traceDockHost = null,
+  onTraceDockStateChange,
+  traceCloseSignal = 0,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
-  const [pressuredOnly, setPressuredOnly] = useState(false);
   const [hideZeroContributorRows, setHideZeroContributorRows] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [activeTraceRowIds, setActiveTraceRowIds] = useState<string[]>([]);
@@ -357,6 +366,7 @@ export function ProfilingPanel({
   >({});
   const [expandedContributorEndpointByRowId, setExpandedContributorEndpointByRowId] =
     useState<Record<string, string | null>>({});
+  const lastTraceCloseSignalRef = useRef(traceCloseSignal);
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
@@ -412,9 +422,6 @@ export function ProfilingPanel({
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
     return focusedRows.filter((row) => {
-      if (pressuredOnly && row.backpressureNsWindow <= 0) {
-        return false;
-      }
       if (query.length === 0) {
         return true;
       }
@@ -424,7 +431,7 @@ export function ProfilingPanel({
         || row.processId.toLowerCase().includes(query)
       );
     });
-  }, [focusedRows, pressuredOnly, searchText]);
+  }, [focusedRows, searchText]);
 
   const rowById = useMemo(
     () => new Map(publisherRows.map((row) => [row.id, row])),
@@ -600,7 +607,7 @@ export function ProfilingPanel({
         subscriber_topic: null,
         metrics: nextOpen ? defaultTraceMetrics : null,
         sample_mod: 1,
-        ttl_seconds: nextOpen ? defaultTraceTtlSeconds : null,
+        ttl_seconds: null,
         timeout: 2.0,
       });
     } catch (error) {
@@ -642,24 +649,125 @@ export function ProfilingPanel({
   };
   const controlsHidden =
     hideFilters || Boolean(focusPublisherEndpointId) || Boolean(focusSubscriberEndpointId);
+  const activeTraceRowId = activeTraceRowIds[0] ?? null;
+  const activeTraceRow = activeTraceRowId ? rowById.get(activeTraceRowId) ?? null : null;
+  const activeTraceSamples =
+    activeTraceRowId ? (traceSamplesByRowId[activeTraceRowId] ?? []) : [];
+  const activeTraceBusy = activeTraceRowId
+    ? Boolean(traceControlPending[activeTraceRowId])
+    : false;
+  const activeTraceErrorMessage = activeTraceRowId
+    ? (traceControlError[activeTraceRowId] ?? null)
+    : null;
+  const activeTraceWindowSeconds = normalizeWindowSeconds(
+    activeTraceRowId
+      ? (traceWindowSecondsByRowId[activeTraceRowId] ?? TRACE_DEFAULT_WINDOW_SECONDS)
+      : TRACE_DEFAULT_WINDOW_SECONDS
+  );
+  const activeTraceTopicScope = activeTraceRow
+    ? Array.from(topicScopeForPublisher(activeTraceRow.topic, graphSnapshot))
+    : [];
+  const activeTraceLeaseEndpointIds = activeTraceSamples
+    .filter((sample) => sample.metric === "lease_time_ns")
+    .map((sample) => sample.endpointId);
+  const activeTraceLeaseColorMap = buildLeaseColorMap([
+    ...(activeTraceRow?.contributors.map((contributor) => contributor.endpointId) ?? []),
+    ...activeTraceLeaseEndpointIds,
+  ]);
+  const activeSelectedContributorEndpointId =
+    activeTraceRowId
+      ? (expandedContributorEndpointByRowId[activeTraceRowId] ?? null)
+      : null;
+
+  useEffect(() => {
+    if (traceCloseSignal === lastTraceCloseSignalRef.current) {
+      return;
+    }
+    lastTraceCloseSignalRef.current = traceCloseSignal;
+    const activeTraceRowId = activeTraceRowIds[0];
+    if (!activeTraceRowId) {
+      return;
+    }
+    const activeRow = rowById.get(activeTraceRowId);
+    if (!activeRow) {
+      setActiveTraceRowIds([]);
+      return;
+    }
+    setActiveTraceRowIds([]);
+    void setProfilingTraceControl({
+      process_id: activeRow.processId,
+      enabled: false,
+      publisher_endpoint_id: null,
+      publisher_topic: null,
+      subscriber_topic: null,
+      metrics: null,
+      sample_mod: 1,
+      ttl_seconds: null,
+      timeout: 2.0,
+    });
+  }, [activeTraceRowIds, rowById, setProfilingTraceControl, traceCloseSignal]);
+
+  useEffect(() => {
+    if (!onTraceDockStateChange) {
+      return;
+    }
+    if (!activeTraceRow) {
+      onTraceDockStateChange(null);
+      return;
+    }
+    onTraceDockStateChange({
+      active: true,
+      topic: activeTraceRow.topic,
+      endpointId: activeTraceRow.endpointId,
+      status: activeTraceBusy ? "applying" : "capturing",
+    });
+  }, [activeTraceBusy, activeTraceRow, onTraceDockStateChange]);
+
+  const traceDockContent =
+    traceDockHost && activeTraceRow
+      ? createPortal(
+          <div className="trace-dock-trace">
+            {activeTraceSamples.length === 0 ? (
+              <p className="muted">
+                Waiting for trace samples on this publisher endpoint.
+              </p>
+            ) : (
+              <TraceTimingPanel
+                samples={activeTraceSamples as TimingTraceSample[]}
+                publisherProcessId={activeTraceRow.processId}
+                publisherEndpointId={activeTraceRow.endpointId}
+                nominalPublishRateHz={activeTraceRow.publishRateHzWindow}
+                topic={activeTraceRow.topic}
+                topicScope={activeTraceTopicScope}
+                leaseColorMap={activeTraceLeaseColorMap}
+                selectedLeaseEndpointId={activeSelectedContributorEndpointId}
+                windowSeconds={activeTraceWindowSeconds}
+                onWindowSecondsChange={(nextSeconds) =>
+                  setTraceWindowSecondsByRowId((previous) => ({
+                    ...previous,
+                    [activeTraceRow.id]: normalizeWindowSeconds(nextSeconds),
+                  }))
+                }
+              />
+            )}
+            {activeTraceErrorMessage ? (
+              <p className="patch-status err">{activeTraceErrorMessage}</p>
+            ) : null}
+          </div>,
+          traceDockHost
+        )
+      : null;
 
   return (
     <Panel>
       {controlsHidden ? null : (
-        <div className="profiling-controls">
+        <div className="settings-search">
           <input
             type="search"
             placeholder="Search topic, endpoint, or process"
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
-          <button
-            type="button"
-            className={`toggle-btn ${pressuredOnly ? "is-active" : ""}`}
-            onClick={() => setPressuredOnly((value) => !value)}
-          >
-            {pressuredOnly ? "Pressured Only" : "All Publishers"}
-          </button>
         </div>
       )}
 
@@ -672,23 +780,11 @@ export function ProfilingPanel({
           {filteredRows.map((row) => {
             const expanded = expandedIds.includes(row.id);
             const traceOpen = activeTraceRowIds.includes(row.id);
-            const traceSamples = traceSamplesByRowId[row.id] ?? [];
             const traceBusy = Boolean(traceControlPending[row.id]);
-            const traceErrorMessage = traceControlError[row.id] ?? null;
             const windowLabel = formatWindowSeconds(row.windowSeconds);
-            const traceWindowSeconds = normalizeWindowSeconds(
-              traceWindowSecondsByRowId[row.id] ?? TRACE_DEFAULT_WINDOW_SECONDS
+            const leaseColorMap = buildLeaseColorMap(
+              row.contributors.map((contributor) => contributor.endpointId)
             );
-            const traceTopicScope = Array.from(
-              topicScopeForPublisher(row.topic, graphSnapshot)
-            );
-            const traceLeaseEndpointIds = traceSamples
-              .filter((sample) => sample.metric === "lease_time_ns")
-              .map((sample) => sample.endpointId);
-            const leaseColorMap = buildLeaseColorMap([
-              ...row.contributors.map((contributor) => contributor.endpointId),
-              ...traceLeaseEndpointIds,
-            ]);
             const visibleContributors = hideZeroContributorRows
               ? row.contributors.filter(
                   (contributor) => contributor.attributableBackpressureNsWindow > 0
@@ -765,6 +861,22 @@ export function ProfilingPanel({
                         <strong>{row.host}</strong>
                       </article>
                     </div>
+                    <button
+                      type="button"
+                      className={`publisher-trace-button ${
+                        traceOpen ? "is-stop" : "is-start"
+                      }`}
+                      onClick={() => toggleTraceCapture(row, !traceOpen)}
+                      disabled={traceBusy}
+                      aria-pressed={traceOpen}
+                    >
+                      <span aria-hidden="true" className="publisher-trace-button__icon">
+                        {traceOpen ? "■" : "▶"}
+                      </span>
+                      <span>
+                        {traceBusy ? "Applying..." : traceOpen ? "Stop Trace" : "Start Trace"}
+                      </span>
+                    </button>
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
@@ -773,55 +885,6 @@ export function ProfilingPanel({
                         </code>
                       </div>
                     </div>
-                    <details
-                      className="trace-inline"
-                      open={traceOpen}
-                      onToggle={(event) =>
-                        toggleTraceCapture(
-                          row,
-                          (event.currentTarget as HTMLDetailsElement).open
-                        )
-                      }
-                    >
-                      <summary>
-                        <span>Realtime Trace</span>
-                        <span className={`trace-status ${traceOpen ? "is-live" : ""}`}>
-                          {traceBusy
-                            ? "applying..."
-                            : traceOpen
-                              ? "capturing"
-                              : "stopped"}
-                        </span>
-                      </summary>
-                      <div className="trace-inline__panel">
-                        {traceSamples.length === 0 ? (
-                          <p className="muted">
-                            Waiting for trace samples on this publisher endpoint.
-                          </p>
-                        ) : (
-                          <TraceTimingPanel
-                            samples={traceSamples as TimingTraceSample[]}
-                            publisherProcessId={row.processId}
-                            publisherEndpointId={row.endpointId}
-                            nominalPublishRateHz={row.publishRateHzWindow}
-                            topic={row.topic}
-                            topicScope={traceTopicScope}
-                            leaseColorMap={leaseColorMap}
-                            selectedLeaseEndpointId={selectedContributorEndpointId}
-                            windowSeconds={traceWindowSeconds}
-                            onWindowSecondsChange={(nextSeconds) =>
-                              setTraceWindowSecondsByRowId((previous) => ({
-                                ...previous,
-                                [row.id]: normalizeWindowSeconds(nextSeconds),
-                              }))
-                            }
-                          />
-                        )}
-                        {traceErrorMessage ? (
-                          <p className="patch-status err">{traceErrorMessage}</p>
-                        ) : null}
-                      </div>
-                    </details>
 
                     <div className="panel-section">
                       <div className="subscriber-section-header">
@@ -964,6 +1027,7 @@ export function ProfilingPanel({
           })}
         </div>
       )}
+      {traceDockContent}
     </Panel>
   );
 }

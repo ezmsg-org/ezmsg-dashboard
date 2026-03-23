@@ -35,28 +35,29 @@ type InspectorState =
 type GlobalSettings = {
   snapshotPollSeconds: number;
   topologyDefaultLayout: "tb" | "lr";
-  collectionOpenMode: "single" | "double";
   showLegend: boolean;
   showMiniMap: boolean;
-  traceTtlSeconds: number;
   traceMetricsPreset: "publish+lease+backpressure" | "publish+backpressure" | "publish";
   autoFitOnLayoutScopeChange: boolean;
   inspectorWidthPx: number;
-  densityMode: "comfortable" | "compact";
 };
+
+type TraceDockState = {
+  active: boolean;
+  topic: string;
+  endpointId: string;
+  status: "capturing" | "stopped" | "applying";
+} | null;
 
 const SETTINGS_STORAGE_KEY = "ezmsg-dashboard-global-settings";
 const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   snapshotPollSeconds: 2.0,
   topologyDefaultLayout: "tb",
-  collectionOpenMode: "double",
   showLegend: true,
   showMiniMap: true,
-  traceTtlSeconds: 10.0,
   traceMetricsPreset: "publish+lease+backpressure",
   autoFitOnLayoutScopeChange: true,
   inspectorWidthPx: 500,
-  densityMode: "comfortable",
 };
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
 type HealthTone = "ok" | "warn" | "err";
@@ -93,10 +94,6 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
     typeof raw.snapshotPollSeconds === "number" && Number.isFinite(raw.snapshotPollSeconds)
       ? Math.min(30, Math.max(0.5, raw.snapshotPollSeconds))
       : DEFAULT_GLOBAL_SETTINGS.snapshotPollSeconds;
-  const traceTtl =
-    typeof raw.traceTtlSeconds === "number" && Number.isFinite(raw.traceTtlSeconds)
-      ? Math.min(120, Math.max(0.5, raw.traceTtlSeconds))
-      : DEFAULT_GLOBAL_SETTINGS.traceTtlSeconds;
   const inspectorWidthPx =
     typeof raw.inspectorWidthPx === "number" && Number.isFinite(raw.inspectorWidthPx)
       ? Math.min(900, Math.max(360, Math.round(raw.inspectorWidthPx)))
@@ -111,8 +108,6 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
     snapshotPollSeconds: poll,
     topologyDefaultLayout:
       raw.topologyDefaultLayout === "lr" ? "lr" : "tb",
-    collectionOpenMode:
-      raw.collectionOpenMode === "single" ? "single" : "double",
     showLegend:
       typeof raw.showLegend === "boolean"
         ? raw.showLegend
@@ -121,14 +116,12 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       typeof raw.showMiniMap === "boolean"
         ? raw.showMiniMap
         : DEFAULT_GLOBAL_SETTINGS.showMiniMap,
-    traceTtlSeconds: traceTtl,
     traceMetricsPreset,
     autoFitOnLayoutScopeChange:
       typeof raw.autoFitOnLayoutScopeChange === "boolean"
         ? raw.autoFitOnLayoutScopeChange
         : DEFAULT_GLOBAL_SETTINGS.autoFitOnLayoutScopeChange,
     inspectorWidthPx,
-    densityMode: raw.densityMode === "compact" ? "compact" : "comfortable",
   };
 }
 
@@ -170,6 +163,9 @@ export function App() {
   const [profilingFocusActionId, setProfilingFocusActionId] = useState(0);
   const [settingsFocusActionId, setSettingsFocusActionId] = useState(0);
   const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(false);
+  const [traceDockState, setTraceDockState] = useState<TraceDockState>(null);
+  const [traceCloseSignal, setTraceCloseSignal] = useState(0);
+  const [traceDockHost, setTraceDockHost] = useState<HTMLDivElement | null>(null);
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -301,11 +297,14 @@ export function App() {
     setInspector(null);
   };
 
+  const handleCloseTraceDock = () => {
+    setTraceCloseSignal((previous) => previous + 1);
+    setTraceDockState(null);
+  };
+
   return (
     <div
-      className={`dashboard-layout ${
-        globalSettings.densityMode === "compact" ? "is-compact" : "is-comfortable"
-      }`}
+      className="dashboard-layout is-comfortable"
       style={dashboardLayoutStyle}
     >
       <aside className="dashboard-inspector dashboard-inspector--pinned">
@@ -336,8 +335,10 @@ export function App() {
                     inspector?.kind === "publisher"
                     || inspector?.kind === "subscriber"
                   }
-                  defaultTraceTtlSeconds={globalSettings.traceTtlSeconds}
                   defaultTraceMetrics={traceMetrics}
+                  traceDockHost={traceDockHost}
+                  onTraceDockStateChange={setTraceDockState}
+                  traceCloseSignal={traceCloseSignal}
                 />
               </div>
           </section>
@@ -373,238 +374,219 @@ export function App() {
         </div>
       </aside>
 
-      <div className="dashboard-viewport">
-        <TopologyPanel
-          graphSnapshot={snapshot?.snapshot ?? null}
-          recentEvents={topologyEvents}
-          immersive
-          showLegend={globalSettings.showLegend}
-          showMiniMap={globalSettings.showMiniMap}
-          defaultLayout={globalSettings.topologyDefaultLayout}
-          collectionOpenMode={globalSettings.collectionOpenMode}
-          autoFitOnLayoutScopeChange={globalSettings.autoFitOnLayoutScopeChange}
-          onEntitySelect={handleTopologySelection}
-        />
-
-        <section className="dashboard-brand-card">
-          <span
-            className={`dashboard-health-dot is-${healthStatus.tone}`}
-            title={healthStatus.tooltip}
-            aria-label={healthStatus.tooltip}
+      <div className="dashboard-main">
+        <div className="dashboard-viewport">
+          <TopologyPanel
+            graphSnapshot={snapshot?.snapshot ?? null}
+            recentEvents={topologyEvents}
+            immersive
+            showLegend={globalSettings.showLegend}
+            showMiniMap={globalSettings.showMiniMap}
+            defaultLayout={globalSettings.topologyDefaultLayout}
+            autoFitOnLayoutScopeChange={globalSettings.autoFitOnLayoutScopeChange}
+            onEntitySelect={handleTopologySelection}
           />
-          <img src={ezmsgLogo} alt="ezmsg" className="dashboard-brand-logo-image" />
-          <div className="dashboard-brand-card__title-row">
-            <h1 className="mono">ezmsg-dashboard</h1>
-            <button
-              type="button"
-              className="topology-layout-btn dashboard-gear-btn"
-              onClick={() => setGlobalSettingsOpen(true)}
-              title="Global Settings"
-              aria-label="Global Settings"
-            >
-              ⚙
-            </button>
-          </div>
-          <p className="dashboard-brand-card__meta-line">
-            <span className="mono">GraphServer {graphAddress}</span>
-            <span>·</span>
-            <span className="mono">Snapshot {snapshotTimeLabel}</span>
-          </p>
-        </section>
 
-        {globalSettingsOpen ? (
-          <div
-            className="dashboard-modal-backdrop"
-            onClick={() => setGlobalSettingsOpen(false)}
-          >
-            <section
-              className="dashboard-modal"
-              onClick={(event) => event.stopPropagation()}
+          <section className="dashboard-brand-card">
+            <span
+              className={`dashboard-health-dot is-${healthStatus.tone}`}
+              title={healthStatus.tooltip}
+              aria-label={healthStatus.tooltip}
+            />
+            <img src={ezmsgLogo} alt="ezmsg" className="dashboard-brand-logo-image" />
+            <div className="dashboard-brand-card__title-row">
+              <h1 className="mono">ezmsg-dashboard</h1>
+              <button
+                type="button"
+                className="topology-layout-btn dashboard-gear-btn"
+                onClick={() => setGlobalSettingsOpen(true)}
+                title="Global Settings"
+                aria-label="Global Settings"
+              >
+                ⚙
+              </button>
+            </div>
+            <p className="dashboard-brand-card__meta-line">
+              <span className="mono">GraphServer {graphAddress}</span>
+              <span>·</span>
+              <span className="mono">Snapshot {snapshotTimeLabel}</span>
+            </p>
+          </section>
+
+          {globalSettingsOpen ? (
+            <div
+              className="dashboard-modal-backdrop"
+              onClick={() => setGlobalSettingsOpen(false)}
             >
-              <header className="dashboard-modal__header">
-                <h2>Global Settings</h2>
+              <section
+                className="dashboard-modal"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <header className="dashboard-modal__header">
+                  <h2>Global Settings</h2>
+                  <button
+                    type="button"
+                    className="topology-layout-btn"
+                    onClick={() => setGlobalSettingsOpen(false)}
+                  >
+                    Close
+                  </button>
+                </header>
+                <div className="dashboard-modal__body">
+                  <label className="dashboard-setting-row">
+                    <span>Snapshot Poll Frequency (seconds)</span>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={30}
+                      step={0.5}
+                      value={globalSettings.snapshotPollSeconds}
+                      onChange={(event) => {
+                        const next = Number.parseFloat(event.target.value);
+                        if (!Number.isFinite(next)) {
+                          return;
+                        }
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          snapshotPollSeconds: Math.max(0.5, Math.min(30, next)),
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="dashboard-setting-row">
+                    <span>Default Topology Layout</span>
+                    <select
+                      value={globalSettings.topologyDefaultLayout}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          topologyDefaultLayout:
+                            event.target.value === "lr" ? "lr" : "tb",
+                        }))
+                      }
+                    >
+                      <option value="tb">Top to Bottom</option>
+                      <option value="lr">Left to Right</option>
+                    </select>
+                  </label>
+                  <label className="dashboard-setting-row">
+                    <span>Default Trace Metrics</span>
+                    <select
+                      value={globalSettings.traceMetricsPreset}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          traceMetricsPreset:
+                            event.target.value === "publish"
+                            || event.target.value === "publish+backpressure"
+                              ? event.target.value
+                              : "publish+lease+backpressure",
+                        }))
+                      }
+                    >
+                      <option value="publish+lease+backpressure">
+                        Publish + Lease + Backpressure
+                      </option>
+                      <option value="publish+backpressure">
+                        Publish + Backpressure
+                      </option>
+                      <option value="publish">Publish Only</option>
+                    </select>
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.autoFitOnLayoutScopeChange}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          autoFitOnLayoutScopeChange: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Auto-fit on layout/scope change</span>
+                  </label>
+                  <label className="dashboard-setting-row">
+                    <span>Inspector Width (px)</span>
+                    <input
+                      type="number"
+                      min={360}
+                      max={900}
+                      step={10}
+                      value={globalSettings.inspectorWidthPx}
+                      onChange={(event) => {
+                        const next = Number.parseInt(event.target.value, 10);
+                        if (!Number.isFinite(next)) {
+                          return;
+                        }
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          inspectorWidthPx: Math.max(360, Math.min(900, next)),
+                        }));
+                      }}
+                    />
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.showLegend}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          showLegend: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Show legend</span>
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.showMiniMap}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          showMiniMap: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Show minimap</span>
+                  </label>
+                </div>
+              </section>
+            </div>
+          ) : null}
+        </div>
+
+        {traceDockState?.active ? (
+          <section className="trace-dock">
+            <header className="trace-dock__header">
+              <div className="trace-dock__title-wrap">
+                <h3>Realtime Trace</h3>
+              </div>
+              <div className="trace-dock__actions">
+                <span
+                  className={`trace-status ${
+                    traceDockState.status === "capturing" ? "is-live" : ""
+                  }`}
+                >
+                  {traceDockState.status}
+                </span>
                 <button
                   type="button"
-                  className="topology-layout-btn"
-                  onClick={() => setGlobalSettingsOpen(false)}
+                  className="topology-layout-btn trace-dock__close-btn"
+                  onClick={handleCloseTraceDock}
+                  title="Close trace"
+                  aria-label="Close trace"
                 >
-                  Close
+                  ✕
                 </button>
-              </header>
-              <div className="dashboard-modal__body">
-                <label className="dashboard-setting-row">
-                  <span>Snapshot Poll Frequency (seconds)</span>
-                  <input
-                    type="number"
-                    min={0.5}
-                    max={30}
-                    step={0.5}
-                    value={globalSettings.snapshotPollSeconds}
-                    onChange={(event) => {
-                      const next = Number.parseFloat(event.target.value);
-                      if (!Number.isFinite(next)) {
-                        return;
-                      }
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        snapshotPollSeconds: Math.max(0.5, Math.min(30, next)),
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Default Topology Layout</span>
-                  <select
-                    value={globalSettings.topologyDefaultLayout}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        topologyDefaultLayout:
-                          event.target.value === "lr" ? "lr" : "tb",
-                      }))
-                    }
-                  >
-                    <option value="tb">Top to Bottom</option>
-                    <option value="lr">Left to Right</option>
-                  </select>
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Collection Open Behavior</span>
-                  <select
-                    value={globalSettings.collectionOpenMode}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        collectionOpenMode:
-                          event.target.value === "single" ? "single" : "double",
-                      }))
-                    }
-                  >
-                    <option value="double">Double click</option>
-                    <option value="single">Single click</option>
-                  </select>
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Default Trace TTL (seconds)</span>
-                  <input
-                    type="number"
-                    min={0.5}
-                    max={120}
-                    step={0.5}
-                    value={globalSettings.traceTtlSeconds}
-                    onChange={(event) => {
-                      const next = Number.parseFloat(event.target.value);
-                      if (!Number.isFinite(next)) {
-                        return;
-                      }
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        traceTtlSeconds: Math.max(0.5, Math.min(120, next)),
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Default Trace Metrics</span>
-                  <select
-                    value={globalSettings.traceMetricsPreset}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        traceMetricsPreset:
-                          event.target.value === "publish"
-                          || event.target.value === "publish+backpressure"
-                            ? event.target.value
-                            : "publish+lease+backpressure",
-                      }))
-                    }
-                  >
-                    <option value="publish+lease+backpressure">
-                      Publish + Lease + Backpressure
-                    </option>
-                    <option value="publish+backpressure">
-                      Publish + Backpressure
-                    </option>
-                    <option value="publish">Publish Only</option>
-                  </select>
-                </label>
-                <label className="dashboard-setting-toggle">
-                  <input
-                    type="checkbox"
-                    checked={globalSettings.autoFitOnLayoutScopeChange}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        autoFitOnLayoutScopeChange: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span>Auto-fit on layout/scope change</span>
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Inspector Width (px)</span>
-                  <input
-                    type="number"
-                    min={360}
-                    max={900}
-                    step={10}
-                    value={globalSettings.inspectorWidthPx}
-                    onChange={(event) => {
-                      const next = Number.parseInt(event.target.value, 10);
-                      if (!Number.isFinite(next)) {
-                        return;
-                      }
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        inspectorWidthPx: Math.max(360, Math.min(900, next)),
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="dashboard-setting-row">
-                  <span>Inspector Density</span>
-                  <select
-                    value={globalSettings.densityMode}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        densityMode: event.target.value === "compact" ? "compact" : "comfortable",
-                      }))
-                    }
-                  >
-                    <option value="comfortable">Comfortable</option>
-                    <option value="compact">Compact</option>
-                  </select>
-                </label>
-                <label className="dashboard-setting-toggle">
-                  <input
-                    type="checkbox"
-                    checked={globalSettings.showLegend}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        showLegend: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span>Show legend</span>
-                </label>
-                <label className="dashboard-setting-toggle">
-                  <input
-                    type="checkbox"
-                    checked={globalSettings.showMiniMap}
-                    onChange={(event) =>
-                      setGlobalSettings((previous) => ({
-                        ...previous,
-                        showMiniMap: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span>Show minimap</span>
-                </label>
               </div>
-            </section>
-          </div>
+            </header>
+            <div className="trace-dock__body">
+              <div className="trace-dock__host" ref={setTraceDockHost} />
+            </div>
+          </section>
         ) : null}
       </div>
     </div>
