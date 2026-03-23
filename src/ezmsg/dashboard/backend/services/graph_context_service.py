@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Callable, Protocol
 
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
+from ezmsg.core.netprotocol import GRAPHSERVER_ADDR
 
 from ..models.events import (
     EventEnvelopeModel,
@@ -134,12 +135,20 @@ class GraphContextLifecycleService:
             raise GraphServiceUnavailableError("GraphContext is not active.")
         return self._context
 
+    def _effective_graph_address(self) -> str:
+        context = self._context
+        if context is not None and getattr(context, "graph_address", None) is not None:
+            return str(context.graph_address)
+        if self._graph_address is not None:
+            return str(self._graph_address)
+        return str(GRAPHSERVER_ADDR)
+
     async def health_payload(self) -> dict[str, Any]:
         context = self._context
         return {
             "status": "ok",
             "graph_session_active": context is not None,
-            "graph_address": str(context.graph_address) if context is not None else None,
+            "graph_address": self._effective_graph_address(),
         }
 
     async def snapshot_payload(self) -> dict[str, Any]:

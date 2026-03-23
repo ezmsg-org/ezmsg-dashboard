@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
+  ControlButton,
   Controls,
   MarkerType,
   MiniMap,
@@ -14,9 +15,35 @@ import { Panel } from "./Panel";
 import type { GraphSnapshotPayload } from "../types/api";
 import type { TopologyChangedEnvelope } from "../types/events";
 
+export type TopologyEntitySelection =
+  | {
+      kind: "unit";
+      unitAddress: string;
+    }
+  | {
+      kind: "publisher";
+      streamAddress: string;
+      unitAddress: string | null;
+    }
+  | {
+      kind: "subscriber";
+      streamAddress: string;
+      unitAddress: string | null;
+    }
+  | {
+      kind: "collection";
+      collectionAddress: string;
+    };
+
 type TopologyPanelProps = {
   graphSnapshot: GraphSnapshotPayload | null;
   recentEvents: TopologyChangedEnvelope[];
+  immersive?: boolean;
+  showLegend?: boolean;
+  showMiniMap?: boolean;
+  defaultLayout?: LayoutMode;
+  collectionOpenMode?: "single" | "double";
+  onEntitySelect?: (selection: TopologyEntitySelection | null) => void;
 };
 type LayoutMode = "tb" | "lr";
 
@@ -971,9 +998,10 @@ function buildFlowData(
       data: {
         label: (
           <div className="topology-collection-label topology-collection-label--scope" title={scopedCollection.address}>
-            <span className="topology-collection-chip">Collection Scope</span>
-            <strong>{scopedCollection.name}</strong>
-            <span className="topology-unit-type">{shortType(scopedCollection.componentType)}</span>
+            <span className="topology-title-row">
+              <strong>{scopedCollection.name}</strong>
+              <span className="topology-unit-type">{shortType(scopedCollection.componentType)}</span>
+            </span>
             <span className="mono">{compactCollectionAddress(scopedCollection.address)}</span>
           </div>
         ),
@@ -1144,11 +1172,13 @@ function buildFlowData(
       data: {
         label: (
           <div className="topology-collection-label" title={collection.address}>
-            <span className="topology-collection-chip">Collection</span>
-            <strong>{collection.name}</strong>
+            <span className="topology-title-row">
+              <strong>{collection.name}</strong>
+              <span className="topology-unit-type">{shortType(collection.componentType)}</span>
+            </span>
             <span className="mono">{compactCollectionAddress(collection.address)}</span>
             <span className="topology-collection-hint" aria-label="click to open">
-              <span aria-hidden="true">↗</span> Click to open
+              <span aria-hidden="true">↗</span> Double-click to open
             </span>
           </div>
         ),
@@ -1363,8 +1393,14 @@ function buildFlowData(
       data: {
         label: (
           <div className="topology-unit-label">
-            <strong>{unit.name}</strong>
-            <span className="topology-unit-type">{shortType(unit.componentType)}</span>
+            <span
+              className="topology-title-row topology-title-row--clickable"
+              title="Click to inspect settings"
+            >
+              <strong>{unit.name}</strong>
+              <span className="topology-unit-type">{shortType(unit.componentType)}</span>
+              <span className="topology-unit-linkhint" aria-hidden="true">⚙</span>
+            </span>
             <span className="mono topology-unit-address" title={unit.address}>
               {truncate(compactCollectionAddress(unit.address), 34)}
             </span>
@@ -1732,11 +1768,21 @@ function buildFlowData(
   return { nodes, edges };
 }
 
-export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProps) {
+export function TopologyPanel({
+  graphSnapshot,
+  recentEvents,
+  immersive = false,
+  showLegend = true,
+  showMiniMap = true,
+  defaultLayout = "tb",
+  collectionOpenMode = "double",
+  onEntitySelect,
+}: TopologyPanelProps) {
   const flowShellRef = useRef<HTMLDivElement | null>(null);
   const autoScopeSignatureRef = useRef<string | null>(null);
+  const lastCollectionClickRef = useRef<{ id: string; ts: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("tb");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(defaultLayout);
   const [scopeCollectionAddress, setScopeCollectionAddress] = useState<string | null>(null);
   const topologyComponents = useMemo(
     () => (graphSnapshot ? classifyComponents(graphSnapshot) : null),
@@ -1750,6 +1796,28 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
     () => (topologyComponents ? collectionScopePath(topologyComponents.collections, scopeCollectionAddress) : []),
     [topologyComponents, scopeCollectionAddress]
   );
+  const unitStreamByAddress = useMemo(() => {
+    const streamByAddress = new Map<
+      string,
+      { direction: StreamDirection; unitAddress: string }
+    >();
+    if (!topologyComponents) {
+      return streamByAddress;
+    }
+    for (const unit of topologyComponents.units.values()) {
+      for (const stream of unit.streams) {
+        streamByAddress.set(stream.address, {
+          direction: stream.direction,
+          unitAddress: unit.address,
+        });
+        streamByAddress.set(streamAddressWithoutEndpoint(stream.address), {
+          direction: stream.direction,
+          unitAddress: unit.address,
+        });
+      }
+    }
+    return streamByAddress;
+  }, [topologyComponents]);
   const activeScope = scopePath.length > 0 ? scopePath[scopePath.length - 1] : null;
   const flowData = useMemo(
     () =>
@@ -1767,6 +1835,49 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
       return;
     }
     setScopeCollectionAddress(collectionAddress);
+  };
+  const selectEntityForNode = (nodeId: string) => {
+    if (nodeId.startsWith("unit:")) {
+      onEntitySelect?.({
+        kind: "unit",
+        unitAddress: nodeId.slice("unit:".length),
+      });
+      return;
+    }
+    if (nodeId.startsWith("collection:")) {
+      onEntitySelect?.({
+        kind: "collection",
+        collectionAddress: nodeId.slice("collection:".length),
+      });
+      return;
+    }
+    if (nodeId.startsWith("stream:")) {
+      const streamAddress = nodeId.slice("stream:".length);
+      const meta =
+        unitStreamByAddress.get(streamAddress)
+        ?? unitStreamByAddress.get(streamAddressWithoutEndpoint(streamAddress));
+      if (!meta) {
+        onEntitySelect?.(null);
+        return;
+      }
+      if (meta.direction === "output") {
+        onEntitySelect?.({
+          kind: "publisher",
+          streamAddress,
+          unitAddress: meta.unitAddress,
+        });
+        return;
+      }
+      if (meta.direction === "input") {
+        onEntitySelect?.({
+          kind: "subscriber",
+          streamAddress,
+          unitAddress: meta.unitAddress,
+        });
+        return;
+      }
+    }
+    onEntitySelect?.(null);
   };
   useEffect(() => {
     if (!topologyComponents || !scopeCollectionAddress) {
@@ -1805,8 +1916,22 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
   }, [scopeCollectionAddress, topologyComponents]);
 
   useEffect(() => {
+    setLayoutMode(defaultLayout);
+  }, [defaultLayout]);
+
+  useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === flowShellRef.current);
+      const host =
+        (flowShellRef.current?.closest(".dashboard-layout") as HTMLElement | null)
+        ?? flowShellRef.current;
+      const fullscreenElement = document.fullscreenElement;
+      if (!host || !fullscreenElement) {
+        setIsFullscreen(false);
+        return;
+      }
+      setIsFullscreen(
+        fullscreenElement === host || fullscreenElement.contains(host)
+      );
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => {
@@ -1815,6 +1940,15 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
   }, []);
 
   if (!graphSnapshot) {
+    if (immersive) {
+      return (
+        <section className="topology-immersive">
+          <div className="topology-empty-state">
+            <p>Waiting for initial snapshot...</p>
+          </div>
+        </section>
+      );
+    }
     return (
       <Panel
         title="Topology"
@@ -1831,32 +1965,26 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
   const edgeCount = graphEdgeCount(graphSnapshot.graph);
   const sessionCount = Object.keys(graphSnapshot.sessions).length;
   const processRows = Object.values(graphSnapshot.processes);
-
-  return (
-    <Panel
-      title="Topology"
-      subtitle="Low-level publisher/subscriber wiring with optional metadata overlays"
-    >
-      <div className="stats-grid">
-        <article className="stat-card">
-          <span>Topics</span>
-          <strong>{topicCount}</strong>
-        </article>
-        <article className="stat-card">
-          <span>Edges</span>
-          <strong>{edgeCount}</strong>
-        </article>
-        <article className="stat-card">
-          <span>Sessions</span>
-          <strong>{sessionCount}</strong>
-        </article>
-        <article className="stat-card">
-          <span>Processes</span>
-          <strong>{processRows.length}</strong>
-        </article>
-      </div>
-
-      <div className="topology-flow-toolbar">
+  const fullscreenHost =
+    (flowShellRef.current?.closest(".dashboard-layout") as HTMLElement | null)
+    ?? flowShellRef.current
+    ?? document.documentElement;
+  const toggleFullscreen = async () => {
+    if (!fullscreenHost) {
+      return;
+    }
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await fullscreenHost.requestFullscreen();
+      }
+    } catch {
+      // Ignore unsupported/fullscreen errors.
+    }
+  };
+  const toolbarContent = (
+    <div className="topology-flow-toolbar">
         <span className="topology-flow-toolbar__label">Layout</span>
         <button
           type="button"
@@ -1916,52 +2044,49 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
           </span>
         ) : null}
       </div>
+  );
+  const legendContent = (
+    <div className="topology-viewport-legend" aria-label="Topology legend">
+      <span className="topology-viewport-legend__title">Legend</span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-collection" />
+        Collection
+      </span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-input" />
+        Subscriber
+      </span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-output" />
+        Publisher
+      </span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-topic" />
+        Collection Topic
+      </span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-relay" />
+        Collection Relay
+      </span>
+      <span className="topology-viewport-legend__item">
+        <i className="topology-viewport-legend__swatch is-task" />
+        Task
+      </span>
+    </div>
+  );
 
-      <div className="topology-flow-shell" ref={flowShellRef}>
-        <button
-          type="button"
-          className="topology-fullscreen-btn"
-          onClick={async () => {
-            const host = flowShellRef.current;
-            if (!host) {
-              return;
-            }
-            try {
-              if (document.fullscreenElement === host) {
-                await document.exitFullscreen();
-              } else {
-                await host.requestFullscreen();
-              }
-            } catch {
-              // Ignore unsupported/fullscreen errors.
-            }
-          }}
-        >
-          {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-        </button>
-        <div className="topology-viewport-legend" aria-label="Topology legend">
-          <span className="topology-viewport-legend__title">Legend</span>
-          <span className="topology-viewport-legend__item">
-            <i className="topology-viewport-legend__swatch is-input" />
-            Subscriber
-          </span>
-          <span className="topology-viewport-legend__item">
-            <i className="topology-viewport-legend__swatch is-output" />
-            Publisher
-          </span>
-          <span className="topology-viewport-legend__item">
-            <i className="topology-viewport-legend__swatch is-topic" />
-            Collection Topic
-          </span>
-          <span className="topology-viewport-legend__item">
-            <i className="topology-viewport-legend__swatch is-relay" />
-            Collection Relay
-          </span>
-          <span className="topology-viewport-legend__item">
-            <i className="topology-viewport-legend__swatch is-task" />
-            Task
-          </span>
-        </div>
+  const topologyViewport = (
+    <>
+      {immersive ? null : toolbarContent}
+
+      <div className={`topology-flow-shell ${immersive ? "is-immersive" : ""}`} ref={flowShellRef}>
+        {immersive ? (
+          <div className="topology-viewport-bottom-dock">
+            {toolbarContent}
+            {showLegend ? legendContent : null}
+          </div>
+        ) : null}
+        {immersive || !showLegend ? null : legendContent}
         <ReactFlow
           key={`topology-flow-${layoutMode}-${activeScope ?? "root"}`}
           nodes={flowData.nodes}
@@ -1973,31 +2098,101 @@ export function TopologyPanel({ graphSnapshot, recentEvents }: TopologyPanelProp
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
+          onPaneClick={() => onEntitySelect?.(null)}
           onNodeClick={(_, node) => {
-            openCollectionScope(node.id);
+            if (node.id.startsWith("collection:")) {
+              if (collectionOpenMode === "single") {
+                openCollectionScope(node.id);
+                lastCollectionClickRef.current = null;
+                return;
+              }
+              const now = Date.now();
+              const previous = lastCollectionClickRef.current;
+              if (previous && previous.id === node.id && now - previous.ts <= 380) {
+                openCollectionScope(node.id);
+                lastCollectionClickRef.current = null;
+                return;
+              }
+              lastCollectionClickRef.current = { id: node.id, ts: now };
+              onEntitySelect?.({
+                kind: "collection",
+                collectionAddress: node.id.slice("collection:".length),
+              });
+              return;
+            }
+            selectEntityForNode(node.id);
           }}
           onNodeDoubleClick={(_, node) => {
-            openCollectionScope(node.id);
+            if (node.id.startsWith("collection:")) {
+              openCollectionScope(node.id);
+              lastCollectionClickRef.current = null;
+              return;
+            }
+            selectEntityForNode(node.id);
           }}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="#d5deea" gap={24} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(node) => {
-              if (node.id.startsWith("collection:")) {
-                return "#dbeafe";
-              }
-              if (node.id.startsWith("unit:")) {
-                return "#bfdbfe";
-              }
-              return "#cbd5e1";
-            }}
-          />
-          <Controls showFitView={false} showInteractive={false} />
+          {showMiniMap ? (
+            <MiniMap
+              pannable
+              zoomable
+              nodeColor={(node) => {
+                if (node.id.startsWith("collection:")) {
+                  return "#dbeafe";
+                }
+                if (node.id.startsWith("unit:")) {
+                  return "#bfdbfe";
+                }
+                return "#cbd5e1";
+              }}
+            />
+          ) : null}
+          <Controls showFitView={false} showInteractive={false}>
+            <ControlButton
+              className="topology-control-btn"
+              title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              onClick={() => {
+                void toggleFullscreen();
+              }}
+            >
+              ⛶
+            </ControlButton>
+          </Controls>
         </ReactFlow>
       </div>
+    </>
+  );
+
+  if (immersive) {
+    return <section className="topology-immersive">{topologyViewport}</section>;
+  }
+
+  return (
+    <Panel
+      title="Topology"
+      subtitle="Low-level publisher/subscriber wiring with optional metadata overlays"
+    >
+      <div className="stats-grid">
+        <article className="stat-card">
+          <span>Topics</span>
+          <strong>{topicCount}</strong>
+        </article>
+        <article className="stat-card">
+          <span>Edges</span>
+          <strong>{edgeCount}</strong>
+        </article>
+        <article className="stat-card">
+          <span>Sessions</span>
+          <strong>{sessionCount}</strong>
+        </article>
+        <article className="stat-card">
+          <span>Processes</span>
+          <strong>{processRows.length}</strong>
+        </article>
+      </div>
+      {topologyViewport}
 
       <div className="panel-section">
         <h3>Process Ownership</h3>

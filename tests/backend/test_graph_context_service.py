@@ -15,6 +15,7 @@ class FakeContext:
     def __init__(self) -> None:
         self.update_calls: list[dict[str, object]] = []
         self.trace_control_calls: list[dict[str, object]] = []
+        self.graph_address: str | None = None
         self._profiling_snapshot: dict[UUID, object] = {}
         self._snapshot = SimpleNamespace(
             graph={},
@@ -93,6 +94,30 @@ class FakeContext:
             }
         )
         return SimpleNamespace(ok=True, error=None)
+
+
+@pytest.mark.asyncio
+async def test_health_payload_defaults_to_canonical_graph_address() -> None:
+    service = GraphContextLifecycleService()
+
+    payload = await service.health_payload()
+
+    assert payload["status"] == "ok"
+    assert payload["graph_session_active"] is False
+    assert payload["graph_address"] == "127.0.0.1:25978"
+
+
+@pytest.mark.asyncio
+async def test_health_payload_prefers_context_graph_address() -> None:
+    service = GraphContextLifecycleService(graph_address="10.10.0.1:30000")
+    fake_context = FakeContext()
+    fake_context.graph_address = "192.168.1.50:25978"
+    service._context = fake_context  # controlled test context
+
+    payload = await service.health_payload()
+
+    assert payload["graph_session_active"] is True
+    assert payload["graph_address"] == "192.168.1.50:25978"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ type SettingsPanelProps = {
     value: unknown,
     timeout?: number
   ) => Promise<SettingsFieldPatchResponse>;
+  focusComponentAddress?: string | null;
 };
 
 type EditorMode = "boolean" | "number" | "choice" | "text" | "json";
@@ -134,11 +135,21 @@ function initialDraftValueForRow(row: FieldRow): unknown {
 export function SettingsPanel({
   settings,
   patchSettingField,
+  focusComponentAddress = null,
 }: SettingsPanelProps) {
-  const componentAddresses = useMemo(
+  const allComponentAddresses = useMemo(
     () => (settings ? Object.keys(settings).sort() : []),
     [settings]
   );
+  const focusedAddress = useMemo(() => {
+    if (!focusComponentAddress || !settings?.[focusComponentAddress]) {
+      return null;
+    }
+    return focusComponentAddress;
+  }, [focusComponentAddress, settings]);
+  const componentAddresses = focusedAddress
+    ? [focusedAddress]
+    : allComponentAddresses;
   const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, unknown>>({});
   const [pendingByField, setPendingByField] = useState<Record<string, boolean>>({});
@@ -146,11 +157,17 @@ export function SettingsPanel({
   const [successByField, setSuccessByField] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
+    if (focusedAddress) {
+      if (selectedComponent !== focusedAddress) {
+        setSelectedComponent(focusedAddress);
+      }
+      return;
+    }
     if (selectedComponent && componentAddresses.includes(selectedComponent)) {
       return;
     }
     setSelectedComponent(componentAddresses[0] ?? null);
-  }, [componentAddresses, selectedComponent]);
+  }, [componentAddresses, focusedAddress, selectedComponent]);
 
   const selectedValue = selectedComponent ? settings?.[selectedComponent] : null;
   const previewValue = useMemo(
@@ -289,23 +306,25 @@ export function SettingsPanel({
           <p className="muted">No settings snapshot entries available.</p>
         </div>
       ) : (
-        <div className="settings-layout">
-          <aside className="settings-list">
-            {componentAddresses.map((address) => (
-              <button
-                key={address}
-                type="button"
-                className={`settings-item ${
-                  selectedComponent === address ? "is-active" : ""
-                } ${
-                  settings?.[address]?.patchable ? "is-patchable" : "is-readonly"
-                }`}
-                onClick={() => setSelectedComponent(address)}
-              >
-                <span className="mono">{address}</span>
-              </button>
-            ))}
-          </aside>
+        <div className={`settings-layout ${focusedAddress ? "is-focused" : ""}`}>
+          {focusedAddress ? null : (
+            <aside className="settings-list">
+              {componentAddresses.map((address) => (
+                <button
+                  key={address}
+                  type="button"
+                  className={`settings-item ${
+                    selectedComponent === address ? "is-active" : ""
+                  } ${
+                    settings?.[address]?.patchable ? "is-patchable" : "is-readonly"
+                  }`}
+                  onClick={() => setSelectedComponent(address)}
+                >
+                  <span className="mono">{address}</span>
+                </button>
+              ))}
+            </aside>
+          )}
           <section className="settings-detail">
             <div className="settings-detail__heading">
               <h3 className="mono">{selectedComponent}</h3>

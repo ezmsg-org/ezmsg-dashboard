@@ -20,6 +20,11 @@ type ProfilingPanelProps = {
   setProfilingTraceControl: (
     request: ProfilingTraceControlRequest
   ) => Promise<unknown>;
+  focusPublisherEndpointId?: string | null;
+  focusPublisherTopic?: string | null;
+  focusSubscriberEndpointId?: string | null;
+  focusActionId?: number;
+  hideFilters?: boolean;
 };
 
 type Severity = "none" | "low" | "medium" | "high";
@@ -319,6 +324,11 @@ export function ProfilingPanel({
   profilingSnapshot,
   latestTraceEvent,
   setProfilingTraceControl,
+  focusPublisherEndpointId = null,
+  focusPublisherTopic = null,
+  focusSubscriberEndpointId = null,
+  focusActionId = 0,
+  hideFilters = false,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
   const [pressuredOnly, setPressuredOnly] = useState(false);
@@ -363,9 +373,37 @@ export function ProfilingPanel({
     return rows.sort((a, b) => b.backpressureNsWindow - a.backpressureNsWindow);
   }, [graphSnapshot, processRows]);
 
+  const focusedRows = useMemo(() => {
+    if (focusPublisherEndpointId) {
+      return publisherRows.filter((row) => {
+        if (row.endpointId === focusPublisherEndpointId) {
+          return true;
+        }
+        if (!focusPublisherTopic) {
+          return false;
+        }
+        return row.topic === focusPublisherTopic;
+      });
+    }
+    if (focusSubscriberEndpointId) {
+      return publisherRows.filter((row) =>
+        row.contributors.some(
+          (contributor) =>
+            contributor.endpointId === focusSubscriberEndpointId
+        )
+      );
+    }
+    return publisherRows;
+  }, [
+    focusPublisherEndpointId,
+    focusPublisherTopic,
+    focusSubscriberEndpointId,
+    publisherRows,
+  ]);
+
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
-    return publisherRows.filter((row) => {
+    return focusedRows.filter((row) => {
       if (pressuredOnly && row.backpressureNsWindow <= 0) {
         return false;
       }
@@ -378,12 +416,61 @@ export function ProfilingPanel({
         || row.processId.toLowerCase().includes(query)
       );
     });
-  }, [publisherRows, pressuredOnly, searchText]);
+  }, [focusedRows, pressuredOnly, searchText]);
 
   const rowById = useMemo(
     () => new Map(publisherRows.map((row) => [row.id, row])),
     [publisherRows]
   );
+
+  useEffect(() => {
+    if (focusPublisherEndpointId) {
+      const matchedIds = publisherRows
+        .filter((row) => {
+          if (row.endpointId === focusPublisherEndpointId) {
+            return true;
+          }
+          if (!focusPublisherTopic) {
+            return false;
+          }
+          return row.topic === focusPublisherTopic;
+        })
+        .map((row) => row.id);
+      setExpandedIds((previous) => {
+        const same =
+          previous.length === matchedIds.length
+          && matchedIds.every((id) => previous.includes(id));
+        return same ? [] : matchedIds;
+      });
+      setExpandedContributorEndpointByRowId({});
+      return;
+    }
+    if (focusSubscriberEndpointId) {
+      const matchedIds = publisherRows
+        .filter((row) =>
+          row.contributors.some(
+            (contributor) =>
+              contributor.endpointId === focusSubscriberEndpointId
+          )
+        )
+        .map((row) => row.id);
+      setExpandedIds(matchedIds);
+      setExpandedContributorEndpointByRowId((previous) => {
+        const next: Record<string, string | null> = { ...previous };
+        for (const rowId of matchedIds) {
+          next[rowId] = focusSubscriberEndpointId;
+        }
+        return next;
+      });
+      return;
+    }
+  }, [
+    focusPublisherEndpointId,
+    focusPublisherTopic,
+    focusSubscriberEndpointId,
+    focusActionId,
+    publisherRows,
+  ]);
 
   useEffect(() => {
     if (!latestTraceEvent || activeTraceRowIds.length === 0) {
@@ -551,27 +638,31 @@ export function ProfilingPanel({
   const toggleTraceCapture = (row: PublisherRow, nextOpen: boolean) => {
     void applyTraceControl(row, nextOpen);
   };
+  const controlsHidden =
+    hideFilters || Boolean(focusPublisherEndpointId) || Boolean(focusSubscriberEndpointId);
 
   return (
     <Panel
       title="Profiling"
       subtitle="Publisher-first backpressure diagnostics"
     >
-      <div className="profiling-controls">
-        <input
-          type="search"
-          placeholder="Search topic, endpoint, or process"
-          value={searchText}
-          onChange={(event) => setSearchText(event.target.value)}
-        />
-        <button
-          type="button"
-          className={`toggle-btn ${pressuredOnly ? "is-active" : ""}`}
-          onClick={() => setPressuredOnly((value) => !value)}
-        >
-          {pressuredOnly ? "Pressured Only" : "All Publishers"}
-        </button>
-      </div>
+      {controlsHidden ? null : (
+        <div className="profiling-controls">
+          <input
+            type="search"
+            placeholder="Search topic, endpoint, or process"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+          />
+          <button
+            type="button"
+            className={`toggle-btn ${pressuredOnly ? "is-active" : ""}`}
+            onClick={() => setPressuredOnly((value) => !value)}
+          >
+            {pressuredOnly ? "Pressured Only" : "All Publishers"}
+          </button>
+        </div>
+      )}
 
       {filteredRows.length === 0 ? (
         <div className="panel-section">

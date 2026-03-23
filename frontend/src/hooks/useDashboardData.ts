@@ -23,6 +23,10 @@ const RECONNECT_DELAY_MS = 1000;
 const WS_DEFAULT_PROFILING_INTERVAL = 0.05;
 const WS_DEFAULT_PROFILING_MAX_SAMPLES = 5000;
 
+type DashboardDataOptions = {
+  snapshotPollSeconds?: number;
+};
+
 function readPositiveNumber(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value;
@@ -34,6 +38,10 @@ function readPositiveNumber(value: unknown, fallback: number): number {
     }
   }
   return fallback;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function withWsTraceQuery(baseUrl: string): string {
@@ -129,7 +137,7 @@ function isDashboardEventEnvelope(value: unknown): value is DashboardEventEnvelo
   return typeof value.kind === "string" && isRecord(value.data);
 }
 
-export function useDashboardData() {
+export function useDashboardData(options?: DashboardDataOptions) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [snapshot, setSnapshot] = useState<DashboardSnapshotResponse | null>(null);
   const [latestTraceEvent, setLatestTraceEvent] =
@@ -140,6 +148,9 @@ export function useDashboardData() {
   const [error, setError] = useState<string | null>(null);
   const [lastSnapshotUpdateMs, setLastSnapshotUpdateMs] = useState<number | null>(
     null
+  );
+  const snapshotPollMs = Math.round(
+    clamp((options?.snapshotPollSeconds ?? 2.0) * 1000, 500, 30000)
   );
 
   const refreshTimerRef = useRef<number | null>(null);
@@ -189,6 +200,21 @@ export function useDashboardData() {
       setError(message);
     });
   }, [refreshHealth, refreshSnapshot]);
+
+  useEffect(() => {
+    const pollTimer = window.setInterval(() => {
+      refreshSnapshot().catch((snapshotError: unknown) => {
+        const message =
+          snapshotError instanceof Error
+            ? snapshotError.message
+            : "Snapshot poll failed.";
+        setError(message);
+      });
+    }, snapshotPollMs);
+    return () => {
+      window.clearInterval(pollTimer);
+    };
+  }, [refreshSnapshot, snapshotPollMs]);
 
   useEffect(() => {
     let cancelled = false;
