@@ -35,11 +35,15 @@ body {
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 34vw);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, var(--inspector-width, 500px));
   grid-template-rows: minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+}
+
+.dashboard-layout.is-compact {
+  font-size: 0.94em;
 }
 
 .dashboard-layout > * {
@@ -59,65 +63,87 @@ body {
 
 .dashboard-brand-card {
   position: absolute;
-  top: 0.6rem;
+  top: 0.55rem;
   left: 0.6rem;
   z-index: 22;
   min-width: 320px;
-  max-width: min(44vw, 560px);
+  max-width: min(84vw, 1000px);
   border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(6px);
-  padding: 0.55rem 0.62rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  padding: 0.36rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .dashboard-brand-card__title-row {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.3rem;
+  min-width: 0;
 }
 
 .dashboard-brand-card__title-row h1 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   letter-spacing: 0.02em;
   color: #0f172a;
-  flex: 1;
+  line-height: 1;
 }
 
-.dashboard-brand-logo {
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 6px;
-  border: 1px solid #93c5fd;
-  background: linear-gradient(160deg, #eff6ff 0%, #dbeafe 100%);
-  color: #1d4ed8;
-  font-size: 0.62rem;
-  font-weight: 800;
+.dashboard-brand-logo-image {
+  width: 1.15rem;
+  height: 1.15rem;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.dashboard-health-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  display: inline-block;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+.dashboard-health-dot.is-ok {
+  background: #22c55e;
+  border-color: #16a34a;
+}
+
+.dashboard-health-dot.is-warn {
+  background: #f59e0b;
+  border-color: #d97706;
+}
+
+.dashboard-health-dot.is-err {
+  background: #ef4444;
+  border-color: #dc2626;
+}
+
+.dashboard-brand-card__meta-line {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  letter-spacing: 0.01em;
+  gap: 0.38rem;
+  color: #475569;
+  font-size: 0.77rem;
 }
 
-.dashboard-brand-card__status-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.42rem;
-  align-items: center;
-}
-
-.dashboard-brand-card__meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.dashboard-brand-card .error-text {
-  margin-top: 0.05rem;
+.dashboard-gear-btn {
+  margin-left: 0;
+  min-width: 1.8rem;
+  padding: 0.13rem 0.44rem;
+  font-size: 0.88rem;
+  line-height: 1;
 }
 
 .dashboard-modal-backdrop {
@@ -298,8 +324,16 @@ body {
 
 .dashboard-inspector__body {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 0.5rem;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.dashboard-inspector__body.is-settings-collapsed {
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .dashboard-inspector__body .panel {
@@ -313,8 +347,38 @@ body {
   overflow: hidden;
 }
 
+.inspector-section--split {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .inspector-section + .inspector-section {
-  margin-top: 0.5rem;
+  margin-top: 0;
+}
+
+.inspector-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 0.42rem 0.55rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.inspector-section__collapse-btn {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.48rem;
+  cursor: pointer;
 }
 
 .inspector-section__toggle {
@@ -335,6 +399,12 @@ body {
 
 .inspector-section__content {
   padding: 0.5rem;
+}
+
+.inspector-section__content--scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.45rem;
 }
 
 .app-shell {
@@ -458,6 +528,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
+}
+
+.panel.panel--headerless .panel__body {
+  margin-top: 0;
 }
 
 .placeholder p {
@@ -601,25 +675,33 @@ body {
 
 .topology-viewport-bottom-dock {
   position: absolute;
-  left: 3.35rem;
-  bottom: 0.55rem;
+  left: 3.15rem;
+  bottom: 0.6rem;
   z-index: 11;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.3rem;
-}
-
-.topology-viewport-bottom-dock .topology-flow-toolbar {
-  border: 1px solid #d1d9e5;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
-  padding: 0.26rem 0.42rem;
-  gap: 0.3rem;
+  gap: 0.22rem;
 }
 
 .topology-viewport-bottom-dock .topology-viewport-legend {
   position: static;
+  padding: 0.2rem 0.38rem;
+}
+
+.topology-viewport-top-controls {
+  position: absolute;
+  left: 0.6rem;
+  top: 3.02rem;
+  z-index: 12;
+}
+
+.topology-viewport-top-controls .topology-flow-toolbar {
+  border: 1px solid #d1d9e5;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 0.2rem 0.38rem;
+  gap: 0.26rem;
 }
 
 .topology-flow-shell:fullscreen {
@@ -771,6 +853,11 @@ body {
   line-height: 1;
   padding: 0.12rem 0.45rem;
   min-width: 1.9rem;
+}
+
+.topology-layout-btn--layout-toggle {
+  min-width: 9.4rem;
+  text-align: center;
 }
 
 .topology-control-btn {
@@ -1593,52 +1680,111 @@ body {
   word-break: break-word;
 }
 
-.settings-layout {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
-  gap: 0.8rem;
-}
-
-.settings-layout.is-focused {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.settings-list {
+.settings-component-list {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  max-height: 320px;
-  overflow: auto;
-  padding-right: 0.2rem;
+  gap: 0.55rem;
 }
 
-.settings-item {
-  border: 1px solid #d1d5db;
-  background: #fff;
+.settings-search input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
+  padding: 0.32rem 0.46rem;
+  font: inherit;
+  font-size: 0.8rem;
+  background: #ffffff;
+}
+
+.settings-component-row {
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.settings-component-row.is-expanded {
+  border-color: #93c5fd;
+}
+
+.settings-component-row__toggle {
+  width: 100%;
+  border: 0;
+  background: #ffffff;
   text-align: left;
   cursor: pointer;
   font: inherit;
-  padding: 0.4rem 0.55rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
 }
 
-.settings-item.is-readonly {
+.settings-component-row__identity {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.settings-component-row__heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.settings-component-title {
+  margin: 0;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-component-address {
+  margin: 0;
+  font-size: 0.74rem;
   color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-component-row__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.settings-access {
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.settings-access.is-patchable {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.settings-access.is-readonly {
+  color: #475569;
   background: #f1f5f9;
   border-color: #cbd5e1;
 }
 
-.settings-item.is-active {
-  border-color: #0ea5e9;
-  background: #e0f2fe;
-  color: #0f172a;
-}
-
 .settings-detail {
-  border: 1px solid #dbe2ea;
+  border-top: 1px solid #e2e8f0;
   border-radius: 10px;
-  background: #f9fafb;
-  padding: 0.7rem;
+  background: #f8fafc;
+  padding: 0.5rem;
+  margin: 0 0.45rem 0.45rem;
 }
 
 .settings-detail h3 {
@@ -1667,7 +1813,7 @@ body {
 .settings-fields {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.45rem;
   max-height: 440px;
   overflow: auto;
   padding-right: 0.2rem;
@@ -1677,7 +1823,7 @@ body {
   border: 1px solid #dbe2ea;
   border-radius: 10px;
   background: #ffffff;
-  padding: 0.55rem;
+  padding: 0.45rem;
 }
 
 .settings-field-row.is-disabled {
@@ -1692,14 +1838,14 @@ body {
 }
 
 .settings-field-row__meta label {
-  font-size: 0.8rem;
+  font-size: 0.76rem;
 }
 
 .settings-field-row__control {
-  margin-top: 0.45rem;
+  margin-top: 0.32rem;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
+  gap: 0.34rem;
   align-items: start;
 }
 
@@ -1707,16 +1853,36 @@ body {
 .settings-field-row__control textarea,
 .settings-field-row__control select {
   border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 0.45rem 0.55rem;
+  border-radius: 7px;
+  padding: 0.25rem 0.38rem;
+  font-size: 0.79rem;
   font: inherit;
   background: #ffffff;
   width: 100%;
 }
 
 .settings-field-row__control textarea {
-  min-height: 84px;
+  min-height: 60px;
   resize: vertical;
+}
+
+.settings-field-row__control button {
+  border: 1px solid #2563eb;
+  border-radius: 7px;
+  background: #2563eb;
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.24rem 0.48rem;
+  cursor: pointer;
+  min-width: 3.5rem;
+}
+
+.settings-field-row__control button:disabled {
+  background: #94a3b8;
+  border-color: #94a3b8;
+  cursor: default;
 }
 
 .settings-field-row__control input:disabled,
@@ -1724,22 +1890,6 @@ body {
 .settings-field-row__control select:disabled {
   background: #e5ebf3;
   color: #64748b;
-}
-
-.settings-field-row__control button {
-  border: 1px solid #3b82f6;
-  border-radius: 8px;
-  background: #2563eb;
-  color: #ffffff;
-  font: inherit;
-  font-weight: 600;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
-}
-
-.settings-field-row__control button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .patch-checkbox {
@@ -1783,10 +1933,6 @@ body {
   }
 
   .publisher-kpis {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-layout {
     grid-template-columns: 1fr;
   }
 

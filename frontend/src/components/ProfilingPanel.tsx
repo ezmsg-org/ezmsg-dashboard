@@ -25,6 +25,8 @@ type ProfilingPanelProps = {
   focusSubscriberEndpointId?: string | null;
   focusActionId?: number;
   hideFilters?: boolean;
+  defaultTraceTtlSeconds?: number;
+  defaultTraceMetrics?: string[];
 };
 
 type Severity = "none" | "low" | "medium" | "high";
@@ -329,6 +331,12 @@ export function ProfilingPanel({
   focusSubscriberEndpointId = null,
   focusActionId = 0,
   hideFilters = false,
+  defaultTraceTtlSeconds = 10.0,
+  defaultTraceMetrics = [
+    "publish_delta_ns",
+    "lease_time_ns",
+    "attributable_backpressure_ns",
+  ],
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
   const [pressuredOnly, setPressuredOnly] = useState(false);
@@ -590,15 +598,9 @@ export function ProfilingPanel({
         publisher_endpoint_id: nextOpen ? row.endpointId : null,
         publisher_topic: nextOpen ? row.topic : null,
         subscriber_topic: null,
-        metrics: nextOpen
-          ? [
-              "publish_delta_ns",
-              "lease_time_ns",
-              "attributable_backpressure_ns",
-            ]
-          : null,
+        metrics: nextOpen ? defaultTraceMetrics : null,
         sample_mod: 1,
-        ttl_seconds: null,
+        ttl_seconds: nextOpen ? defaultTraceTtlSeconds : null,
         timeout: 2.0,
       });
     } catch (error) {
@@ -642,10 +644,7 @@ export function ProfilingPanel({
     hideFilters || Boolean(focusPublisherEndpointId) || Boolean(focusSubscriberEndpointId);
 
   return (
-    <Panel
-      title="Profiling"
-      subtitle="Publisher-first backpressure diagnostics"
-    >
+    <Panel>
       {controlsHidden ? null : (
         <div className="profiling-controls">
           <input

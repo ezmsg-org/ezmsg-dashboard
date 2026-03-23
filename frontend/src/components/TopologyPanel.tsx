@@ -43,6 +43,7 @@ type TopologyPanelProps = {
   showMiniMap?: boolean;
   defaultLayout?: LayoutMode;
   collectionOpenMode?: "single" | "double";
+  autoFitOnLayoutScopeChange?: boolean;
   onEntitySelect?: (selection: TopologyEntitySelection | null) => void;
 };
 type LayoutMode = "tb" | "lr";
@@ -1394,12 +1395,11 @@ function buildFlowData(
         label: (
           <div className="topology-unit-label">
             <span
-              className="topology-title-row topology-title-row--clickable"
+              className="topology-title-row"
               title="Click to inspect settings"
             >
               <strong>{unit.name}</strong>
               <span className="topology-unit-type">{shortType(unit.componentType)}</span>
-              <span className="topology-unit-linkhint" aria-hidden="true">⚙</span>
             </span>
             <span className="mono topology-unit-address" title={unit.address}>
               {truncate(compactCollectionAddress(unit.address), 34)}
@@ -1776,6 +1776,7 @@ export function TopologyPanel({
   showMiniMap = true,
   defaultLayout = "tb",
   collectionOpenMode = "double",
+  autoFitOnLayoutScopeChange = true,
   onEntitySelect,
 }: TopologyPanelProps) {
   const flowShellRef = useRef<HTMLDivElement | null>(null);
@@ -1988,17 +1989,12 @@ export function TopologyPanel({
         <span className="topology-flow-toolbar__label">Layout</span>
         <button
           type="button"
-          className={`topology-layout-btn ${layoutMode === "tb" ? "is-active" : ""}`}
-          onClick={() => setLayoutMode("tb")}
+          className="topology-layout-btn topology-layout-btn--layout-toggle is-active"
+          onClick={() =>
+            setLayoutMode((previous) => (previous === "tb" ? "lr" : "tb"))
+          }
         >
-          Top to Bottom
-        </button>
-        <button
-          type="button"
-          className={`topology-layout-btn ${layoutMode === "lr" ? "is-active" : ""}`}
-          onClick={() => setLayoutMode("lr")}
-        >
-          Left to Right
+          {layoutMode === "tb" ? "↓ Top to Bottom" : "→ Left to Right"}
         </button>
         <span className="topology-flow-toolbar__divider" />
         <span className="topology-flow-toolbar__label">Scope</span>
@@ -2081,14 +2077,18 @@ export function TopologyPanel({
 
       <div className={`topology-flow-shell ${immersive ? "is-immersive" : ""}`} ref={flowShellRef}>
         {immersive ? (
-          <div className="topology-viewport-bottom-dock">
-            {toolbarContent}
-            {showLegend ? legendContent : null}
-          </div>
+          <div className="topology-viewport-top-controls">{toolbarContent}</div>
+        ) : null}
+        {immersive && showLegend ? (
+          <div className="topology-viewport-bottom-dock">{legendContent}</div>
         ) : null}
         {immersive || !showLegend ? null : legendContent}
         <ReactFlow
-          key={`topology-flow-${layoutMode}-${activeScope ?? "root"}`}
+          key={
+            autoFitOnLayoutScopeChange
+              ? `topology-flow-${layoutMode}-${activeScope ?? "root"}`
+              : "topology-flow-stable"
+          }
           nodes={flowData.nodes}
           edges={flowData.edges}
           fitView
@@ -2101,6 +2101,10 @@ export function TopologyPanel({
           onPaneClick={() => onEntitySelect?.(null)}
           onNodeClick={(_, node) => {
             if (node.id.startsWith("collection:")) {
+              onEntitySelect?.({
+                kind: "collection",
+                collectionAddress: node.id.slice("collection:".length),
+              });
               if (collectionOpenMode === "single") {
                 openCollectionScope(node.id);
                 lastCollectionClickRef.current = null;
@@ -2114,10 +2118,6 @@ export function TopologyPanel({
                 return;
               }
               lastCollectionClickRef.current = { id: node.id, ts: now };
-              onEntitySelect?.({
-                kind: "collection",
-                collectionAddress: node.id.slice("collection:".length),
-              });
               return;
             }
             selectEntityForNode(node.id);

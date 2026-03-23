@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Panel } from "./Panel";
 import type {
@@ -16,6 +16,7 @@ type SettingsPanelProps = {
     timeout?: number
   ) => Promise<SettingsFieldPatchResponse>;
   focusComponentAddress?: string | null;
+  focusActionId?: number;
 };
 
 type EditorMode = "boolean" | "number" | "choice" | "text" | "json";
@@ -136,38 +137,47 @@ export function SettingsPanel({
   settings,
   patchSettingField,
   focusComponentAddress = null,
+  focusActionId = 0,
 }: SettingsPanelProps) {
   const allComponentAddresses = useMemo(
     () => (settings ? Object.keys(settings).sort() : []),
     [settings]
   );
-  const focusedAddress = useMemo(() => {
-    if (!focusComponentAddress || !settings?.[focusComponentAddress]) {
-      return null;
-    }
-    return focusComponentAddress;
-  }, [focusComponentAddress, settings]);
-  const componentAddresses = focusedAddress
-    ? [focusedAddress]
-    : allComponentAddresses;
+  const addressSignature = useMemo(
+    () => allComponentAddresses.join("|"),
+    [allComponentAddresses]
+  );
+  const addressSet = useMemo(
+    () => new Set(allComponentAddresses),
+    [addressSignature]
+  );
   const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState("");
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, unknown>>({});
   const [pendingByField, setPendingByField] = useState<Record<string, boolean>>({});
   const [errorByField, setErrorByField] = useState<Record<string, string | null>>({});
   const [successByField, setSuccessByField] = useState<Record<string, string | null>>({});
+  const rowRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
-    if (focusedAddress) {
-      if (selectedComponent !== focusedAddress) {
-        setSelectedComponent(focusedAddress);
-      }
+    if (selectedComponent && !allComponentAddresses.includes(selectedComponent)) {
+      setSelectedComponent(null);
+    }
+  }, [allComponentAddresses, selectedComponent]);
+
+  useEffect(() => {
+    if (!focusComponentAddress || !addressSet.has(focusComponentAddress)) {
       return;
     }
-    if (selectedComponent && componentAddresses.includes(selectedComponent)) {
-      return;
-    }
-    setSelectedComponent(componentAddresses[0] ?? null);
-  }, [componentAddresses, focusedAddress, selectedComponent]);
+    setSearchText("");
+    setSelectedComponent(focusComponentAddress);
+    window.requestAnimationFrame(() => {
+      rowRefs.current[focusComponentAddress]?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  }, [addressSet, focusActionId, focusComponentAddress]);
 
   const selectedValue = selectedComponent ? settings?.[selectedComponent] : null;
   const previewValue = useMemo(
@@ -212,7 +222,25 @@ export function SettingsPanel({
     });
   }, [selectedValue, previewValue]);
 
-  const patchable = Boolean(selectedValue?.patchable);
+  const selectedPatchable = Boolean(selectedValue?.patchable);
+  const filteredAddresses = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) {
+      return allComponentAddresses;
+    }
+    return allComponentAddresses.filter((address) => {
+      const value = settings?.[address];
+      const componentName =
+        typeof value?.component_name === "string" ? value.component_name : "";
+      const componentType =
+        typeof value?.component_type === "string" ? value.component_type : "";
+      return (
+        address.toLowerCase().includes(query)
+        || componentName.toLowerCase().includes(query)
+        || componentType.toLowerCase().includes(query)
+      );
+    });
+  }, [allComponentAddresses, searchText, settings]);
 
   useEffect(() => {
     const drafts: Record<string, unknown> = {};
@@ -256,7 +284,7 @@ export function SettingsPanel({
   };
 
   const applyFieldPatch = async (row: FieldRow): Promise<void> => {
-    if (!selectedComponent || !patchable) {
+    if (!selectedComponent || !selectedPatchable) {
       return;
     }
 
@@ -297,174 +325,201 @@ export function SettingsPanel({
   };
 
   return (
-    <Panel
-      title="Settings"
-      subtitle="Inspect structured settings and apply field-level updates"
-    >
-      {componentAddresses.length === 0 ? (
+    <Panel>
+      {allComponentAddresses.length === 0 ? (
         <div className="panel-section">
           <p className="muted">No settings snapshot entries available.</p>
         </div>
       ) : (
-        <div className={`settings-layout ${focusedAddress ? "is-focused" : ""}`}>
-          {focusedAddress ? null : (
-            <aside className="settings-list">
-              {componentAddresses.map((address) => (
+        <div className="settings-component-list">
+          <div className="settings-search">
+            <input
+              type="search"
+              placeholder="Search component, type, or address"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+            />
+          </div>
+          {filteredAddresses.map((address) => {
+            const value = settings?.[address] ?? null;
+            const expanded = selectedComponent === address;
+            const patchable = Boolean(value?.patchable);
+            const componentDisplayName =
+              (typeof value?.component_name === "string" && value.component_name.length > 0)
+                ? value.component_name
+                : (address.split("/")[address.split("/").length - 1] ?? address);
+            return (
+              <article
+                key={address}
+                ref={(element) => {
+                  rowRefs.current[address] = element;
+                }}
+                className={`settings-component-row ${expanded ? "is-expanded" : ""}`}
+              >
                 <button
-                  key={address}
                   type="button"
-                  className={`settings-item ${
-                    selectedComponent === address ? "is-active" : ""
-                  } ${
-                    settings?.[address]?.patchable ? "is-patchable" : "is-readonly"
-                  }`}
-                  onClick={() => setSelectedComponent(address)}
-                >
-                  <span className="mono">{address}</span>
-                </button>
-              ))}
-            </aside>
-          )}
-          <section className="settings-detail">
-            <div className="settings-detail__heading">
-              <h3 className="mono">{selectedComponent}</h3>
-              {selectedValue?.component_type ? (
-                <span className="settings-type">
-                  {selectedValue.component_type}
-                </span>
-              ) : null}
-            </div>
-            {selectedValue?.component_name ? (
-              <p className="muted">{selectedValue.component_name}</p>
-            ) : null}
-            {fieldRows.length === 0 ? (
-              <p className="muted">No fields available for this component.</p>
-            ) : (
-              <div className="settings-fields">
-                {fieldRows.map((row) => {
-                  const pending = pendingByField[row.path] === true;
-                  const rowDisabled = !patchable;
-                  const draft = fieldDrafts[row.path];
-                  return (
-                    <div
-                      key={row.path}
-                      className={`settings-field-row ${rowDisabled ? "is-disabled" : ""}`}
-                    >
-                      <div className="settings-field-row__meta">
-                        <label className="mono">{row.path}</label>
-                        {row.description ? <p className="muted">{row.description}</p> : null}
-                        {row.bounds ? (
-                          <p className="muted">
-                            Bounds: [{row.bounds[0] ?? "-inf"}, {row.bounds[1] ?? "+inf"}]
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="settings-field-row__control">
-                        {row.mode === "boolean" ? (
-                          <label className="patch-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(draft)}
-                              onChange={(event) =>
-                                setFieldDrafts((previous) => ({
-                                  ...previous,
-                                  [row.path]: event.target.checked,
-                                }))
-                              }
-                              disabled={rowDisabled || pending}
-                            />
-                            <span>Enabled</span>
-                          </label>
-                        ) : null}
-
-                        {row.mode === "choice" ? (
-                          <select
-                            value={String(draft ?? "0")}
-                            onChange={(event) =>
-                              setFieldDrafts((previous) => ({
-                                ...previous,
-                                [row.path]: event.target.value,
-                              }))
-                            }
-                            disabled={rowDisabled || pending}
-                          >
-                            {(row.choices ?? []).map((choice, index) => (
-                              <option key={`${row.path}-${index}`} value={String(index)}>
-                                {toDisplayJson(choice)}
-                              </option>
-                            ))}
-                          </select>
-                        ) : null}
-
-                        {row.mode === "number" ? (
-                          <input
-                            type="number"
-                            value={String(draft ?? "")}
-                            min={row.bounds?.[0] ?? undefined}
-                            max={row.bounds?.[1] ?? undefined}
-                            step="any"
-                            onChange={(event) =>
-                              setFieldDrafts((previous) => ({
-                                ...previous,
-                                [row.path]: event.target.value,
-                              }))
-                            }
-                            disabled={rowDisabled || pending}
-                          />
-                        ) : null}
-
-                        {row.mode === "text" ? (
-                          <input
-                            type="text"
-                            value={String(draft ?? "")}
-                            onChange={(event) =>
-                              setFieldDrafts((previous) => ({
-                                ...previous,
-                                [row.path]: event.target.value,
-                              }))
-                            }
-                            disabled={rowDisabled || pending}
-                          />
-                        ) : null}
-
-                        {row.mode === "json" ? (
-                          <textarea
-                            value={String(draft ?? "")}
-                            rows={4}
-                            spellCheck={false}
-                            className="mono"
-                            onChange={(event) =>
-                              setFieldDrafts((previous) => ({
-                                ...previous,
-                                [row.path]: event.target.value,
-                              }))
-                            }
-                            disabled={rowDisabled || pending}
-                          />
-                        ) : null}
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void applyFieldPatch(row);
-                          }}
-                          disabled={rowDisabled || pending}
-                        >
-                          {pending ? "Applying..." : "Apply"}
-                        </button>
-                      </div>
-                      {successByField[row.path] ? (
-                        <p className="patch-status ok">{successByField[row.path]}</p>
-                      ) : null}
-                      {errorByField[row.path] ? (
-                        <p className="patch-status err">{errorByField[row.path]}</p>
+                  className="settings-component-row__toggle"
+                  aria-expanded={expanded}
+                  onClick={() =>
+                    setSelectedComponent((previous) =>
+                      previous === address ? null : address
+                    )
+                  }
+                  >
+                  <div className="settings-component-row__identity">
+                    <div className="settings-component-row__heading">
+                      <p className="mono settings-component-title" title={address}>
+                        {componentDisplayName}
+                      </p>
+                      {value?.component_type ? (
+                        <span className="settings-type">{value.component_type}</span>
                       ) : null}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+                    <p className="mono settings-component-address" title={address}>
+                      {address}
+                    </p>
+                  </div>
+                  <div className="settings-component-row__meta">
+                    <span className={`settings-access ${patchable ? "is-patchable" : "is-readonly"}`}>
+                      {patchable ? "patchable" : "read only"}
+                    </span>
+                    <span className="publisher-caret">{expanded ? "▾" : "▸"}</span>
+                  </div>
+                </button>
+                {expanded ? (
+                  <section className="settings-detail">
+                    {fieldRows.length === 0 ? (
+                      <p className="muted">No fields available for this component.</p>
+                    ) : (
+                      <div className="settings-fields">
+                        {fieldRows.map((row) => {
+                          const pending = pendingByField[row.path] === true;
+                          const rowDisabled = !selectedPatchable;
+                          const draft = fieldDrafts[row.path];
+                          return (
+                            <div
+                              key={row.path}
+                              className={`settings-field-row ${rowDisabled ? "is-disabled" : ""}`}
+                            >
+                              <div className="settings-field-row__meta">
+                                <label className="mono">{row.path}</label>
+                                {row.description ? <p className="muted">{row.description}</p> : null}
+                                {row.bounds ? (
+                                  <p className="muted">
+                                    Bounds: [{row.bounds[0] ?? "-inf"}, {row.bounds[1] ?? "+inf"}]
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className="settings-field-row__control">
+                                {row.mode === "boolean" ? (
+                                  <label className="patch-checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(draft)}
+                                      onChange={(event) =>
+                                        setFieldDrafts((previous) => ({
+                                          ...previous,
+                                          [row.path]: event.target.checked,
+                                        }))
+                                      }
+                                      disabled={rowDisabled || pending}
+                                    />
+                                    <span>Enabled</span>
+                                  </label>
+                                ) : null}
+
+                                {row.mode === "choice" ? (
+                                  <select
+                                    value={String(draft ?? "0")}
+                                    onChange={(event) =>
+                                      setFieldDrafts((previous) => ({
+                                        ...previous,
+                                        [row.path]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={rowDisabled || pending}
+                                  >
+                                    {(row.choices ?? []).map((choice, index) => (
+                                      <option key={`${row.path}-${index}`} value={String(index)}>
+                                        {toDisplayJson(choice)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : null}
+
+                                {row.mode === "number" ? (
+                                  <input
+                                    type="number"
+                                    value={String(draft ?? "")}
+                                    min={row.bounds?.[0] ?? undefined}
+                                    max={row.bounds?.[1] ?? undefined}
+                                    step="any"
+                                    onChange={(event) =>
+                                      setFieldDrafts((previous) => ({
+                                        ...previous,
+                                        [row.path]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={rowDisabled || pending}
+                                  />
+                                ) : null}
+
+                                {row.mode === "text" ? (
+                                  <input
+                                    type="text"
+                                    value={String(draft ?? "")}
+                                    onChange={(event) =>
+                                      setFieldDrafts((previous) => ({
+                                        ...previous,
+                                        [row.path]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={rowDisabled || pending}
+                                  />
+                                ) : null}
+
+                                {row.mode === "json" ? (
+                                  <textarea
+                                    value={String(draft ?? "")}
+                                    rows={4}
+                                    spellCheck={false}
+                                    className="mono"
+                                    onChange={(event) =>
+                                      setFieldDrafts((previous) => ({
+                                        ...previous,
+                                        [row.path]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={rowDisabled || pending}
+                                  />
+                                ) : null}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void applyFieldPatch(row);
+                                  }}
+                                  disabled={rowDisabled || pending}
+                                >
+                                  {pending ? "Applying..." : "Apply"}
+                                </button>
+                              </div>
+                              {successByField[row.path] ? (
+                                <p className="patch-status ok">{successByField[row.path]}</p>
+                              ) : null}
+                              {errorByField[row.path] ? (
+                                <p className="patch-status err">{errorByField[row.path]}</p>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       )}
     </Panel>
