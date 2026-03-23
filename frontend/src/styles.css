@@ -168,6 +168,14 @@ body {
   overflow: hidden;
 }
 
+.dashboard-floating-gear-btn {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.65rem;
+  left: auto;
+  z-index: 23;
+}
+
 .dashboard-brand-card__title-row {
   display: inline-flex;
   align-items: center;
@@ -948,6 +956,20 @@ body {
   text-align: center;
 }
 
+.dashboard-floating-gear-btn.topology-layout-btn {
+  width: 3.4rem;
+  min-width: 3.4rem;
+  height: 3.4rem;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 2.1rem;
+  line-height: 1;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .topology-control-btn {
   font-size: 0.88rem;
   line-height: 1;
@@ -956,8 +978,25 @@ body {
 .topology-scope-trail {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
+  gap: 0.1rem;
   flex-wrap: wrap;
+}
+
+.topology-scope-sep {
+  font-size: 0.76rem;
+  color: #64748b;
+  margin: 0 0.15rem;
+}
+
+.topology-scope-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.16rem;
+}
+
+.topology-scope-slash {
+  color: #94a3b8;
+  font-size: 0.75rem;
 }
 
 .topology-scope-chip {
@@ -979,6 +1018,17 @@ body {
   color: #1d4ed8;
   background: #eff6ff;
   font-weight: 600;
+}
+
+.topology-scope-tail {
+  color: #1e293b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.1rem;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topology-flow-shell .react-flow__handle {
@@ -1009,6 +1059,29 @@ body {
   gap: 0.34rem;
   min-width: 0;
   max-width: 100%;
+}
+
+.topology-title-row--collection {
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.topology-title-row--collection > .topology-title-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.topology-title-row--collection > .topology-title-row strong {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topology-title-row--collection > .topology-title-row .topology-unit-type {
+  flex: 0 0 auto;
 }
 
 .topology-title-row--clickable {
@@ -1165,6 +1238,26 @@ body {
   font-size: 0.58rem;
   color: #475569;
   opacity: 0.86;
+}
+
+.topology-collection-open-btn {
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font: inherit;
+  font-size: 0.56rem;
+  font-weight: 600;
+  padding: 0.08rem 0.44rem;
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.topology-collection-open-btn:hover {
+  border-color: #60a5fa;
+  background: #dbeafe;
 }
 
 .topology-collection-label--scope {
@@ -1459,6 +1552,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -1466,7 +1560,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   margin-left: auto;
 }

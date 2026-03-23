@@ -6,6 +6,7 @@ import ReactFlow, {
   MarkerType,
   MiniMap,
   Position,
+  type ReactFlowInstance,
   type Edge,
   type Node,
 } from "reactflow";
@@ -42,7 +43,11 @@ type TopologyPanelProps = {
   showLegend?: boolean;
   showMiniMap?: boolean;
   defaultLayout?: LayoutMode;
+  edgeConnectorStyle?: "curved" | "orthogonal" | "smooth";
   autoFitOnLayoutScopeChange?: boolean;
+  autoFocusOnSelection?: boolean;
+  focusSelection?: TopologyEntitySelection | null;
+  focusRequestId?: number;
   onEntitySelect?: (selection: TopologyEntitySelection | null) => void;
 };
 type LayoutMode = "tb" | "lr";
@@ -194,6 +199,20 @@ function compactCollectionAddress(address: string): string {
     return address;
   }
   return parts.slice(Math.max(0, parts.length - 3)).join("/");
+}
+
+function estimateCollectionHeaderMinWidth(
+  collectionName: string,
+  componentType: string
+): number {
+  const nameWidth = Math.min(176, Math.max(104, collectionName.length * 7.4));
+  const typeWidth = Math.min(
+    112,
+    Math.max(66, shortType(componentType).length * 6.1 + 14)
+  );
+  const openButtonWidth = 82;
+  const innerPadding = 18;
+  return nameWidth + typeWidth + openButtonWidth + innerPadding;
 }
 
 function streamAddressWithoutEndpoint(address: string): string {
@@ -621,11 +640,18 @@ function collectionScopePath(
 function buildFlowData(
   graphSnapshot: GraphSnapshotPayload,
   layoutMode: LayoutMode,
-  scopeCollectionAddress: string | null
+  scopeCollectionAddress: string | null,
+  edgeConnectorStyle: "curved" | "orthogonal" | "smooth"
 ): {
   nodes: Node[];
   edges: Edge[];
 } {
+  const connectorType =
+    edgeConnectorStyle === "orthogonal"
+      ? "step"
+      : edgeConnectorStyle === "smooth"
+        ? "smoothstep"
+        : "default";
   const { units, collections } = classifyComponents(graphSnapshot);
   const visibleAddresses = visibleComponentAddresses(
     units,
@@ -885,7 +911,15 @@ function buildFlowData(
     const outputs = collection.streams.filter((stream) => stream.direction === "output").length;
     const unknown = collection.streams.filter((stream) => stream.direction === "unknown").length;
     const maxRows = Math.max(1, inputs, outputs, unknown);
-    const width = layoutMode === "lr" ? Math.max(COLLECTION_NODE_WIDTH, maxRows * 108 + 72) : Math.max(300, maxRows * 106 + 64);
+    const streamDrivenWidth =
+      layoutMode === "lr"
+        ? Math.max(COLLECTION_NODE_WIDTH, maxRows * 108 + 72)
+        : Math.max(300, maxRows * 106 + 64);
+    const headerMinWidth = estimateCollectionHeaderMinWidth(
+      collection.name,
+      collection.componentType
+    );
+    const width = Math.max(streamDrivenWidth, headerMinWidth);
     const height =
       layoutMode === "lr"
         ? Math.max(COLLECTION_NODE_HEIGHT, 72 + maxRows * 30)
@@ -1172,14 +1206,22 @@ function buildFlowData(
       data: {
         label: (
           <div className="topology-collection-label" title={collection.address}>
-            <span className="topology-title-row">
-              <strong>{collection.name}</strong>
-              <span className="topology-unit-type">{shortType(collection.componentType)}</span>
+            <span className="topology-title-row topology-title-row--collection">
+              <span className="topology-title-row">
+                <strong>{collection.name}</strong>
+                <span className="topology-unit-type">{shortType(collection.componentType)}</span>
+              </span>
+              <button
+                type="button"
+                data-open-collection="true"
+                className="topology-collection-open-btn"
+                title="Open collection scope"
+                aria-label={`Open ${collection.name} scope`}
+              >
+                ↗ Open
+              </button>
             </span>
             <span className="mono">{compactCollectionAddress(collection.address)}</span>
-            <span className="topology-collection-hint" aria-label="click to open">
-              <span aria-hidden="true">↗</span> Double-click to open
-            </span>
           </div>
         ),
       },
@@ -1530,7 +1572,7 @@ function buildFlowData(
             id: `edge:internal:${unit.address}:${task.name}:sub`,
             source: `stream:${subscribedStream}`,
             target: taskId,
-            type: "default",
+            type: connectorType,
             zIndex: 20,
             className: "topology-internal-edge",
             markerEnd: internalMarker,
@@ -1545,7 +1587,7 @@ function buildFlowData(
             id: `edge:internal:${unit.address}:${task.name}:${publishedStream}`,
             source: taskId,
             target: `stream:${publishedStream}`,
-            type: "default",
+            type: connectorType,
             zIndex: 20,
             className: "topology-internal-edge",
             markerEnd: internalMarker,
@@ -1651,7 +1693,7 @@ function buildFlowData(
             id: `edge:internal:${unit.address}:tb:${task.name}:sub`,
             source: `stream:${subscribedStream}`,
             target: taskId,
-            type: "default",
+            type: connectorType,
             zIndex: 20,
             className: "topology-internal-edge",
             markerEnd: internalMarker,
@@ -1666,7 +1708,7 @@ function buildFlowData(
             id: `edge:internal:${unit.address}:tb:${task.name}:${publishedStream}`,
             source: taskId,
             target: `stream:${publishedStream}`,
-            type: "default",
+            type: connectorType,
             zIndex: 20,
             className: "topology-internal-edge",
             markerEnd: internalMarker,
@@ -1749,7 +1791,7 @@ function buildFlowData(
       id: `edge:${edge.from}->${edge.to}`,
       source: sourceId,
       target: targetId,
-      type: "default",
+      type: connectorType,
       zIndex: 1,
       markerEnd: {
         type: MarkerType.ArrowClosed,
@@ -1774,15 +1816,23 @@ export function TopologyPanel({
   showLegend = true,
   showMiniMap = true,
   defaultLayout = "tb",
+  edgeConnectorStyle = "curved",
   autoFitOnLayoutScopeChange = true,
+  autoFocusOnSelection = true,
+  focusSelection = null,
+  focusRequestId = 0,
   onEntitySelect,
 }: TopologyPanelProps) {
   const flowShellRef = useRef<HTMLDivElement | null>(null);
+  const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const autoScopeSignatureRef = useRef<string | null>(null);
-  const lastCollectionClickRef = useRef<{ id: string; ts: number } | null>(null);
+  const lastHandledFocusRequestRef = useRef<number>(0);
+  const pendingScopeFocusRequestRef = useRef<number | null>(null);
+  const scheduledFocusRequestRef = useRef<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>(defaultLayout);
+  const [flowInitTick, setFlowInitTick] = useState(0);
   const [scopeCollectionAddress, setScopeCollectionAddress] = useState<string | null>(null);
+  const layoutMode: LayoutMode = defaultLayout;
   const topologyComponents = useMemo(
     () => (graphSnapshot ? classifyComponents(graphSnapshot) : null),
     [graphSnapshot]
@@ -1817,13 +1867,28 @@ export function TopologyPanel({
     }
     return streamByAddress;
   }, [topologyComponents]);
+  const unitAddressByEndpointId = useMemo(() => {
+    const index = new Map<string, string>();
+    if (!topologyComponents) {
+      return index;
+    }
+    for (const unit of topologyComponents.units.values()) {
+      for (const stream of unit.streams) {
+        const endpointId = stream.address.split(":").slice(1).join(":");
+        if (endpointId.length > 0 && !index.has(endpointId)) {
+          index.set(endpointId, unit.address);
+        }
+      }
+    }
+    return index;
+  }, [topologyComponents]);
   const activeScope = scopePath.length > 0 ? scopePath[scopePath.length - 1] : null;
   const flowData = useMemo(
     () =>
       graphSnapshot
-        ? buildFlowData(graphSnapshot, layoutMode, activeScope)
+        ? buildFlowData(graphSnapshot, layoutMode, activeScope, edgeConnectorStyle)
         : { nodes: [], edges: [] },
-    [graphSnapshot, layoutMode, activeScope]
+    [graphSnapshot, layoutMode, activeScope, edgeConnectorStyle]
   );
   const openCollectionScope = (nodeId: string) => {
     if (!nodeId.startsWith("collection:")) {
@@ -1915,8 +1980,113 @@ export function TopologyPanel({
   }, [scopeCollectionAddress, topologyComponents]);
 
   useEffect(() => {
-    setLayoutMode(defaultLayout);
-  }, [defaultLayout]);
+    if (!autoFocusOnSelection || !focusSelection || focusRequestId <= 0) {
+      return;
+    }
+    if (lastHandledFocusRequestRef.current === focusRequestId) {
+      return;
+    }
+    const instance = flowInstanceRef.current;
+    if (!instance) {
+      return;
+    }
+
+    const streamEndpointId = focusSelection.kind === "publisher" || focusSelection.kind === "subscriber"
+      ? focusSelection.streamAddress.split(":").slice(1).join(":")
+      : "";
+    const inferredUnitAddress =
+      focusSelection.kind === "publisher" || focusSelection.kind === "subscriber"
+        ? (focusSelection.unitAddress ?? unitAddressByEndpointId.get(streamEndpointId) ?? null)
+        : null;
+    const selectedAddress =
+      focusSelection.kind === "unit"
+        ? focusSelection.unitAddress
+        : focusSelection.kind === "collection"
+          ? focusSelection.collectionAddress
+          : inferredUnitAddress;
+    if (selectedAddress && topologyComponents) {
+      const desiredScope = parentCollectionByAddress.get(selectedAddress) ?? null;
+      if (desiredScope !== activeScope) {
+        pendingScopeFocusRequestRef.current = focusRequestId;
+        setScopeCollectionAddress(desiredScope);
+        return;
+      }
+    }
+
+    let nodeId: string | null = null;
+    if (focusSelection.kind === "unit") {
+      nodeId = `unit:${focusSelection.unitAddress}`;
+    } else if (focusSelection.kind === "collection") {
+      nodeId = `collection:${focusSelection.collectionAddress}`;
+    } else if (focusSelection.kind === "publisher" || focusSelection.kind === "subscriber") {
+      const unitAddress = inferredUnitAddress;
+      if (unitAddress) {
+        nodeId = `unit:${unitAddress}`;
+      } else {
+        const streamAddress = focusSelection.streamAddress;
+        if (streamAddress) {
+          const endpointId = streamAddress.split(":").slice(1).join(":");
+          const topic = streamAddress.split(":")[0] ?? "";
+          const matchedStreamNode = flowData.nodes.find((node) => {
+            if (!node.id.startsWith("stream:")) {
+              return false;
+            }
+            const address = node.id.slice("stream:".length);
+            return address.includes(endpointId) || address.startsWith(topic);
+          });
+          nodeId = matchedStreamNode?.id ?? null;
+        }
+      }
+    }
+    if (!nodeId) {
+      return;
+    }
+    if (!flowData.nodes.some((node) => node.id === nodeId)) {
+      return;
+    }
+    const runFocus = () => {
+      const latestInstance = flowInstanceRef.current;
+      if (!latestInstance) {
+        scheduledFocusRequestRef.current = null;
+        return;
+      }
+      latestInstance.fitView({
+        nodes: [{ id: nodeId }],
+        padding: 0.36,
+        duration: 240,
+        minZoom: 0.35,
+        maxZoom: 1.8,
+      });
+      lastHandledFocusRequestRef.current = focusRequestId;
+      pendingScopeFocusRequestRef.current = null;
+      scheduledFocusRequestRef.current = null;
+    };
+
+    const shouldDefer = pendingScopeFocusRequestRef.current === focusRequestId;
+    if (shouldDefer) {
+      if (scheduledFocusRequestRef.current === focusRequestId) {
+        return;
+      }
+      scheduledFocusRequestRef.current = focusRequestId;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(runFocus);
+      });
+      return;
+    }
+
+    runFocus();
+  }, [
+    activeScope,
+    autoFocusOnSelection,
+    focusRequestId,
+    focusSelection,
+    flowInitTick,
+    flowData.nodes,
+    layoutMode,
+    parentCollectionByAddress,
+    topologyComponents,
+    unitAddressByEndpointId,
+  ]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -1984,17 +2154,6 @@ export function TopologyPanel({
   };
   const toolbarContent = (
     <div className="topology-flow-toolbar">
-        <span className="topology-flow-toolbar__label">Layout</span>
-        <button
-          type="button"
-          className="topology-layout-btn topology-layout-btn--layout-toggle is-active"
-          onClick={() =>
-            setLayoutMode((previous) => (previous === "tb" ? "lr" : "tb"))
-          }
-        >
-          {layoutMode === "tb" ? "↓ Top to Bottom" : "→ Left to Right"}
-        </button>
-        <span className="topology-flow-toolbar__divider" />
         <span className="topology-flow-toolbar__label">Scope</span>
         <button
           type="button"
@@ -2017,22 +2176,30 @@ export function TopologyPanel({
           Up
         </button>
         {scopePath.length > 0 ? (
+          <span className="topology-scope-sep">|</span>
+        ) : null}
+        {scopePath.length > 0 ? (
           <span className="topology-scope-trail">
             {scopePath.map((collectionAddress, index) => {
               const label =
                 topologyComponents?.collections.get(collectionAddress)?.name
                 ?? compactCollectionAddress(collectionAddress);
+              const isLast = index === scopePath.length - 1;
               return (
-                <button
-                  key={`scope-${collectionAddress}`}
-                  type="button"
-                  className={`topology-scope-chip ${
-                    index === scopePath.length - 1 ? "is-active" : ""
-                  }`}
-                  onClick={() => setScopeCollectionAddress(collectionAddress)}
-                >
-                  {label}
-                </button>
+                <span key={`scope-${collectionAddress}`} className="topology-scope-segment">
+                  {isLast ? (
+                    <span className="topology-scope-tail">{label}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="topology-scope-chip"
+                      onClick={() => setScopeCollectionAddress(collectionAddress)}
+                    >
+                      {label}
+                    </button>
+                  )}
+                  {isLast ? null : <span className="topology-scope-slash">/</span>}
+                </span>
               );
             })}
           </span>
@@ -2096,29 +2263,22 @@ export function TopologyPanel({
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
+          onInit={(instance) => {
+            flowInstanceRef.current = instance;
+            setFlowInitTick((previous) => previous + 1);
+          }}
           onPaneClick={() => onEntitySelect?.(null)}
-          onNodeClick={(_, node) => {
+          onNodeClick={(event, node) => {
             if (node.id.startsWith("collection:")) {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest('[data-open-collection="true"]')) {
+                openCollectionScope(node.id);
+                return;
+              }
               onEntitySelect?.({
                 kind: "collection",
                 collectionAddress: node.id.slice("collection:".length),
               });
-              const now = Date.now();
-              const previous = lastCollectionClickRef.current;
-              if (previous && previous.id === node.id && now - previous.ts <= 380) {
-                openCollectionScope(node.id);
-                lastCollectionClickRef.current = null;
-                return;
-              }
-              lastCollectionClickRef.current = { id: node.id, ts: now };
-              return;
-            }
-            selectEntityForNode(node.id);
-          }}
-          onNodeDoubleClick={(_, node) => {
-            if (node.id.startsWith("collection:")) {
-              openCollectionScope(node.id);
-              lastCollectionClickRef.current = null;
               return;
             }
             selectEntityForNode(node.id);

@@ -926,8 +926,6 @@ export function TraceTimingPanel({
               }}
             />
           </label>
-        </div>
-        <div className="timing-trace__controls-right">
           <span className="timing-trace__legend-item is-static">
             <i style={{ background: PUBLISH_COLOR }} />
             Publish Delta
@@ -960,6 +958,8 @@ export function TraceTimingPanel({
             />
             Subscribers
           </button>
+        </div>
+        <div className="timing-trace__controls-right">
           <label className="timing-trace__axis-input timing-trace__axis-input--ymax">
             <span>Y max (ms)</span>
             <input

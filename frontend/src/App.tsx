@@ -35,10 +35,12 @@ type InspectorState =
 type GlobalSettings = {
   snapshotPollSeconds: number;
   topologyDefaultLayout: "tb" | "lr";
+  edgeConnectorStyle: "curved" | "orthogonal" | "smooth";
   showLegend: boolean;
   showMiniMap: boolean;
   traceMetricsPreset: "publish+lease+backpressure" | "publish+backpressure" | "publish";
   autoFitOnLayoutScopeChange: boolean;
+  autoFocusOnInspectorSelection: boolean;
   inspectorWidthPx: number;
 };
 
@@ -52,11 +54,13 @@ type TraceDockState = {
 const SETTINGS_STORAGE_KEY = "ezmsg-dashboard-global-settings";
 const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   snapshotPollSeconds: 2.0,
-  topologyDefaultLayout: "tb",
+  topologyDefaultLayout: "lr",
+  edgeConnectorStyle: "curved",
   showLegend: true,
   showMiniMap: true,
   traceMetricsPreset: "publish+lease+backpressure",
   autoFitOnLayoutScopeChange: true,
+  autoFocusOnInspectorSelection: true,
   inspectorWidthPx: 500,
 };
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
@@ -104,10 +108,17 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
     || raw.traceMetricsPreset === "publish+lease+backpressure"
       ? raw.traceMetricsPreset
       : DEFAULT_GLOBAL_SETTINGS.traceMetricsPreset;
+  const edgeConnectorStyle =
+    raw.edgeConnectorStyle === "orthogonal"
+    || raw.edgeConnectorStyle === "smooth"
+    || raw.edgeConnectorStyle === "curved"
+      ? raw.edgeConnectorStyle
+      : DEFAULT_GLOBAL_SETTINGS.edgeConnectorStyle;
   return {
     snapshotPollSeconds: poll,
     topologyDefaultLayout:
       raw.topologyDefaultLayout === "lr" ? "lr" : "tb",
+    edgeConnectorStyle,
     showLegend:
       typeof raw.showLegend === "boolean"
         ? raw.showLegend
@@ -121,6 +132,10 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       typeof raw.autoFitOnLayoutScopeChange === "boolean"
         ? raw.autoFitOnLayoutScopeChange
         : DEFAULT_GLOBAL_SETTINGS.autoFitOnLayoutScopeChange,
+    autoFocusOnInspectorSelection:
+      typeof raw.autoFocusOnInspectorSelection === "boolean"
+        ? raw.autoFocusOnInspectorSelection
+        : DEFAULT_GLOBAL_SETTINGS.autoFocusOnInspectorSelection,
     inspectorWidthPx,
   };
 }
@@ -162,10 +177,13 @@ export function App() {
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [profilingFocusActionId, setProfilingFocusActionId] = useState(0);
   const [settingsFocusActionId, setSettingsFocusActionId] = useState(0);
-  const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(false);
+  const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(true);
   const [traceDockState, setTraceDockState] = useState<TraceDockState>(null);
   const [traceCloseSignal, setTraceCloseSignal] = useState(0);
   const [traceDockHost, setTraceDockHost] = useState<HTMLDivElement | null>(null);
+  const [topologyFocusSelection, setTopologyFocusSelection] =
+    useState<TopologyEntitySelection | null>(null);
+  const [topologyFocusRequestId, setTopologyFocusRequestId] = useState(0);
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -250,6 +268,7 @@ export function App() {
   );
 
   const handleTopologySelection = (selection: TopologyEntitySelection | null) => {
+    setTopologyFocusSelection(null);
     if (!selection) {
       setInspector(null);
       return;
@@ -297,6 +316,11 @@ export function App() {
     setInspector(null);
   };
 
+  const requestTopologyFocus = (selection: TopologyEntitySelection | null) => {
+    setTopologyFocusSelection(selection);
+    setTopologyFocusRequestId((previous) => previous + 1);
+  };
+
   const handleCloseTraceDock = () => {
     setTraceCloseSignal((previous) => previous + 1);
     setTraceDockState(null);
@@ -331,14 +355,39 @@ export function App() {
                   inspector?.kind === "subscriber" ? inspector.endpointId : null
                 }
                   focusActionId={profilingFocusActionId}
-                  hideFilters={
-                    inspector?.kind === "publisher"
-                    || inspector?.kind === "subscriber"
-                  }
+                  hideFilters={false}
                   defaultTraceMetrics={traceMetrics}
                   traceDockHost={traceDockHost}
                   onTraceDockStateChange={setTraceDockState}
                   traceCloseSignal={traceCloseSignal}
+                  onPublisherSelect={(selection) => {
+                    setProfilingFocusActionId((previous) => previous + 1);
+                    setInspector({
+                      kind: "publisher",
+                      unitAddress: selection.unitAddress,
+                      endpointId: selection.endpointId,
+                      topic: selection.topic,
+                    });
+                    requestTopologyFocus({
+                      kind: "publisher",
+                      streamAddress: `${selection.topic}:${selection.endpointId}`,
+                      unitAddress: selection.unitAddress,
+                    });
+                  }}
+                  onSubscriberSelect={(selection) => {
+                    setProfilingFocusActionId((previous) => previous + 1);
+                    setInspector({
+                      kind: "subscriber",
+                      unitAddress: selection.unitAddress,
+                      endpointId: selection.endpointId,
+                      topic: selection.topic,
+                    });
+                    requestTopologyFocus({
+                      kind: "subscriber",
+                      streamAddress: `${selection.topic}:${selection.endpointId}`,
+                      unitAddress: selection.unitAddress,
+                    });
+                  }}
                 />
               </div>
           </section>
@@ -367,6 +416,28 @@ export function App() {
                         : null
                   }
                   focusActionId={settingsFocusActionId}
+                  onComponentSelect={(address) => {
+                    if (!address) {
+                      setInspector(null);
+                      return;
+                    }
+                    const componentType =
+                      snapshot?.settings?.[address]?.component_type ?? "";
+                    const isCollection = componentType
+                      .toLowerCase()
+                      .includes("collection");
+                    setSettingsFocusActionId((previous) => previous + 1);
+                    setInspector(
+                      isCollection
+                        ? { kind: "collection", collectionAddress: address }
+                        : { kind: "unit", unitAddress: address }
+                    );
+                    requestTopologyFocus(
+                      isCollection
+                        ? { kind: "collection", collectionAddress: address }
+                        : { kind: "unit", unitAddress: address }
+                    );
+                  }}
                 />
               </div>
             )}
@@ -383,7 +454,11 @@ export function App() {
             showLegend={globalSettings.showLegend}
             showMiniMap={globalSettings.showMiniMap}
             defaultLayout={globalSettings.topologyDefaultLayout}
+            edgeConnectorStyle={globalSettings.edgeConnectorStyle}
             autoFitOnLayoutScopeChange={globalSettings.autoFitOnLayoutScopeChange}
+            autoFocusOnSelection={globalSettings.autoFocusOnInspectorSelection}
+            focusSelection={topologyFocusSelection}
+            focusRequestId={topologyFocusRequestId}
             onEntitySelect={handleTopologySelection}
           />
 
@@ -396,15 +471,6 @@ export function App() {
             <img src={ezmsgLogo} alt="ezmsg" className="dashboard-brand-logo-image" />
             <div className="dashboard-brand-card__title-row">
               <h1 className="mono">ezmsg-dashboard</h1>
-              <button
-                type="button"
-                className="topology-layout-btn dashboard-gear-btn"
-                onClick={() => setGlobalSettingsOpen(true)}
-                title="Global Settings"
-                aria-label="Global Settings"
-              >
-                ⚙
-              </button>
             </div>
             <p className="dashboard-brand-card__meta-line">
               <span className="mono">GraphServer {graphAddress}</span>
@@ -412,6 +478,15 @@ export function App() {
               <span className="mono">Snapshot {snapshotTimeLabel}</span>
             </p>
           </section>
+          <button
+            type="button"
+            className="topology-layout-btn dashboard-floating-gear-btn"
+            onClick={() => setGlobalSettingsOpen(true)}
+            title="Global Settings"
+            aria-label="Global Settings"
+          >
+            ⚙
+          </button>
 
           {globalSettingsOpen ? (
             <div
@@ -470,6 +545,26 @@ export function App() {
                     </select>
                   </label>
                   <label className="dashboard-setting-row">
+                    <span>Edge Connector Type</span>
+                    <select
+                      value={globalSettings.edgeConnectorStyle}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          edgeConnectorStyle:
+                            event.target.value === "orthogonal"
+                            || event.target.value === "smooth"
+                              ? event.target.value
+                              : "curved",
+                        }))
+                      }
+                    >
+                      <option value="curved">Curved (Bezier)</option>
+                      <option value="orthogonal">Orthogonal (Step)</option>
+                      <option value="smooth">Smooth Step</option>
+                    </select>
+                  </label>
+                  <label className="dashboard-setting-row">
                     <span>Default Trace Metrics</span>
                     <select
                       value={globalSettings.traceMetricsPreset}
@@ -493,19 +588,6 @@ export function App() {
                       <option value="publish">Publish Only</option>
                     </select>
                   </label>
-                  <label className="dashboard-setting-toggle">
-                    <input
-                      type="checkbox"
-                      checked={globalSettings.autoFitOnLayoutScopeChange}
-                      onChange={(event) =>
-                        setGlobalSettings((previous) => ({
-                          ...previous,
-                          autoFitOnLayoutScopeChange: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Auto-fit on layout/scope change</span>
-                  </label>
                   <label className="dashboard-setting-row">
                     <span>Inspector Width (px)</span>
                     <input
@@ -525,6 +607,32 @@ export function App() {
                         }));
                       }}
                     />
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.autoFocusOnInspectorSelection}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          autoFocusOnInspectorSelection: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Auto-focus topology on inspector selection</span>
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.autoFitOnLayoutScopeChange}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          autoFitOnLayoutScopeChange: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Auto-fit on layout/scope change</span>
                   </label>
                   <label className="dashboard-setting-toggle">
                     <input

@@ -17,6 +17,7 @@ type SettingsPanelProps = {
   ) => Promise<SettingsFieldPatchResponse>;
   focusComponentAddress?: string | null;
   focusActionId?: number;
+  onComponentSelect?: (address: string | null) => void;
 };
 
 type EditorMode = "boolean" | "number" | "choice" | "text" | "json";
@@ -138,6 +139,7 @@ export function SettingsPanel({
   patchSettingField,
   focusComponentAddress = null,
   focusActionId = 0,
+  onComponentSelect,
 }: SettingsPanelProps) {
   const allComponentAddresses = useMemo(
     () => (settings ? Object.keys(settings).sort() : []),
@@ -251,7 +253,7 @@ export function SettingsPanel({
     setPendingByField({});
     setErrorByField({});
     setSuccessByField({});
-  }, [selectedComponent, fieldRows]);
+  }, [selectedComponent]);
 
   const parseRowDraft = (row: FieldRow): unknown => {
     const draftValue = fieldDrafts[row.path];
@@ -362,7 +364,11 @@ export function SettingsPanel({
                   aria-expanded={expanded}
                   onClick={() =>
                     setSelectedComponent((previous) =>
-                      previous === address ? null : address
+                      {
+                        const next = previous === address ? null : address;
+                        onComponentSelect?.(next);
+                        return next;
+                      }
                     )
                   }
                   >

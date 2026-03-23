@@ -35,6 +35,16 @@ type ProfilingPanelProps = {
     status: "capturing" | "stopped" | "applying";
   } | null) => void;
   traceCloseSignal?: number;
+  onPublisherSelect?: (selection: {
+    unitAddress: string | null;
+    endpointId: string;
+    topic: string;
+  }) => void;
+  onSubscriberSelect?: (selection: {
+    unitAddress: string | null;
+    endpointId: string;
+    topic: string;
+  }) => void;
 };
 
 type Severity = "none" | "low" | "medium" | "high";
@@ -50,6 +60,7 @@ type SubscriberContributor = {
   attributableBackpressureNsWindow: number;
   attributableBackpressureEvents: number;
   userSpanNsAvgWindow: number;
+  unitAddress: string | null;
 };
 
 type PublisherRow = {
@@ -68,6 +79,7 @@ type PublisherRow = {
   backpressureNsWindow: number;
   severity: Severity;
   contributors: SubscriberContributor[];
+  unitAddress: string | null;
 };
 
 type PublisherTraceSample = {
@@ -169,6 +181,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function endpointIdFromStreamAddress(streamAddress: string): string | null {
+  const parts = streamAddress.split(":");
+  if (parts.length < 2) {
+    return null;
+  }
+  const endpointId = parts.slice(1).join(":");
+  return endpointId.length > 0 ? endpointId : null;
+}
+
 function extractTraceSamples(
   event: ProfilingTraceEnvelope | null
 ): PublisherTraceSample[] {
@@ -228,7 +249,8 @@ function extractTraceSamples(
 
 function toContributor(
   process: ProcessProfilingSnapshotPayload,
-  subscriber: SubscriberProfilingSnapshot
+  subscriber: SubscriberProfilingSnapshot,
+  endpointOwnerById: Map<string, string>
 ): SubscriberContributor {
   return {
     id: `${process.process_id}:${subscriber.endpoint_id}`,
@@ -245,6 +267,7 @@ function toContributor(
       subscriber.attributable_backpressure_events_total
     ),
     userSpanNsAvgWindow: toNumber(subscriber.user_span_ns_avg_window),
+    unitAddress: endpointOwnerById.get(subscriber.endpoint_id) ?? null,
   };
 }
 
@@ -295,7 +318,8 @@ function toPublisherRow(
   process: ProcessProfilingSnapshotPayload,
   publisher: PublisherProfilingSnapshot,
   allSubscribers: SubscriberContributor[],
-  graphSnapshot: GraphSnapshotPayload | null
+  graphSnapshot: GraphSnapshotPayload | null,
+  endpointOwnerById: Map<string, string>
 ): PublisherRow {
   const backpressureNsWindow = toNumber(publisher.backpressure_wait_ns_window);
   const severity = backpressureSeverity(backpressureNsWindow);
@@ -326,6 +350,7 @@ function toPublisherRow(
       allSubscribers,
       graphSnapshot
     ),
+    unitAddress: endpointOwnerById.get(publisher.endpoint_id) ?? null,
   };
 }
 
@@ -347,6 +372,8 @@ export function ProfilingPanel({
   traceDockHost = null,
   onTraceDockStateChange,
   traceCloseSignal = 0,
+  onPublisherSelect,
+  onSubscriberSelect,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
   const [hideZeroContributorRows, setHideZeroContributorRows] = useState(false);
@@ -367,61 +394,71 @@ export function ProfilingPanel({
   const [expandedContributorEndpointByRowId, setExpandedContributorEndpointByRowId] =
     useState<Record<string, string | null>>({});
   const lastTraceCloseSignalRef = useRef(traceCloseSignal);
+  const lastHandledFocusActionIdRef = useRef<number>(-1);
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
     [profilingSnapshot]
   );
+  const endpointOwnerById = useMemo(() => {
+    const index = new Map<string, string>();
+    if (!graphSnapshot) {
+      return index;
+    }
+    for (const session of Object.values(graphSnapshot.sessions)) {
+      const metadata = isRecord(session.metadata) ? session.metadata : null;
+      const components =
+        metadata && isRecord(metadata.components) ? metadata.components : null;
+      if (!components) {
+        continue;
+      }
+      for (const [componentAddress, rawComponent] of Object.entries(components)) {
+        if (!isRecord(rawComponent) || !isRecord(rawComponent.streams)) {
+          continue;
+        }
+        for (const stream of Object.values(rawComponent.streams)) {
+          if (!isRecord(stream) || typeof stream.address !== "string") {
+            continue;
+          }
+          const endpointId = endpointIdFromStreamAddress(stream.address);
+          if (endpointId && !index.has(endpointId)) {
+            index.set(endpointId, componentAddress);
+          }
+        }
+      }
+    }
+    return index;
+  }, [graphSnapshot]);
 
   const publisherRows = useMemo(() => {
     const allSubscribers: SubscriberContributor[] = [];
     for (const process of processRows) {
       for (const subscriber of Object.values(process.subscribers)) {
-        allSubscribers.push(toContributor(process, subscriber));
+        allSubscribers.push(toContributor(process, subscriber, endpointOwnerById));
       }
     }
 
     const rows: PublisherRow[] = [];
     for (const process of processRows) {
       for (const publisher of Object.values(process.publishers)) {
-        rows.push(toPublisherRow(process, publisher, allSubscribers, graphSnapshot));
+        rows.push(
+          toPublisherRow(
+            process,
+            publisher,
+            allSubscribers,
+            graphSnapshot,
+            endpointOwnerById
+          )
+        );
       }
     }
 
     return rows.sort((a, b) => b.backpressureNsWindow - a.backpressureNsWindow);
-  }, [graphSnapshot, processRows]);
-
-  const focusedRows = useMemo(() => {
-    if (focusPublisherEndpointId) {
-      return publisherRows.filter((row) => {
-        if (row.endpointId === focusPublisherEndpointId) {
-          return true;
-        }
-        if (!focusPublisherTopic) {
-          return false;
-        }
-        return row.topic === focusPublisherTopic;
-      });
-    }
-    if (focusSubscriberEndpointId) {
-      return publisherRows.filter((row) =>
-        row.contributors.some(
-          (contributor) =>
-            contributor.endpointId === focusSubscriberEndpointId
-        )
-      );
-    }
-    return publisherRows;
-  }, [
-    focusPublisherEndpointId,
-    focusPublisherTopic,
-    focusSubscriberEndpointId,
-    publisherRows,
-  ]);
+  }, [endpointOwnerById, graphSnapshot, processRows]);
 
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
-    return focusedRows.filter((row) => {
+    return publisherRows.filter((row) => {
       if (query.length === 0) {
         return true;
       }
@@ -431,7 +468,7 @@ export function ProfilingPanel({
         || row.processId.toLowerCase().includes(query)
       );
     });
-  }, [focusedRows, searchText]);
+  }, [publisherRows, searchText]);
 
   const rowById = useMemo(
     () => new Map(publisherRows.map((row) => [row.id, row])),
@@ -439,6 +476,10 @@ export function ProfilingPanel({
   );
 
   useEffect(() => {
+    if (focusActionId === lastHandledFocusActionIdRef.current) {
+      return;
+    }
+    lastHandledFocusActionIdRef.current = focusActionId;
     if (focusPublisherEndpointId) {
       const matchedIds = publisherRows
         .filter((row) => {
@@ -451,12 +492,7 @@ export function ProfilingPanel({
           return row.topic === focusPublisherTopic;
         })
         .map((row) => row.id);
-      setExpandedIds((previous) => {
-        const same =
-          previous.length === matchedIds.length
-          && matchedIds.every((id) => previous.includes(id));
-        return same ? [] : matchedIds;
-      });
+      setExpandedIds(matchedIds);
       setExpandedContributorEndpointByRowId({});
       return;
     }
@@ -633,6 +669,13 @@ export function ProfilingPanel({
         ? previous.filter((existingId) => existingId !== row.id)
         : [...previous, row.id]
     );
+    if (nextExpanded) {
+      onPublisherSelect?.({
+        unitAddress: row.unitAddress,
+        endpointId: row.endpointId,
+        topic: row.topic,
+      });
+    }
     if (!nextExpanded) {
       setExpandedContributorEndpointByRowId((previous) => ({
         ...previous,
@@ -647,8 +690,7 @@ export function ProfilingPanel({
   const toggleTraceCapture = (row: PublisherRow, nextOpen: boolean) => {
     void applyTraceControl(row, nextOpen);
   };
-  const controlsHidden =
-    hideFilters || Boolean(focusPublisherEndpointId) || Boolean(focusSubscriberEndpointId);
+  const controlsHidden = hideFilters;
   const activeTraceRowId = activeTraceRowIds[0] ?? null;
   const activeTraceRow = activeTraceRowId ? rowById.get(activeTraceRowId) ?? null : null;
   const activeTraceSamples =
@@ -760,24 +802,30 @@ export function ProfilingPanel({
 
   return (
     <Panel>
-      {controlsHidden ? null : (
-        <div className="settings-search">
-          <input
-            type="search"
-            placeholder="Search topic, endpoint, or process"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-          />
-        </div>
-      )}
-
-      {filteredRows.length === 0 ? (
+      {publisherRows.length === 0 ? (
         <div className="panel-section">
-          <p className="muted">No publishers match the current filter.</p>
+          <p className="muted">No publishers snapshot entries available.</p>
         </div>
       ) : (
-        <div className="publisher-list">
-          {filteredRows.map((row) => {
+        <>
+          {controlsHidden ? null : (
+            <div className="settings-search">
+              <input
+                type="search"
+                placeholder="Search topic, endpoint, or process"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+              />
+            </div>
+          )}
+
+          {filteredRows.length === 0 ? (
+            <div className="panel-section">
+              <p className="muted">No publishers match the current filter.</p>
+            </div>
+          ) : (
+            <div className="publisher-list">
+              {filteredRows.map((row) => {
             const expanded = expandedIds.includes(row.id);
             const traceOpen = activeTraceRowIds.includes(row.id);
             const traceBusy = Boolean(traceControlPending[row.id]);
@@ -898,7 +946,9 @@ export function ProfilingPanel({
                             setHideZeroContributorRows((previous) => !previous)
                           }
                         >
-                          {hideZeroContributorRows ? "Hide Zero BP: On" : "Hide Zero BP: Off"}
+                          {hideZeroContributorRows
+                            ? "Hide Zero Backpressure: On"
+                            : "Hide Zero Backpressure: Off"}
                         </button>
                       </div>
                       {row.contributors.length === 0 ? (
@@ -929,16 +979,24 @@ export function ProfilingPanel({
                                 <button
                                   type="button"
                                   className="subscriber-item__summary"
-                                  onClick={() =>
+                                  onClick={() => {
+                                    const nextEndpointId = contributorExpanded
+                                      ? null
+                                      : contributor.endpointId;
                                     setExpandedContributorEndpointByRowId(
                                       (previous) => ({
                                         ...previous,
-                                        [row.id]: contributorExpanded
-                                          ? null
-                                          : contributor.endpointId,
+                                        [row.id]: nextEndpointId,
                                       })
-                                    )
-                                  }
+                                    );
+                                    if (nextEndpointId) {
+                                      onSubscriberSelect?.({
+                                        unitAddress: contributor.unitAddress,
+                                        endpointId: contributor.endpointId,
+                                        topic: contributor.topic,
+                                      });
+                                    }
+                                  }}
                                 >
                                   <div className="subscriber-item__identity">
                                     <p
@@ -1024,8 +1082,10 @@ export function ProfilingPanel({
                 ) : null}
               </article>
             );
-          })}
-        </div>
+              })}
+            </div>
+          )}
+        </>
       )}
       {traceDockContent}
     </Panel>
