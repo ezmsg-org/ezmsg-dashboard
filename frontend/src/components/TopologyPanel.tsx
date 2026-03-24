@@ -13,7 +13,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import { Panel } from "./Panel";
-import type { GraphSnapshotPayload } from "../types/api";
+import type { GraphSnapshotPayload, ProfilingSnapshotPayload } from "../types/api";
 import type { TopologyChangedEnvelope } from "../types/events";
 
 export type TopologyEntitySelection =
@@ -38,6 +38,7 @@ export type TopologyEntitySelection =
 
 type TopologyPanelProps = {
   graphSnapshot: GraphSnapshotPayload | null;
+  profilingSnapshot?: ProfilingSnapshotPayload | null;
   recentEvents: TopologyChangedEnvelope[];
   immersive?: boolean;
   showLegend?: boolean;
@@ -55,6 +56,7 @@ type LayoutMode = "tb" | "lr";
 type AnyRecord = Record<string, unknown>;
 
 type StreamDirection = "input" | "output" | "unknown";
+type FlowData = { nodes: Node[]; edges: Edge[] };
 
 type UnitComponent = {
   address: string;
@@ -637,6 +639,80 @@ function collectionScopePath(
   return path.reverse();
 }
 
+function collectionHasVisibleChildren(
+  collectionAddress: string,
+  units: Map<string, UnitComponent>,
+  collections: Map<string, CollectionComponent>
+): boolean {
+  const collection = collections.get(collectionAddress);
+  if (!collection) {
+    return false;
+  }
+  return collection.children.some(
+    (address) => units.has(address) || collections.has(address)
+  );
+}
+
+function isFinitePosition(value: unknown): value is { x: number; y: number } {
+  return (
+    typeof value === "object"
+    && value !== null
+    && typeof (value as { x?: unknown }).x === "number"
+    && Number.isFinite((value as { x: number }).x)
+    && typeof (value as { y?: unknown }).y === "number"
+    && Number.isFinite((value as { y: number }).y)
+  );
+}
+
+function validateFlowData(flow: FlowData): boolean {
+  if (!Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
+    return false;
+  }
+  const nodeIds = new Set<string>();
+  for (const node of flow.nodes) {
+    if (!node || typeof node.id !== "string" || node.id.length === 0) {
+      return false;
+    }
+    if (nodeIds.has(node.id)) {
+      return false;
+    }
+    nodeIds.add(node.id);
+    if (!isFinitePosition(node.position)) {
+      return false;
+    }
+  }
+  for (const node of flow.nodes) {
+    if (typeof node.parentNode === "string" && !nodeIds.has(node.parentNode)) {
+      return false;
+    }
+  }
+  for (const edge of flow.edges) {
+    if (!edge || typeof edge.source !== "string" || typeof edge.target !== "string") {
+      return false;
+    }
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sourceStreamAddressFromEdgeId(edgeId: string): string | null {
+  if (!edgeId.startsWith("edge:")) {
+    return null;
+  }
+  if (edgeId.startsWith("edge:internal:")) {
+    return null;
+  }
+  const payload = edgeId.slice("edge:".length);
+  const arrowIndex = payload.indexOf("->");
+  if (arrowIndex <= 0) {
+    return null;
+  }
+  const source = payload.slice(0, arrowIndex);
+  return source.length > 0 ? source : null;
+}
+
 function buildFlowData(
   graphSnapshot: GraphSnapshotPayload,
   layoutMode: LayoutMode,
@@ -768,6 +844,7 @@ function buildFlowData(
   const relevantRawEdges = rawEdges.filter(
     (edge) => ownedStreams.has(edge.from) || ownedStreams.has(edge.to)
   );
+
   const relevantStreams = new Set<string>(ownedStreams);
   for (const edge of relevantRawEdges) {
     relevantStreams.add(edge.from);
@@ -1811,6 +1888,7 @@ function buildFlowData(
 
 export function TopologyPanel({
   graphSnapshot,
+  profilingSnapshot = null,
   recentEvents,
   immersive = false,
   showLegend = true,
@@ -1825,14 +1903,53 @@ export function TopologyPanel({
 }: TopologyPanelProps) {
   const flowShellRef = useRef<HTMLDivElement | null>(null);
   const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const flowCacheByScopeRef = useRef<Map<string, FlowData>>(new Map());
+  const lastActiveAliasesSignatureRef = useRef<string>("");
   const autoScopeSignatureRef = useRef<string | null>(null);
   const lastHandledFocusRequestRef = useRef<number>(0);
   const pendingScopeFocusRequestRef = useRef<number | null>(null);
   const scheduledFocusRequestRef = useRef<number | null>(null);
+  const previousPublisherTotalsRef = useRef<Map<string, number>>(new Map());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [flowInitTick, setFlowInitTick] = useState(0);
   const [scopeCollectionAddress, setScopeCollectionAddress] = useState<string | null>(null);
+  const [activePublisherStreamAliases, setActivePublisherStreamAliases] = useState<string[]>([]);
   const layoutMode: LayoutMode = defaultLayout;
+
+  useEffect(() => {
+    if (!profilingSnapshot) {
+      previousPublisherTotalsRef.current = new Map();
+      setActivePublisherStreamAliases([]);
+      return;
+    }
+    const previousTotals = previousPublisherTotalsRef.current;
+    const nextTotals = new Map<string, number>();
+    const activeAliases = new Set<string>();
+    for (const process of Object.values(profilingSnapshot)) {
+      const processId = process.process_id;
+      for (const publisher of Object.values(process.publishers)) {
+        const total =
+          typeof publisher.messages_published_total === "number"
+          && Number.isFinite(publisher.messages_published_total)
+            ? publisher.messages_published_total
+            : 0;
+        const key = `${processId}:${publisher.endpoint_id}`;
+        const previous = previousTotals.get(key);
+        if (previous !== undefined && total > previous) {
+          activeAliases.add(`${publisher.topic}:${publisher.endpoint_id}`);
+        }
+        nextTotals.set(key, total);
+      }
+    }
+    previousPublisherTotalsRef.current = nextTotals;
+    const nextAliases = Array.from(activeAliases).sort();
+    const nextSignature = nextAliases.join("|");
+    if (nextSignature === lastActiveAliasesSignatureRef.current) {
+      return;
+    }
+    lastActiveAliasesSignatureRef.current = nextSignature;
+    setActivePublisherStreamAliases(nextAliases);
+  }, [profilingSnapshot]);
   const topologyComponents = useMemo(
     () => (graphSnapshot ? classifyComponents(graphSnapshot) : null),
     [graphSnapshot]
@@ -1882,14 +1999,213 @@ export function TopologyPanel({
     }
     return index;
   }, [topologyComponents]);
+  const canonicalStreamByAlias = useMemo(() => {
+    const canonicalByAlias = new Map<string, string>();
+    if (!topologyComponents) {
+      return canonicalByAlias;
+    }
+    for (const unit of topologyComponents.units.values()) {
+      for (const stream of unit.streams) {
+        canonicalByAlias.set(stream.address, stream.address);
+        canonicalByAlias.set(streamAddressWithoutEndpoint(stream.address), stream.address);
+      }
+    }
+    for (const collection of topologyComponents.collections.values()) {
+      for (const stream of collection.streams) {
+        canonicalByAlias.set(stream.address, stream.address);
+        canonicalByAlias.set(streamAddressWithoutEndpoint(stream.address), stream.address);
+      }
+    }
+    return canonicalByAlias;
+  }, [topologyComponents]);
+  const activeCanonicalSourceStreams = useMemo(() => {
+    if (!topologyComponents) {
+      return new Set<string>();
+    }
+    const active = new Set<string>();
+    for (const alias of activePublisherStreamAliases) {
+      const canonical =
+        canonicalStreamByAlias.get(alias)
+        ?? canonicalStreamByAlias.get(streamAddressWithoutEndpoint(alias))
+        ?? null;
+      if (!canonical) {
+        continue;
+      }
+      active.add(canonical);
+      active.add(streamAddressWithoutEndpoint(canonical));
+    }
+    return active;
+  }, [activePublisherStreamAliases, canonicalStreamByAlias, topologyComponents]);
+  const activeReachableSourceStreams = useMemo(() => {
+    if (!graphSnapshot || activeCanonicalSourceStreams.size === 0) {
+      return activeCanonicalSourceStreams;
+    }
+    const adjacency = new Map<string, string[]>();
+    for (const [fromRaw, toList] of Object.entries(graphSnapshot.graph)) {
+      const fromCanonical =
+        canonicalStreamByAlias.get(fromRaw)
+        ?? canonicalStreamByAlias.get(streamAddressWithoutEndpoint(fromRaw))
+        ?? fromRaw;
+      const row = adjacency.get(fromCanonical) ?? [];
+      for (const toRaw of toList) {
+        const toCanonical =
+          canonicalStreamByAlias.get(toRaw)
+          ?? canonicalStreamByAlias.get(streamAddressWithoutEndpoint(toRaw))
+          ?? toRaw;
+        row.push(toCanonical);
+      }
+      adjacency.set(fromCanonical, row);
+    }
+
+    const visited = new Set<string>();
+    const queue = Array.from(activeCanonicalSourceStreams);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) {
+        continue;
+      }
+      visited.add(current);
+      const downstream = adjacency.get(current) ?? [];
+      for (const next of downstream) {
+        if (!visited.has(next)) {
+          queue.push(next);
+        }
+      }
+    }
+
+    const expanded = new Set<string>();
+    for (const stream of visited) {
+      expanded.add(stream);
+      expanded.add(streamAddressWithoutEndpoint(stream));
+    }
+    return expanded;
+  }, [activeCanonicalSourceStreams, canonicalStreamByAlias, graphSnapshot]);
   const activeScope = scopePath.length > 0 ? scopePath[scopePath.length - 1] : null;
-  const flowData = useMemo(
+  const flowScopeKey = `${layoutMode}:${activeScope ?? "root"}`;
+  const computedFlowData = useMemo(
     () =>
       graphSnapshot
-        ? buildFlowData(graphSnapshot, layoutMode, activeScope, edgeConnectorStyle)
+        ? buildFlowData(
+            graphSnapshot,
+            layoutMode,
+            activeScope,
+            edgeConnectorStyle
+          )
         : { nodes: [], edges: [] },
     [graphSnapshot, layoutMode, activeScope, edgeConnectorStyle]
   );
+  const flowData = useMemo(() => {
+    if (computedFlowData.nodes.length > 0 && validateFlowData(computedFlowData)) {
+      flowCacheByScopeRef.current.set(flowScopeKey, computedFlowData);
+      return computedFlowData;
+    }
+
+    const cached = flowCacheByScopeRef.current.get(flowScopeKey);
+    if (cached && cached.nodes.length > 0) {
+      return cached;
+    }
+    return computedFlowData;
+  }, [computedFlowData, flowScopeKey]);
+  const renderedFlowData = useMemo((): FlowData => {
+    if (activeReachableSourceStreams.size === 0 || flowData.edges.length === 0) {
+      return flowData;
+    }
+
+    const isStreamActive = (streamAddress: string | null): boolean => {
+      if (!streamAddress) {
+        return false;
+      }
+      const normalized = streamAddressWithoutEndpoint(streamAddress);
+      return (
+        activeReachableSourceStreams.has(streamAddress)
+        || activeReachableSourceStreams.has(normalized)
+      );
+    };
+
+    const outgoingEdgeIndexesByNode = new Map<string, number[]>();
+    flowData.edges.forEach((edge, index) => {
+      const existing = outgoingEdgeIndexesByNode.get(edge.source);
+      if (existing) {
+        existing.push(index);
+      } else {
+        outgoingEdgeIndexesByNode.set(edge.source, [index]);
+      }
+    });
+
+    const activeEdgeIndexes = new Set<number>();
+    const activeNodeIds = new Set<string>();
+    const queue: string[] = [];
+    const enqueueNode = (nodeId: string) => {
+      if (activeNodeIds.has(nodeId)) {
+        return;
+      }
+      activeNodeIds.add(nodeId);
+      queue.push(nodeId);
+    };
+
+    flowData.edges.forEach((edge, index) => {
+      const sourceFromNode = edge.source.startsWith("stream:")
+        ? edge.source.slice("stream:".length)
+        : null;
+      const sourceFromEdgeId = sourceStreamAddressFromEdgeId(edge.id);
+      if (!isStreamActive(sourceFromNode ?? sourceFromEdgeId)) {
+        return;
+      }
+      activeEdgeIndexes.add(index);
+      enqueueNode(edge.target);
+    });
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      if (!nodeId) {
+        continue;
+      }
+      const outgoing = outgoingEdgeIndexesByNode.get(nodeId);
+      if (!outgoing || outgoing.length === 0) {
+        continue;
+      }
+      for (const edgeIndex of outgoing) {
+        if (activeEdgeIndexes.has(edgeIndex)) {
+          continue;
+        }
+        activeEdgeIndexes.add(edgeIndex);
+        enqueueNode(flowData.edges[edgeIndex].target);
+      }
+    }
+
+    if (activeEdgeIndexes.size === 0) {
+      return flowData;
+    }
+
+    const edges = flowData.edges.map((edge, index) => {
+      if (!activeEdgeIndexes.has(index)) {
+        return edge;
+      }
+      const markerEnd =
+        typeof edge.markerEnd === "object" && edge.markerEnd !== null
+          ? { ...edge.markerEnd, color: "#2563eb" }
+          : {
+              type: MarkerType.ArrowClosed,
+              width: 12,
+              height: 12,
+              color: "#2563eb",
+            };
+      return {
+        ...edge,
+        animated: true,
+        markerEnd,
+        style: {
+          ...(edge.style ?? {}),
+          stroke: "#2563eb",
+          strokeWidth: 1.7,
+        },
+      };
+    });
+    return {
+      nodes: flowData.nodes,
+      edges,
+    };
+  }, [activeReachableSourceStreams, flowData]);
   const openCollectionScope = (nodeId: string) => {
     if (!nodeId.startsWith("collection:")) {
       return;
@@ -1961,7 +2277,16 @@ export function TopologyPanel({
       topologyComponents.collections,
       null
     );
-    const signature = rootAddresses.slice().sort().join("|");
+    const onlyAddress = rootAddresses.length === 1 ? rootAddresses[0] : null;
+    const canAutoEnter =
+      onlyAddress !== null
+      && topologyComponents.collections.has(onlyAddress)
+      && collectionHasVisibleChildren(
+        onlyAddress,
+        topologyComponents.units,
+        topologyComponents.collections
+      );
+    const signature = `${rootAddresses.slice().sort().join("|")}::${canAutoEnter ? "ready" : "wait"}`;
     if (autoScopeSignatureRef.current === signature) {
       return;
     }
@@ -1969,14 +2294,24 @@ export function TopologyPanel({
     if (scopeCollectionAddress !== null) {
       return;
     }
-    if (rootAddresses.length !== 1) {
-      return;
-    }
-    const onlyAddress = rootAddresses[0];
-    if (!topologyComponents.collections.has(onlyAddress)) {
+    if (!canAutoEnter || !onlyAddress) {
       return;
     }
     setScopeCollectionAddress(onlyAddress);
+  }, [scopeCollectionAddress, topologyComponents]);
+
+  useEffect(() => {
+    if (!topologyComponents || !scopeCollectionAddress) {
+      return;
+    }
+    const scopedVisible = visibleComponentAddresses(
+      topologyComponents.units,
+      topologyComponents.collections,
+      scopeCollectionAddress
+    );
+    if (scopedVisible.length === 0) {
+      setScopeCollectionAddress(null);
+    }
   }, [scopeCollectionAddress, topologyComponents]);
 
   useEffect(() => {
@@ -2254,8 +2589,8 @@ export function TopologyPanel({
               ? `topology-flow-${layoutMode}-${activeScope ?? "root"}`
               : "topology-flow-stable"
           }
-          nodes={flowData.nodes}
-          edges={flowData.edges}
+          nodes={renderedFlowData.nodes}
+          edges={renderedFlowData.edges}
           fitView
           fitViewOptions={{ padding: 0.18, minZoom: 0.4 }}
           minZoom={0.2}

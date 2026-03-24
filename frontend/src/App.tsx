@@ -449,6 +449,7 @@ export function App() {
         <div className="dashboard-viewport">
           <TopologyPanel
             graphSnapshot={snapshot?.snapshot ?? null}
+            profilingSnapshot={snapshot?.profiling ?? null}
             recentEvents={topologyEvents}
             immersive
             showLegend={globalSettings.showLegend}
