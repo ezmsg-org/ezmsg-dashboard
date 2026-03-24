@@ -64,6 +64,11 @@ type RendererState = {
   leaseCountByEndpoint: Map<string, Uint16Array>;
 };
 
+type TraceCursorPosition = {
+  col: number;
+  cycle: number;
+};
+
 const BG_COLOR = "#0f172a";
 const GRID_COLOR = "#1e293b";
 const AXIS_COLOR = "#334155";
@@ -188,6 +193,85 @@ function colForTimestamp(
   const wrapped = ((delta % windowNs) + windowNs) % windowNs;
   const col = clamp(Math.floor((wrapped / windowNs) * cols), 0, cols - 1);
   return { col, cycle };
+}
+
+function forwardColumnDelta(
+  previous: TraceCursorPosition,
+  next: TraceCursorPosition,
+  cols: number
+): number {
+  return (next.cycle - previous.cycle) * cols + (next.col - previous.col);
+}
+
+function clearColumn(state: RendererState, col: number): void {
+  state.publishBins[col] = Number.NaN;
+  state.publishPeakBins[col] = Number.NaN;
+  state.publishSumBins[col] = 0;
+  state.publishCountBins[col] = 0;
+
+  state.attrBins[col] = Number.NaN;
+
+  for (const leaseBins of state.leaseBinsByEndpoint.values()) {
+    leaseBins[col] = Number.NaN;
+  }
+  for (const leasePeakBins of state.leasePeakBinsByEndpoint.values()) {
+    leasePeakBins[col] = Number.NaN;
+  }
+  for (const leaseSums of state.leaseSumByEndpoint.values()) {
+    leaseSums[col] = 0;
+  }
+  for (const leaseCounts of state.leaseCountByEndpoint.values()) {
+    leaseCounts[col] = 0;
+  }
+}
+
+function clearAllColumns(state: RendererState): void {
+  state.publishBins.fill(Number.NaN);
+  state.publishPeakBins.fill(Number.NaN);
+  state.publishSumBins.fill(0);
+  state.publishCountBins.fill(0);
+
+  state.attrBins.fill(Number.NaN);
+
+  for (const leaseBins of state.leaseBinsByEndpoint.values()) {
+    leaseBins.fill(Number.NaN);
+  }
+  for (const leasePeakBins of state.leasePeakBinsByEndpoint.values()) {
+    leasePeakBins.fill(Number.NaN);
+  }
+  for (const leaseSums of state.leaseSumByEndpoint.values()) {
+    leaseSums.fill(0);
+  }
+  for (const leaseCounts of state.leaseCountByEndpoint.values()) {
+    leaseCounts.fill(0);
+  }
+}
+
+function clearColumnsBetweenPositions(
+  state: RendererState,
+  previous: TraceCursorPosition,
+  next: TraceCursorPosition,
+  changedCols: Set<number>
+): boolean {
+  const delta = forwardColumnDelta(previous, next, state.layout.cols);
+  if (delta <= 1) {
+    return false;
+  }
+
+  if (delta > state.layout.cols) {
+    clearAllColumns(state);
+    for (let col = 0; col < state.layout.cols; col += 1) {
+      changedCols.add(col);
+    }
+    return true;
+  }
+
+  for (let step = 1; step < delta; step += 1) {
+    const col = (previous.col + step) % state.layout.cols;
+    clearColumn(state, col);
+    changedCols.add(col);
+  }
+  return true;
 }
 
 function yFromMs(valueMs: number, yMaxMs: number, layout: PlotLayout): number {
@@ -659,6 +743,15 @@ export function TraceTimingPanel({
     let newestTimestamp = renderer.lastTimestamp;
     let processedAny = false;
     let maxCycleSeen = renderer.lastWipeCycle;
+    let sweepPosition: TraceCursorPosition | null = null;
+    if (renderer.originNs !== null && Number.isFinite(renderer.lastTimestamp)) {
+      sweepPosition = colForTimestamp(
+        renderer.lastTimestamp,
+        renderer.originNs,
+        renderer.windowNs,
+        renderer.layout.cols
+      );
+    }
     const incoming = samples !== lastBatchRef.current ? samples : [];
     if (samples !== lastBatchRef.current) {
       lastBatchRef.current = samples;
@@ -700,6 +793,17 @@ export function TraceTimingPanel({
       const valueMs = toMs(sample.value);
       if (!Number.isFinite(valueMs) || valueMs < 0) {
         continue;
+      }
+
+      const samplePosition = { col, cycle };
+      if (sweepPosition !== null) {
+        const delta = forwardColumnDelta(sweepPosition, samplePosition, renderer.layout.cols);
+        if (delta > 0) {
+          clearColumnsBetweenPositions(renderer, sweepPosition, samplePosition, changedCols);
+          sweepPosition = samplePosition;
+        }
+      } else {
+        sweepPosition = samplePosition;
       }
 
       if (isPublisherMetric) {

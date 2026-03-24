@@ -1246,11 +1246,13 @@ body {
   background: #eff6ff;
   color: #1d4ed8;
   font: inherit;
-  font-size: 0.56rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  padding: 0.08rem 0.44rem;
+  padding: 0.22rem 0.72rem;
+  min-height: 1.7rem;
+  min-width: 5.4rem;
   cursor: pointer;
-  line-height: 1.2;
+  line-height: 1.1;
   white-space: nowrap;
   flex: 0 0 auto;
 }
