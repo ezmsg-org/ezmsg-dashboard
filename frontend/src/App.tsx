@@ -66,6 +66,7 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
 type HealthTone = "ok" | "warn" | "err";
 
+
 function toEpochMillis(timestamp: number): number | null {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return null;
@@ -361,7 +362,6 @@ export function App() {
                   onTraceDockStateChange={setTraceDockState}
                   traceCloseSignal={traceCloseSignal}
                   onPublisherSelect={(selection) => {
-                    setProfilingFocusActionId((previous) => previous + 1);
                     setInspector({
                       kind: "publisher",
                       unitAddress: selection.unitAddress,
@@ -375,7 +375,6 @@ export function App() {
                     });
                   }}
                   onSubscriberSelect={(selection) => {
-                    setProfilingFocusActionId((previous) => previous + 1);
                     setInspector({
                       kind: "subscriber",
                       unitAddress: selection.unitAddress,
@@ -671,7 +670,7 @@ export function App() {
           <section className="trace-dock">
             <header className="trace-dock__header">
               <div className="trace-dock__title-wrap">
-                <h3>Realtime Trace</h3>
+                <h3>Realtime Profiling Trace</h3>
               </div>
               <div className="trace-dock__actions">
                 <span

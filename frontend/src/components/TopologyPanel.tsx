@@ -221,6 +221,17 @@ function streamAddressWithoutEndpoint(address: string): string {
   return address.split(":")[0] ?? address;
 }
 
+function parseTopicAndEndpoint(streamAddress: string): {
+  topic: string;
+  endpointToken: string;
+} {
+  const [topic, ...endpointParts] = streamAddress.split(":");
+  return {
+    topic: topic ?? "",
+    endpointToken: endpointParts.join(":"),
+  };
+}
+
 function belongsToCollection(
   address: string,
   collectionAddress: string,
@@ -1984,7 +1995,7 @@ export function TopologyPanel({
     }
     return streamByAddress;
   }, [topologyComponents]);
-  const unitAddressByEndpointId = useMemo(() => {
+  const componentAddressByEndpointId = useMemo(() => {
     const index = new Map<string, string>();
     if (!topologyComponents) {
       return index;
@@ -1997,7 +2008,93 @@ export function TopologyPanel({
         }
       }
     }
+    for (const collection of topologyComponents.collections.values()) {
+      for (const stream of collection.streams) {
+        const endpointId = stream.address.split(":").slice(1).join(":");
+        if (endpointId.length > 0 && !index.has(endpointId)) {
+          index.set(endpointId, collection.address);
+        }
+      }
+    }
     return index;
+  }, [topologyComponents]);
+  const componentAddressByStreamSelection = useMemo(() => {
+    if (!topologyComponents) {
+      return (kind: "publisher" | "subscriber", streamAddress: string): string | null =>
+        null;
+    }
+
+    const scoreStream = (
+      kind: "publisher" | "subscriber",
+      streamAddress: string,
+      direction: StreamDirection,
+      topic: string,
+      endpointToken: string
+    ): number => {
+      if (kind === "publisher" && direction !== "output") {
+        return -1;
+      }
+      if (kind === "subscriber" && direction !== "input") {
+        return -1;
+      }
+      let score = 0;
+      const baseTopic = streamAddressWithoutEndpoint(streamAddress);
+      if (topic.length > 0) {
+        if (baseTopic === topic) {
+          score += 12;
+        } else if (streamAddress.startsWith(`${topic}:`)) {
+          score += 8;
+        } else if (streamAddress.includes(topic)) {
+          score += 2;
+        }
+      }
+      if (endpointToken.length > 0) {
+        if (streamAddress.endsWith(`:${endpointToken}`)) {
+          score += 14;
+        } else if (streamAddress.includes(endpointToken)) {
+          score += 7;
+        }
+      }
+      return score;
+    };
+
+    return (kind: "publisher" | "subscriber", streamAddress: string): string | null => {
+      const { topic, endpointToken } = parseTopicAndEndpoint(streamAddress);
+      let bestScore = -1;
+      let bestAddress: string | null = null;
+
+      for (const unit of topologyComponents.units.values()) {
+        for (const stream of unit.streams) {
+          const score = scoreStream(
+            kind,
+            stream.address,
+            stream.direction,
+            topic,
+            endpointToken
+          );
+          if (score > bestScore) {
+            bestScore = score;
+            bestAddress = unit.address;
+          }
+        }
+      }
+      for (const collection of topologyComponents.collections.values()) {
+        for (const stream of collection.streams) {
+          const score = scoreStream(
+            kind,
+            stream.address,
+            stream.direction,
+            topic,
+            endpointToken
+          );
+          if (score > bestScore) {
+            bestScore = score;
+            bestAddress = collection.address;
+          }
+        }
+      }
+      return bestScore > 0 ? bestAddress : null;
+    };
   }, [topologyComponents]);
   const canonicalStreamByAlias = useMemo(() => {
     const canonicalByAlias = new Map<string, string>();
@@ -2329,16 +2426,24 @@ export function TopologyPanel({
     const streamEndpointId = focusSelection.kind === "publisher" || focusSelection.kind === "subscriber"
       ? focusSelection.streamAddress.split(":").slice(1).join(":")
       : "";
-    const inferredUnitAddress =
+    const inferredComponentAddress =
       focusSelection.kind === "publisher" || focusSelection.kind === "subscriber"
-        ? (focusSelection.unitAddress ?? unitAddressByEndpointId.get(streamEndpointId) ?? null)
+        ? (
+            focusSelection.unitAddress
+            ?? componentAddressByEndpointId.get(streamEndpointId)
+            ?? componentAddressByStreamSelection(
+              focusSelection.kind,
+              focusSelection.streamAddress
+            )
+            ?? null
+          )
         : null;
     const selectedAddress =
       focusSelection.kind === "unit"
         ? focusSelection.unitAddress
         : focusSelection.kind === "collection"
           ? focusSelection.collectionAddress
-          : inferredUnitAddress;
+          : inferredComponentAddress;
     if (selectedAddress && topologyComponents) {
       const desiredScope = parentCollectionByAddress.get(selectedAddress) ?? null;
       if (desiredScope !== activeScope) {
@@ -2354,9 +2459,14 @@ export function TopologyPanel({
     } else if (focusSelection.kind === "collection") {
       nodeId = `collection:${focusSelection.collectionAddress}`;
     } else if (focusSelection.kind === "publisher" || focusSelection.kind === "subscriber") {
-      const unitAddress = inferredUnitAddress;
-      if (unitAddress) {
-        nodeId = `unit:${unitAddress}`;
+      const componentAddress = inferredComponentAddress;
+      if (componentAddress && topologyComponents?.units.has(componentAddress)) {
+        nodeId = `unit:${componentAddress}`;
+      } else if (
+        componentAddress
+        && topologyComponents?.collections.has(componentAddress)
+      ) {
+        nodeId = `collection:${componentAddress}`;
       } else {
         const streamAddress = focusSelection.streamAddress;
         if (streamAddress) {
@@ -2420,7 +2530,8 @@ export function TopologyPanel({
     layoutMode,
     parentCollectionByAddress,
     topologyComponents,
-    unitAddressByEndpointId,
+    componentAddressByStreamSelection,
+    componentAddressByEndpointId,
   ]);
 
   useEffect(() => {

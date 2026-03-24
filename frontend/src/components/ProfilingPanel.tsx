@@ -664,11 +664,6 @@ export function ProfilingPanel({
 
   const toggleExpanded = (row: PublisherRow) => {
     const nextExpanded = !expandedIds.includes(row.id);
-    setExpandedIds((previous) =>
-      previous.includes(row.id)
-        ? previous.filter((existingId) => existingId !== row.id)
-        : [...previous, row.id]
-    );
     if (nextExpanded) {
       onPublisherSelect?.({
         unitAddress: row.unitAddress,
@@ -676,6 +671,11 @@ export function ProfilingPanel({
         topic: row.topic,
       });
     }
+    setExpandedIds((previous) =>
+      previous.includes(row.id)
+        ? previous.filter((existingId) => existingId !== row.id)
+        : [...previous, row.id]
+    );
     if (!nextExpanded) {
       setExpandedContributorEndpointByRowId((previous) => ({
         ...previous,
@@ -922,7 +922,7 @@ export function ProfilingPanel({
                         {traceOpen ? "■" : "▶"}
                       </span>
                       <span>
-                        {traceBusy ? "Applying..." : traceOpen ? "Stop Trace" : "Start Trace"}
+                        {traceBusy ? "Applying..." : traceOpen ? "Stop Profiling Trace" : "Start Profiling Trace"}
                       </span>
                     </button>
                     <div className="publisher-detail-line">
@@ -983,12 +983,6 @@ export function ProfilingPanel({
                                     const nextEndpointId = contributorExpanded
                                       ? null
                                       : contributor.endpointId;
-                                    setExpandedContributorEndpointByRowId(
-                                      (previous) => ({
-                                        ...previous,
-                                        [row.id]: nextEndpointId,
-                                      })
-                                    );
                                     if (nextEndpointId) {
                                       onSubscriberSelect?.({
                                         unitAddress: contributor.unitAddress,
@@ -996,6 +990,12 @@ export function ProfilingPanel({
                                         topic: contributor.topic,
                                       });
                                     }
+                                    setExpandedContributorEndpointByRowId(
+                                      (previous) => ({
+                                        ...previous,
+                                        [row.id]: nextEndpointId,
+                                      })
+                                    );
                                   }}
                                 >
                                   <div className="subscriber-item__identity">
