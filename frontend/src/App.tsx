@@ -34,6 +34,7 @@ type InspectorState =
 
 type GlobalSettings = {
   snapshotPollSeconds: number;
+  themeMode: "light" | "dark";
   topologyDefaultLayout: "tb" | "lr";
   edgeConnectorStyle: "curved" | "orthogonal" | "smooth";
   showLegend: boolean;
@@ -54,6 +55,7 @@ type TraceDockState = {
 const SETTINGS_STORAGE_KEY = "ezmsg-dashboard-global-settings";
 const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   snapshotPollSeconds: 2.0,
+  themeMode: "light",
   topologyDefaultLayout: "lr",
   edgeConnectorStyle: "curved",
   showLegend: true,
@@ -117,6 +119,7 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       : DEFAULT_GLOBAL_SETTINGS.edgeConnectorStyle;
   return {
     snapshotPollSeconds: poll,
+    themeMode: raw.themeMode === "dark" ? "dark" : "light",
     topologyDefaultLayout:
       raw.topologyDefaultLayout === "lr" ? "lr" : "tb",
     edgeConnectorStyle,
@@ -179,6 +182,7 @@ export function App() {
   const [profilingFocusActionId, setProfilingFocusActionId] = useState(0);
   const [settingsFocusActionId, setSettingsFocusActionId] = useState(0);
   const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(true);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [traceDockState, setTraceDockState] = useState<TraceDockState>(null);
   const [traceCloseSignal, setTraceCloseSignal] = useState(0);
   const [traceDockHost, setTraceDockHost] = useState<HTMLDivElement | null>(null);
@@ -274,6 +278,7 @@ export function App() {
       setInspector(null);
       return;
     }
+    setInspectorCollapsed(false);
     if (selection.kind === "unit") {
       setSettingsSectionCollapsed(false);
       setSettingsFocusActionId((previous) => previous + 1);
@@ -329,7 +334,11 @@ export function App() {
 
   return (
     <div
-      className="dashboard-layout is-comfortable"
+      className={`dashboard-layout is-comfortable ${
+        inspectorCollapsed ? "is-inspector-collapsed " : ""
+      }${
+        globalSettings.themeMode === "dark" ? "is-dark" : ""
+      }`}
       style={dashboardLayoutStyle}
     >
       <aside className="dashboard-inspector dashboard-inspector--pinned">
@@ -453,6 +462,7 @@ export function App() {
             immersive
             showLegend={globalSettings.showLegend}
             showMiniMap={globalSettings.showMiniMap}
+            darkMode={globalSettings.themeMode === "dark"}
             defaultLayout={globalSettings.topologyDefaultLayout}
             edgeConnectorStyle={globalSettings.edgeConnectorStyle}
             autoFitOnLayoutScopeChange={globalSettings.autoFitOnLayoutScopeChange}
@@ -486,6 +496,17 @@ export function App() {
             aria-label="Global Settings"
           >
             ⚙
+          </button>
+          <button
+            type="button"
+            className={`topology-layout-btn dashboard-floating-inspector-btn ${
+              inspectorCollapsed ? "is-collapsed" : ""
+            }`.trim()}
+            onClick={() => setInspectorCollapsed((previous) => !previous)}
+            title={inspectorCollapsed ? "Show Inspector" : "Hide Inspector"}
+            aria-label={inspectorCollapsed ? "Show Inspector" : "Hide Inspector"}
+          >
+            {inspectorCollapsed ? "«" : "»"}
           </button>
 
           {globalSettingsOpen ? (
@@ -527,6 +548,21 @@ export function App() {
                         }));
                       }}
                     />
+                  </label>
+                  <label className="dashboard-setting-row">
+                    <span>Theme</span>
+                    <select
+                      value={globalSettings.themeMode}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          themeMode: event.target.value === "dark" ? "dark" : "light",
+                        }))
+                      }
+                    >
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
                   </label>
                   <label className="dashboard-setting-row">
                     <span>Default Topology Layout</span>

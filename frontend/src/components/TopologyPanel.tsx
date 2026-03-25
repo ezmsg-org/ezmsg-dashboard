@@ -43,6 +43,7 @@ type TopologyPanelProps = {
   immersive?: boolean;
   showLegend?: boolean;
   showMiniMap?: boolean;
+  darkMode?: boolean;
   defaultLayout?: LayoutMode;
   edgeConnectorStyle?: "curved" | "orthogonal" | "smooth";
   autoFitOnLayoutScopeChange?: boolean;
@@ -101,11 +102,11 @@ const STREAM_NODE_HEIGHT = 30;
 const ORPHAN_NODE_WIDTH = 240;
 const COLLECTION_NODE_WIDTH = 300;
 const COLLECTION_NODE_HEIGHT = 168;
-const COLLECTION_NODE_HEADER_HEIGHT = 104;
+const COLLECTION_NODE_HEADER_HEIGHT = 74;
 const COLLECTION_SCOPE_HEADER_HEIGHT = 136;
 const COLLECTION_SCOPE_STREAM_TOP = 96;
 const COLLECTION_SCOPE_BOTTOM_PADDING = 58;
-const UNIT_NODE_HEADER_HEIGHT = 62;
+const UNIT_NODE_HEADER_HEIGHT = 48;
 const COLLECTION_BORDER = ["#94a3b8", "#60a5fa", "#22d3ee", "#34d399"];
 const COLLECTION_BG = [
   "rgba(226, 232, 240, 0.28)",
@@ -217,6 +218,31 @@ function estimateCollectionHeaderMinWidth(
   return nameWidth + typeWidth + openButtonWidth + innerPadding;
 }
 
+function estimateUnitHeaderMinWidth(
+  unitName: string,
+  componentType: string
+): number {
+  const nameWidth = Math.min(220, Math.max(96, unitName.length * 8));
+  const typeWidth = Math.min(
+    122,
+    Math.max(66, shortType(componentType).length * 6.1 + 14)
+  );
+  const innerPadding = 30;
+  return nameWidth + typeWidth + innerPadding;
+}
+
+function requiredRowWidth(
+  count: number,
+  itemWidth: number,
+  minGap: number,
+  horizontalPadding: number
+): number {
+  if (count <= 0) {
+    return horizontalPadding;
+  }
+  return count * itemWidth + Math.max(0, count - 1) * minGap + horizontalPadding;
+}
+
 function streamAddressWithoutEndpoint(address: string): string {
   return address.split(":")[0] ?? address;
 }
@@ -270,7 +296,8 @@ function streamLabelClassName(
 function streamNodeVisualStyle(
   stream: UnitComponent["streams"][number],
   className: "is-input" | "is-output" | "is-unknown",
-  ownerKind: "unit" | "collection"
+  ownerKind: "unit" | "collection",
+  darkMode: boolean
 ): {
   border: string;
   background: string;
@@ -281,47 +308,47 @@ function streamNodeVisualStyle(
     if (stream.collectionKind === "topic") {
       if (className === "is-output") {
         return {
-          border: "1px solid #f28e2b",
-          background: "#fff1dd",
-          color: "#8a4f10",
+          border: darkMode ? "1px solid #fb923c" : "1px solid #f28e2b",
+          background: darkMode ? "#2e1f10" : "#fff1dd",
+          color: darkMode ? "#fed7aa" : "#8a4f10",
           borderRadius: 999,
         };
       }
       if (className === "is-input") {
         return {
-          border: "1px solid #f6a44d",
-          background: "#fff8ef",
-          color: "#8a4f10",
+          border: darkMode ? "1px solid #f59e0b" : "1px solid #f6a44d",
+          background: darkMode ? "#2a2115" : "#fff8ef",
+          color: darkMode ? "#fdba74" : "#8a4f10",
           borderRadius: 999,
         };
       }
       return {
-        border: "1px solid #f8b66f",
-        background: "#fff8ef",
-        color: "#8a4f10",
+        border: darkMode ? "1px solid #fb923c" : "1px solid #f8b66f",
+        background: darkMode ? "#2a2115" : "#fff8ef",
+        color: darkMode ? "#fdba74" : "#8a4f10",
         borderRadius: 10,
       };
     }
     if (className === "is-output") {
       return {
-        border: "1px solid #b07aa1",
-        background: "#f8eef5",
-        color: "#6f3f66",
+        border: darkMode ? "1px solid #d8b4fe" : "1px solid #b07aa1",
+        background: darkMode ? "#2a1d3a" : "#f8eef5",
+        color: darkMode ? "#e9d5ff" : "#6f3f66",
         borderRadius: 999,
       };
     }
     if (className === "is-input") {
       return {
-        border: "1px solid #c194b7",
-        background: "#fbf3f8",
-        color: "#6f3f66",
+        border: darkMode ? "1px solid #c084fc" : "1px solid #c194b7",
+        background: darkMode ? "#251b33" : "#fbf3f8",
+        color: darkMode ? "#e9d5ff" : "#6f3f66",
         borderRadius: 999,
       };
     }
     return {
-      border: "1px solid #d3accb",
-      background: "#fbf3f8",
-      color: "#6f3f66",
+      border: darkMode ? "1px solid #c084fc" : "1px solid #d3accb",
+      background: darkMode ? "#251b33" : "#fbf3f8",
+      color: darkMode ? "#e9d5ff" : "#6f3f66",
       borderRadius: 10,
     };
   }
@@ -329,17 +356,17 @@ function streamNodeVisualStyle(
   return {
     border:
       className === "is-input"
-        ? "1px solid #c7d2fe"
+        ? darkMode ? "1px solid #818cf8" : "1px solid #c7d2fe"
         : className === "is-output"
-          ? "1px solid #7dd3fc"
-          : "1px solid #cbd5e1",
+          ? darkMode ? "1px solid #22d3ee" : "1px solid #7dd3fc"
+          : darkMode ? "1px solid #4b5563" : "1px solid #cbd5e1",
     background:
       className === "is-input"
-        ? "#eef2ff"
+        ? darkMode ? "#1d2644" : "#eef2ff"
         : className === "is-output"
-          ? "#ecfeff"
-          : "#f8fafc",
-    color: "#1e293b",
+          ? darkMode ? "#0f2e37" : "#ecfeff"
+          : darkMode ? "#182235" : "#f8fafc",
+    color: darkMode ? "#dbeafe" : "#1e293b",
     borderRadius: className === "is-unknown" ? 8 : 999,
   };
 }
@@ -664,6 +691,49 @@ function collectionHasVisibleChildren(
   );
 }
 
+function rootScopeHasExternalStreamContext(
+  graphSnapshot: GraphSnapshotPayload,
+  units: Map<string, UnitComponent>,
+  collections: Map<string, CollectionComponent>,
+  rootCollectionAddress: string
+): boolean {
+  const parentByAddress = buildCollectionParentMap(collections);
+  const ownerByStreamAddress = new Map<string, string>();
+  const registerOwner = (streamAddress: string, ownerAddress: string) => {
+    ownerByStreamAddress.set(streamAddress, ownerAddress);
+    ownerByStreamAddress.set(streamAddressWithoutEndpoint(streamAddress), ownerAddress);
+  };
+  for (const unit of units.values()) {
+    for (const stream of unit.streams) {
+      registerOwner(stream.address, unit.address);
+    }
+  }
+  for (const collection of collections.values()) {
+    for (const stream of collection.streams) {
+      registerOwner(stream.address, collection.address);
+    }
+  }
+
+  const streamAddresses = new Set<string>();
+  for (const [fromTopic, toTopics] of Object.entries(graphSnapshot.graph)) {
+    streamAddresses.add(fromTopic);
+    for (const toTopic of toTopics) {
+      streamAddresses.add(toTopic);
+    }
+  }
+
+  for (const streamAddress of streamAddresses) {
+    const ownerAddress = ownerByStreamAddress.get(streamAddress);
+    if (!ownerAddress) {
+      return true;
+    }
+    if (!belongsToCollection(ownerAddress, rootCollectionAddress, parentByAddress)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isFinitePosition(value: unknown): value is { x: number; y: number } {
   return (
     typeof value === "object"
@@ -728,7 +798,8 @@ function buildFlowData(
   graphSnapshot: GraphSnapshotPayload,
   layoutMode: LayoutMode,
   scopeCollectionAddress: string | null,
-  edgeConnectorStyle: "curved" | "orthogonal" | "smooth"
+  edgeConnectorStyle: "curved" | "orthogonal" | "smooth",
+  darkMode: boolean
 ): {
   nodes: Node[];
   edges: Edge[];
@@ -988,10 +1059,46 @@ function buildFlowData(
   for (const unit of visibleUnits.values()) {
     const inputs = unit.streams.filter((stream) => stream.direction === "input").length;
     const outputs = unit.streams.filter((stream) => stream.direction === "output").length;
+    const unknown = unit.streams.filter((stream) => stream.direction === "unknown").length;
     const tasks = unit.tasks.length;
-    const maxRows = Math.max(1, inputs, outputs, tasks);
-    const width = layoutMode === "lr" ? Math.max(356, maxRows * 108 + 72) : Math.max(316, maxRows * 106 + 64);
-    const height = layoutMode === "lr" ? Math.max(154, 92 + maxRows * 30) : 216;
+    const maxRows = Math.max(1, inputs, outputs, tasks, unknown);
+    const headerMinWidth = estimateUnitHeaderMinWidth(unit.name, unit.componentType);
+    const streamRowMinWidth = requiredRowWidth(maxRows, STREAM_NODE_WIDTH, 6, 22);
+    const taskRowMinWidthTb = requiredRowWidth(tasks, 92, 10, 20);
+    const width =
+      layoutMode === "lr"
+        ? Math.max(356, headerMinWidth, streamRowMinWidth)
+        : Math.max(220, headerMinWidth, streamRowMinWidth, taskRowMinWidthTb);
+
+    if (layoutMode === "lr") {
+      const maxMainRows = Math.max(1, inputs, outputs, tasks);
+      const height = Math.max(
+        126,
+        UNIT_NODE_HEADER_HEIGHT
+          + 16
+          + maxMainRows * 30
+          + (unknown > 0 ? STREAM_NODE_HEIGHT + 12 : 0)
+          + 12
+      );
+      ownerSizeById.set(`unit:${unit.address}`, { width, height });
+      continue;
+    }
+
+    const verticalRows = Math.max(
+      1,
+      (inputs > 0 ? 1 : 0)
+      + (tasks > 0 ? 1 : 0)
+      + (unknown > 0 ? 1 : 0)
+      + (outputs > 0 ? 1 : 0)
+    );
+    const height = Math.max(
+      216,
+      UNIT_NODE_HEADER_HEIGHT
+        + 18
+        + verticalRows * STREAM_NODE_HEIGHT
+        + Math.max(0, verticalRows - 1) * 12
+        + 16
+    );
     ownerSizeById.set(`unit:${unit.address}`, { width, height });
   }
   for (const collection of visibleCollections.values()) {
@@ -999,19 +1106,36 @@ function buildFlowData(
     const outputs = collection.streams.filter((stream) => stream.direction === "output").length;
     const unknown = collection.streams.filter((stream) => stream.direction === "unknown").length;
     const maxRows = Math.max(1, inputs, outputs, unknown);
-    const streamDrivenWidth =
-      layoutMode === "lr"
-        ? Math.max(COLLECTION_NODE_WIDTH, maxRows * 108 + 72)
-        : Math.max(300, maxRows * 106 + 64);
+    const streamDrivenWidth = Math.max(
+      layoutMode === "lr" ? COLLECTION_NODE_WIDTH : 300,
+      requiredRowWidth(maxRows, STREAM_NODE_WIDTH, 6, 22)
+    );
     const headerMinWidth = estimateCollectionHeaderMinWidth(
       collection.name,
       collection.componentType
     );
     const width = Math.max(streamDrivenWidth, headerMinWidth);
-    const height =
-      layoutMode === "lr"
-        ? Math.max(COLLECTION_NODE_HEIGHT, 72 + maxRows * 30)
-        : 176;
+    const height = layoutMode === "lr"
+      ? Math.max(
+        124,
+        COLLECTION_NODE_HEADER_HEIGHT
+          + 16
+          + Math.max(1, inputs, outputs) * 30
+          + (unknown > 0 ? STREAM_NODE_HEIGHT + 12 : 0)
+          + 12
+      )
+      : Math.max(
+        176,
+        COLLECTION_NODE_HEADER_HEIGHT
+          + 14
+          + Math.max(
+            1,
+            (inputs > 0 ? 1 : 0)
+              + (unknown > 0 ? 1 : 0)
+              + (outputs > 0 ? 1 : 0)
+          ) * STREAM_NODE_HEIGHT
+          + 12
+      );
     ownerSizeById.set(`collection:${collection.address}`, { width, height });
   }
   for (const ownerId of orderedOwnerIds) {
@@ -1057,14 +1181,14 @@ function buildFlowData(
   const edges: Edge[] = [];
 
   const internalEdgeStyle = {
-    stroke: "#475569",
+    stroke: darkMode ? "#8fa3bc" : "#475569",
     strokeWidth: 1.5,
   };
   const internalMarker = {
     type: MarkerType.ArrowClosed as const,
     width: 12,
     height: 12,
-    color: "#475569",
+    color: darkMode ? "#8fa3bc" : "#475569",
   };
 
   if (scopedCollection && scopedCollectionOwnerId) {
@@ -1099,18 +1223,58 @@ function buildFlowData(
       }
     }
 
+    const scopedInputs = scopedCollection.streams.filter((stream) => stream.direction === "input");
+    const scopedOutputs = scopedCollection.streams.filter((stream) => stream.direction === "output");
+    const scopedUnknown = scopedCollection.streams.filter((stream) => stream.direction === "unknown");
+    const scopedStreamMax = Math.max(1, scopedInputs.length, scopedOutputs.length, scopedUnknown.length);
+    const scopedRowMinWidth = requiredRowWidth(scopedStreamMax, STREAM_NODE_WIDTH, 6, 24);
+    const hasScopedInputRow = scopedInputs.length > 0;
+    const hasScopedOutputRow = scopedOutputs.length > 0;
+    const scopedStreamTop = layoutMode === "lr" ? 72 : 76;
+    const scopedHeaderBase = layoutMode === "lr" ? 108 : 64;
+
     const scopePaddingX = 28;
-    const scopeHeaderHeight = COLLECTION_SCOPE_HEADER_HEIGHT;
-    const scopeBottomPadding = COLLECTION_SCOPE_BOTTOM_PADDING;
+    const scopeHeaderHeight = layoutMode === "lr"
+      ? Math.max(
+        scopedHeaderBase,
+        scopedStreamTop
+          + Math.max(1, scopedInputs.length, scopedOutputs.length) * 30
+          + (scopedUnknown.length > 0 ? STREAM_NODE_HEIGHT + 10 : 0)
+          + 8
+      )
+      : hasScopedInputRow
+        ? Math.max(scopedHeaderBase, scopedStreamTop + STREAM_NODE_HEIGHT + 8)
+        : scopedHeaderBase;
+    const scopeBottomPadding = layoutMode === "tb"
+      ? hasScopedOutputRow
+        ? Math.max(COLLECTION_SCOPE_BOTTOM_PADDING, STREAM_NODE_HEIGHT + 20)
+        : 20
+      : COLLECTION_SCOPE_BOTTOM_PADDING;
     const scopeContentHeight = Math.max(0, maxY - minY);
     const scopePos = {
       x: minX - scopePaddingX,
       y: minY - scopeHeaderHeight,
     };
     const scopeSize = {
-      width: Math.max(360, maxX - minX + scopePaddingX * 2),
+      width: Math.max(360, maxX - minX + scopePaddingX * 2, scopedRowMinWidth + scopePaddingX * 2),
       height: Math.max(180, scopeContentHeight + scopeHeaderHeight + scopeBottomPadding),
     };
+    if (scopedOwnerIds.length > 0) {
+      const contentCenterX = (minX + maxX) / 2;
+      const scopeInnerLeft = scopePos.x + scopePaddingX;
+      const scopeInnerRight = scopePos.x + scopeSize.width - scopePaddingX;
+      const scopeInnerCenterX = (scopeInnerLeft + scopeInnerRight) / 2;
+      const centerShift = Math.round(scopeInnerCenterX - contentCenterX);
+      if (centerShift !== 0) {
+        for (const ownerId of scopedOwnerIds) {
+          const position = ownerPosition.get(ownerId);
+          if (!position) {
+            continue;
+          }
+          ownerPosition.set(ownerId, { x: position.x + centerShift, y: position.y });
+        }
+      }
+    }
 
     nodes.push({
       id: scopedCollectionOwnerId,
@@ -1120,9 +1284,21 @@ function buildFlowData(
       data: {
         label: (
           <div className="topology-collection-label topology-collection-label--scope" title={scopedCollection.address}>
-            <span className="topology-title-row">
-              <strong>{scopedCollection.name}</strong>
-              <span className="topology-unit-type">{shortType(scopedCollection.componentType)}</span>
+            <span className="topology-title-row topology-title-row--collection">
+              <span className="topology-title-row">
+                <strong>{scopedCollection.name}</strong>
+                <span className="topology-unit-type">{shortType(scopedCollection.componentType)}</span>
+              </span>
+              <button
+                type="button"
+                data-scope-up="true"
+                className="topology-collection-scope-up-btn"
+                title="Go up one scope"
+                aria-label={`Go up from ${scopedCollection.name}`}
+                disabled={!collectionParentByAddress.get(scopedCollection.address)}
+              >
+                ↑ Up
+              </button>
             </span>
             <span className="mono">{compactCollectionAddress(scopedCollection.address)}</span>
           </div>
@@ -1131,10 +1307,10 @@ function buildFlowData(
       style: {
         width: scopeSize.width,
         height: scopeSize.height,
-        border: `2px dashed ${COLLECTION_BORDER[0]}`,
+        border: `2px dashed ${darkMode ? "#4b647e" : COLLECTION_BORDER[0]}`,
         borderRadius: 14,
-        background: "rgba(226, 232, 240, 0.24)",
-        color: "#0f172a",
+        background: darkMode ? "rgba(15, 23, 42, 0.45)" : "rgba(226, 232, 240, 0.24)",
+        color: darkMode ? "#e2e8f0" : "#0f172a",
         padding: 10,
         zIndex: -1,
       },
@@ -1142,19 +1318,16 @@ function buildFlowData(
       selectable: false,
     });
 
-    const scopedInputs = scopedCollection.streams.filter((stream) => stream.direction === "input");
-    const scopedOutputs = scopedCollection.streams.filter((stream) => stream.direction === "output");
-    const scopedUnknown = scopedCollection.streams.filter((stream) => stream.direction === "unknown");
     if (layoutMode === "lr") {
       const rowStep = 30;
       const maxRows = Math.max(1, scopedInputs.length, scopedOutputs.length);
       const blockHeight = maxRows * rowStep;
       const top = Math.max(
-        COLLECTION_SCOPE_STREAM_TOP,
-        scopeHeaderHeight - blockHeight - 12
+        scopedStreamTop,
+        scopeHeaderHeight - blockHeight - 8
       );
       scopedInputs.forEach((stream, index) => {
-        const visual = streamNodeVisualStyle(stream, "is-input", "collection");
+        const visual = streamNodeVisualStyle(stream, "is-input", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
           parentNode: scopedCollectionOwnerId,
@@ -1182,12 +1355,12 @@ function buildFlowData(
             border: visual.border,
             background: visual.background,
             color: visual.color,
-            padding: "1px 6px",
+            padding: "0 6px",
           },
         });
       });
       scopedOutputs.forEach((stream, index) => {
-        const visual = streamNodeVisualStyle(stream, "is-output", "collection");
+        const visual = streamNodeVisualStyle(stream, "is-output", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
           parentNode: scopedCollectionOwnerId,
@@ -1218,7 +1391,7 @@ function buildFlowData(
             border: visual.border,
             background: visual.background,
             color: visual.color,
-            padding: "1px 6px",
+            padding: "0 6px",
           },
         });
       });
@@ -1236,7 +1409,7 @@ function buildFlowData(
       }
     } else {
       const topInputY = Math.max(
-        COLLECTION_SCOPE_STREAM_TOP,
+        scopedStreamTop,
         scopeHeaderHeight - STREAM_NODE_HEIGHT - 8
       );
       const scopeFooterTop = scopeHeaderHeight + scopeContentHeight;
@@ -1316,10 +1489,10 @@ function buildFlowData(
       style: {
         width: size.width,
         height: size.height,
-        border: `2px dashed ${COLLECTION_BORDER[1]}`,
+        border: `2px dashed ${darkMode ? "#4f8ccf" : COLLECTION_BORDER[1]}`,
         borderRadius: 12,
-        background: COLLECTION_BG[1],
-        color: "#0f172a",
+        background: darkMode ? "rgba(30, 58, 95, 0.34)" : COLLECTION_BG[1],
+        color: darkMode ? "#e2e8f0" : "#0f172a",
         padding: 10,
       },
     });
@@ -1331,13 +1504,11 @@ function buildFlowData(
     if (layoutMode === "lr") {
       const rowStep = 30;
       const maxRows = Math.max(1, inputs.length, outputs.length);
-      const blockHeight = maxRows * rowStep;
       const headerHeight = COLLECTION_NODE_HEADER_HEIGHT;
-      const availableRowsHeight = Math.max(0, size.height - headerHeight - 12);
-      const top = headerHeight + Math.max(0, Math.floor((availableRowsHeight - blockHeight) / 2));
+      const top = headerHeight + 6;
 
       inputs.forEach((stream, index) => {
-        const visual = streamNodeVisualStyle(stream, "is-input", "collection");
+        const visual = streamNodeVisualStyle(stream, "is-input", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
           parentNode: nodeId,
@@ -1365,13 +1536,13 @@ function buildFlowData(
             border: visual.border,
             background: visual.background,
             color: visual.color,
-            padding: "1px 6px",
+            padding: "0 6px",
           },
         });
       });
 
       outputs.forEach((stream, index) => {
-        const visual = streamNodeVisualStyle(stream, "is-output", "collection");
+        const visual = streamNodeVisualStyle(stream, "is-output", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
           parentNode: nodeId,
@@ -1399,7 +1570,7 @@ function buildFlowData(
             border: visual.border,
             background: visual.background,
             color: visual.color,
-            padding: "1px 6px",
+            padding: "0 6px",
           },
         });
       });
@@ -1471,7 +1642,7 @@ function buildFlowData(
     const startX = 11 + Math.max(0, Math.floor((available - usedWidth) / 2));
 
     streams.forEach((stream, index) => {
-      const visual = streamNodeVisualStyle(stream, className, ownerKind);
+      const visual = streamNodeVisualStyle(stream, className, ownerKind, darkMode);
       const left = startX + index * (STREAM_NODE_WIDTH + gap);
       nodesOut.push({
         id: `stream:${stream.address}`,
@@ -1501,7 +1672,7 @@ function buildFlowData(
           background: visual.background,
           color: visual.color,
           fontSize: 8,
-          padding: "1px 6px",
+          padding: "0 6px",
         },
       });
     });
@@ -1539,9 +1710,9 @@ function buildFlowData(
       style: {
         width: size.width,
         height: size.height,
-        border: "1px solid #93c5fd",
+        border: darkMode ? "1px solid #3b82f6" : "1px solid #93c5fd",
         borderRadius: 12,
-        background: "#f8fbff",
+        background: darkMode ? "#0f1f35" : "#f8fbff",
         padding: 10,
       },
     });
@@ -1550,11 +1721,8 @@ function buildFlowData(
       const taskHeight = 22;
       const taskWidth = 96;
       const rowStep = 30;
-      const maxRows = Math.max(1, inputs.length, outputs.length, unit.tasks.length);
-      const blockHeight = maxRows * rowStep;
       const bodyTop = UNIT_NODE_HEADER_HEIGHT;
-      const bodyHeight = Math.max(0, size.height - bodyTop - 10);
-      const top = bodyTop + Math.max(0, Math.floor((bodyHeight - blockHeight) / 2));
+      const top = bodyTop + 6;
 
       inputs.forEach((stream, index) => {
         nodes.push({
@@ -1581,9 +1749,9 @@ function buildFlowData(
             width: STREAM_NODE_WIDTH,
             height: STREAM_NODE_HEIGHT,
             borderRadius: 999,
-            border: "1px solid #c7d2fe",
-            background: "#eef2ff",
-            padding: "1px 6px",
+            border: darkMode ? "1px solid #818cf8" : "1px solid #c7d2fe",
+            background: darkMode ? "#1d2644" : "#eef2ff",
+            padding: "0 6px",
           },
         });
       });
@@ -1613,9 +1781,9 @@ function buildFlowData(
             width: STREAM_NODE_WIDTH,
             height: STREAM_NODE_HEIGHT,
             borderRadius: 999,
-            border: "1px solid #7dd3fc",
-            background: "#ecfeff",
-            padding: "1px 6px",
+            border: darkMode ? "1px solid #22d3ee" : "1px solid #7dd3fc",
+            background: darkMode ? "#0f2e37" : "#ecfeff",
+            padding: "0 6px",
           },
         });
       });
@@ -1649,9 +1817,9 @@ function buildFlowData(
             width: taskWidth,
             height: taskHeight,
             borderRadius: 999,
-            border: "1px solid #dbe2ea",
-            background: "#f1f5f9",
-            padding: "1px 6px",
+            border: darkMode ? "1px solid #41536c" : "1px solid #dbe2ea",
+            background: darkMode ? "#1a273a" : "#f1f5f9",
+            padding: "0 6px",
           },
         });
 
@@ -1770,9 +1938,9 @@ function buildFlowData(
             width: taskWidth,
             height: taskHeight,
             borderRadius: 999,
-            border: "1px solid #dbe2ea",
-            background: "#f1f5f9",
-            padding: "1px 6px",
+            border: darkMode ? "1px solid #41536c" : "1px solid #dbe2ea",
+            background: darkMode ? "#1a273a" : "#f1f5f9",
+            padding: "0 6px",
           },
         });
 
@@ -1829,9 +1997,9 @@ function buildFlowData(
       },
       style: {
         width: ORPHAN_NODE_WIDTH,
-        border: "1px solid #dbe2ea",
+        border: darkMode ? "1px solid #41536c" : "1px solid #dbe2ea",
         borderRadius: 10,
-        background: "#ffffff",
+        background: darkMode ? "#111c2e" : "#ffffff",
         padding: 6,
       },
     });
@@ -1885,10 +2053,10 @@ function buildFlowData(
         type: MarkerType.ArrowClosed,
         width: 12,
         height: 12,
-        color: "#64748b",
+        color: darkMode ? "#8fa3bc" : "#64748b",
       },
       style: {
-        stroke: "#64748b",
+        stroke: darkMode ? "#8fa3bc" : "#64748b",
         strokeWidth: 1.2,
       },
     });
@@ -1904,6 +2072,7 @@ export function TopologyPanel({
   immersive = false,
   showLegend = true,
   showMiniMap = true,
+  darkMode = false,
   defaultLayout = "tb",
   edgeConnectorStyle = "curved",
   autoFitOnLayoutScopeChange = true,
@@ -2186,10 +2355,11 @@ export function TopologyPanel({
             graphSnapshot,
             layoutMode,
             activeScope,
-            edgeConnectorStyle
+            edgeConnectorStyle,
+            darkMode
           )
         : { nodes: [], edges: [] },
-    [graphSnapshot, layoutMode, activeScope, edgeConnectorStyle]
+    [graphSnapshot, layoutMode, activeScope, edgeConnectorStyle, darkMode]
   );
   const flowData = useMemo(() => {
     if (computedFlowData.nodes.length > 0 && validateFlowData(computedFlowData)) {
@@ -2276,6 +2446,11 @@ export function TopologyPanel({
 
     const edges = flowData.edges.map((edge, index) => {
       if (!activeEdgeIndexes.has(index)) {
+        return edge;
+      }
+      const isInternalEdge = typeof edge.className === "string"
+        && edge.className.includes("topology-internal-edge");
+      if (isInternalEdge) {
         return edge;
       }
       const markerEnd =
@@ -2365,7 +2540,7 @@ export function TopologyPanel({
     }
   }, [scopeCollectionAddress, topologyComponents]);
   useEffect(() => {
-    if (!topologyComponents) {
+    if (!topologyComponents || !graphSnapshot) {
       autoScopeSignatureRef.current = null;
       return;
     }
@@ -2375,6 +2550,14 @@ export function TopologyPanel({
       null
     );
     const onlyAddress = rootAddresses.length === 1 ? rootAddresses[0] : null;
+    const hasExternalRootContext =
+      onlyAddress !== null
+      && rootScopeHasExternalStreamContext(
+        graphSnapshot,
+        topologyComponents.units,
+        topologyComponents.collections,
+        onlyAddress
+      );
     const canAutoEnter =
       onlyAddress !== null
       && topologyComponents.collections.has(onlyAddress)
@@ -2382,7 +2565,8 @@ export function TopologyPanel({
         onlyAddress,
         topologyComponents.units,
         topologyComponents.collections
-      );
+      )
+      && !hasExternalRootContext;
     const signature = `${rootAddresses.slice().sort().join("|")}::${canAutoEnter ? "ready" : "wait"}`;
     if (autoScopeSignatureRef.current === signature) {
       return;
@@ -2395,7 +2579,7 @@ export function TopologyPanel({
       return;
     }
     setScopeCollectionAddress(onlyAddress);
-  }, [scopeCollectionAddress, topologyComponents]);
+  }, [graphSnapshot, scopeCollectionAddress, topologyComponents]);
 
   useEffect(() => {
     if (!topologyComponents || !scopeCollectionAddress) {
@@ -2686,7 +2870,12 @@ export function TopologyPanel({
     <>
       {immersive ? null : toolbarContent}
 
-      <div className={`topology-flow-shell ${immersive ? "is-immersive" : ""}`} ref={flowShellRef}>
+      <div
+        className={`topology-flow-shell ${immersive ? "is-immersive" : ""} ${
+          darkMode ? "is-dark" : ""
+        }`}
+        ref={flowShellRef}
+      >
         {immersive ? (
           <div className="topology-viewport-top-controls">{toolbarContent}</div>
         ) : null}
@@ -2715,6 +2904,17 @@ export function TopologyPanel({
           }}
           onPaneClick={() => onEntitySelect?.(null)}
           onNodeClick={(event, node) => {
+            if (node.id.startsWith("scope:")) {
+              const target = event.target as HTMLElement | null;
+              const upButton = target?.closest('[data-scope-up="true"]') as HTMLButtonElement | null;
+              if (upButton) {
+                if (!upButton.disabled) {
+                  const collectionAddress = node.id.slice("scope:".length);
+                  setScopeCollectionAddress(parentCollectionByAddress.get(collectionAddress) ?? null);
+                }
+                return;
+              }
+            }
             if (node.id.startsWith("collection:")) {
               const target = event.target as HTMLElement | null;
               if (target?.closest('[data-open-collection="true"]')) {
@@ -2731,19 +2931,25 @@ export function TopologyPanel({
           }}
           proOptions={{ hideAttribution: true }}
         >
-          <Background color="#d5deea" gap={24} />
+          <Background color={darkMode ? "#243244" : "#d5deea"} gap={24} />
           {showMiniMap ? (
             <MiniMap
               pannable
               zoomable
+              maskColor={darkMode ? "rgba(2, 6, 23, 0.72)" : "rgba(15, 23, 42, 0.10)"}
+              style={{
+                background: darkMode ? "#0e1728" : "#f8fafc",
+                border: darkMode ? "1px solid #334155" : "1px solid #dbe2ea",
+                borderRadius: 8,
+              }}
               nodeColor={(node) => {
                 if (node.id.startsWith("collection:")) {
-                  return "#dbeafe";
+                  return darkMode ? "#1d4f79" : "#dbeafe";
                 }
                 if (node.id.startsWith("unit:")) {
-                  return "#bfdbfe";
+                  return darkMode ? "#1e3a62" : "#bfdbfe";
                 }
-                return "#cbd5e1";
+                return darkMode ? "#334155" : "#cbd5e1";
               }}
             />
           ) : null}
