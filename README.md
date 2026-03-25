@@ -1,5 +1,7 @@
 # ezmsg-dashboard
 
+![A screenshot of ezmsg-dashboard](docs/image.png)
+
 `ezmsg-dashboard` is a web dashboard for inspecting and operating running `ezmsg` systems.
 
 It combines:
@@ -8,6 +10,8 @@ It combines:
 - fixture-backed tests for graph layout, inspector behavior, profiling, and visual regression coverage
 
 This package is published as `ezmsg.dashboard` and follows the namespace packaging style used by other `ezmsg` extensions.
+
+User documentation lives in [docs/README.md](/Users/milsagw1/repos/ezmsg-dashboard/docs/README.md).
 
 ## Features
 
