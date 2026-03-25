@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { getDashboardFixture } from "../fixtures/dashboardFixtures";
 import type {
   DashboardSnapshotResponse,
   HealthResponse,
@@ -26,6 +27,51 @@ const WS_DEFAULT_PROFILING_MAX_SAMPLES = 5000;
 type DashboardDataOptions = {
   snapshotPollSeconds?: number;
 };
+
+function cloneFixturePayload<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function fixtureNameFromLocation(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return new URLSearchParams(window.location.search).get("fixture");
+}
+
+function applyValueAtPath(
+  currentValue: unknown,
+  path: string,
+  nextValue: unknown
+): unknown {
+  const keys = path.split(".").filter((part) => part.length > 0);
+  if (keys.length === 0) {
+    return nextValue;
+  }
+  const root =
+    currentValue && typeof currentValue === "object" && !Array.isArray(currentValue)
+      ? cloneFixturePayload(currentValue)
+      : {};
+  let cursor = root as Record<string, unknown>;
+  keys.forEach((key, index) => {
+    const isLeaf = index === keys.length - 1;
+    if (isLeaf) {
+      cursor[key] = nextValue;
+      return;
+    }
+    const nested = cursor[key];
+    const nextNested =
+      nested && typeof nested === "object" && !Array.isArray(nested)
+        ? { ...(nested as Record<string, unknown>) }
+        : {};
+    cursor[key] = nextNested;
+    cursor = nextNested;
+  });
+  return root;
+}
 
 function readPositiveNumber(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -152,22 +198,49 @@ export function useDashboardData(options?: DashboardDataOptions) {
   const snapshotPollMs = Math.round(
     clamp((options?.snapshotPollSeconds ?? 2.0) * 1000, 500, 30000)
   );
+  const dashboardFixture = useMemo(
+    () => getDashboardFixture(fixtureNameFromLocation()),
+    []
+  );
 
   const refreshTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
+    if (dashboardFixture) {
+      const payload = cloneFixturePayload(dashboardFixture.snapshot);
+      setSnapshot(payload);
+      setLastSnapshotUpdateMs(Date.now());
+      return;
+    }
     const payload = await fetchJsonNoStore<DashboardSnapshotResponse>(
       "/api/snapshot"
     );
     setSnapshot(payload);
     setLastSnapshotUpdateMs(Date.now());
-  }, []);
+  }, [dashboardFixture]);
 
   const refreshHealth = useCallback(async () => {
+    if (dashboardFixture) {
+      setHealth(cloneFixturePayload(dashboardFixture.health));
+      return;
+    }
     const payload = await fetchJsonNoStore<HealthResponse>("/api/health");
     setHealth(payload);
-  }, []);
+  }, [dashboardFixture]);
+
+  useEffect(() => {
+    if (!dashboardFixture) {
+      return;
+    }
+    setHealth(cloneFixturePayload(dashboardFixture.health));
+    setSnapshot(cloneFixturePayload(dashboardFixture.snapshot));
+    setLatestTraceEvent(null);
+    setEvents([]);
+    setConnectionState("open");
+    setError(null);
+    setLastSnapshotUpdateMs(Date.now());
+  }, [dashboardFixture]);
 
   const scheduleSnapshotRefresh = useCallback(() => {
     if (refreshTimerRef.current !== null) {
@@ -186,6 +259,9 @@ export function useDashboardData(options?: DashboardDataOptions) {
   }, [refreshSnapshot]);
 
   useEffect(() => {
+    if (dashboardFixture) {
+      return;
+    }
     refreshHealth().catch((healthError: unknown) => {
       const message =
         healthError instanceof Error ? healthError.message : "Health check failed.";
@@ -199,9 +275,12 @@ export function useDashboardData(options?: DashboardDataOptions) {
           : "Initial snapshot failed.";
       setError(message);
     });
-  }, [refreshHealth, refreshSnapshot]);
+  }, [dashboardFixture, refreshHealth, refreshSnapshot]);
 
   useEffect(() => {
+    if (dashboardFixture) {
+      return;
+    }
     const pollTimer = window.setInterval(() => {
       refreshSnapshot().catch((snapshotError: unknown) => {
         const message =
@@ -214,9 +293,12 @@ export function useDashboardData(options?: DashboardDataOptions) {
     return () => {
       window.clearInterval(pollTimer);
     };
-  }, [refreshSnapshot, snapshotPollMs]);
+  }, [dashboardFixture, refreshSnapshot, snapshotPollMs]);
 
   useEffect(() => {
+    if (dashboardFixture) {
+      return;
+    }
     let cancelled = false;
     let socket: WebSocket | null = null;
 
@@ -311,7 +393,7 @@ export function useDashboardData(options?: DashboardDataOptions) {
         window.clearTimeout(refreshTimerRef.current);
       }
     };
-  }, [scheduleSnapshotRefresh]);
+  }, [dashboardFixture, scheduleSnapshotRefresh]);
 
   const topologyEvents = useMemo(
     () =>
@@ -341,6 +423,47 @@ export function useDashboardData(options?: DashboardDataOptions) {
       value: unknown,
       timeout = 2.0
     ) => {
+      if (dashboardFixture) {
+        let updatedValue: SettingsValuePayload | null = null;
+        setSnapshot((previous) => {
+          if (!previous) {
+            return previous;
+          }
+          const existingValue = previous.settings[componentAddress];
+          if (!existingValue) {
+            return previous;
+          }
+          const currentStructuredValue =
+            existingValue.structured_value ?? existingValue.repr_value;
+          const nextStructuredValue = applyValueAtPath(
+            currentStructuredValue,
+            fieldPath,
+            value
+          ) as Record<string, unknown>;
+          updatedValue = {
+            ...existingValue,
+            structured_value: nextStructuredValue,
+            repr_value: nextStructuredValue,
+          };
+          return {
+            ...previous,
+            settings: {
+              ...previous.settings,
+              [componentAddress]: updatedValue,
+            },
+          };
+        });
+        setLastSnapshotUpdateMs(Date.now());
+        return {
+          component_address: componentAddress,
+          field_path: fieldPath,
+          updated_value:
+            updatedValue
+            ?? cloneFixturePayload(
+              dashboardFixture.snapshot.settings[componentAddress]
+            ),
+        };
+      }
       const encodedAddress = encodeURIComponent(componentAddress);
       const payload = await postJsonNoStore<SettingsFieldPatchResponse>(
         `/api/settings/${encodedAddress}/field`,
@@ -372,17 +495,28 @@ export function useDashboardData(options?: DashboardDataOptions) {
       setLastSnapshotUpdateMs(Date.now());
       return payload;
     },
-    []
+    [dashboardFixture]
   );
 
   const setProfilingTraceControl = useCallback(
     async (request: ProfilingTraceControlRequest) => {
+      if (dashboardFixture) {
+        return {
+          process_id: request.process_id,
+          unit_address: "",
+          enabled: request.enabled,
+          control: {
+            fixture: true,
+            metrics: request.metrics ?? [],
+          },
+        };
+      }
       return await postJsonNoStore<ProfilingTraceControlResponse>(
         "/api/profiling/trace-control",
         request
       );
     },
-    []
+    [dashboardFixture]
   );
 
   return {

@@ -112,6 +112,16 @@ body {
   border-color: #334155;
 }
 
+.dashboard-layout.is-dark .topology-flow-shell.is-dark .react-flow__controls button svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.dashboard-layout.is-dark .topology-flow-shell.is-dark .react-flow__controls button path {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
 .trace-dock {
   border-top: 1px solid #cbd5e1;
   background: rgba(255, 255, 255, 0.95);
@@ -259,9 +269,9 @@ body {
   top: 0.55rem;
   left: 0.6rem;
   z-index: 22;
-  width: min(1000px, calc(100vw - 6rem));
+  width: fit-content;
   min-width: 0;
-  max-width: min(84vw, 1000px);
+  max-width: min(calc(100vw - 6rem), 1000px);
   border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);

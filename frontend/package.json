@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -14,10 +17,12 @@
     "reactflow": "^11.11.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.53.0",
     "@types/react": "^18.3.8",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
     "typescript": "^5.6.2",
-    "vite": "^5.4.7"
+    "vite": "^5.4.7",
+    "vitest": "^3.2.4"
   }
 }

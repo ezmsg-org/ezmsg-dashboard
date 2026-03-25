@@ -1283,7 +1283,6 @@ function buildFlowData(
                 className="topology-collection-scope-up-btn"
                 title="Go up one scope"
                 aria-label={`Go up from ${scopedCollection.name}`}
-                disabled={!collectionParentByAddress.get(scopedCollection.address)}
               >
                 ↑ Up
               </button>
