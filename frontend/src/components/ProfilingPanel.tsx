@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { Panel } from "./Panel";
 import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
 import { buildLeaseColorMap, leaseColorForEndpoint } from "../utils/traceColors";
+import { endpointIdFromStreamAddress } from "../utils/streamAddress";
 import type {
   GraphSnapshotPayload,
   ProfilingTraceControlRequest,
@@ -179,15 +180,6 @@ function backpressureSeverity(backpressureNsWindow: number): Severity {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function endpointIdFromStreamAddress(streamAddress: string): string | null {
-  const parts = streamAddress.split(":");
-  if (parts.length < 2) {
-    return null;
-  }
-  const endpointId = parts.slice(1).join(":");
-  return endpointId.length > 0 ? endpointId : null;
 }
 
 function extractTraceSamples(
@@ -395,6 +387,7 @@ export function ProfilingPanel({
     useState<Record<string, string | null>>({});
   const lastTraceCloseSignalRef = useRef(traceCloseSignal);
   const lastHandledFocusActionIdRef = useRef<number>(-1);
+  const rowRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const processRows = useMemo(
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
@@ -479,7 +472,6 @@ export function ProfilingPanel({
     if (focusActionId === lastHandledFocusActionIdRef.current) {
       return;
     }
-    lastHandledFocusActionIdRef.current = focusActionId;
     if (focusPublisherEndpointId) {
       const matchedIds = publisherRows
         .filter((row) => {
@@ -492,8 +484,19 @@ export function ProfilingPanel({
           return row.topic === focusPublisherTopic;
         })
         .map((row) => row.id);
+      if (matchedIds.length === 0) {
+        return;
+      }
+      lastHandledFocusActionIdRef.current = focusActionId;
+      setSearchText("");
       setExpandedIds(matchedIds);
       setExpandedContributorEndpointByRowId({});
+      window.requestAnimationFrame(() => {
+        rowRefs.current[matchedIds[0]]?.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
+      });
       return;
     }
     if (focusSubscriberEndpointId) {
@@ -505,6 +508,11 @@ export function ProfilingPanel({
           )
         )
         .map((row) => row.id);
+      if (matchedIds.length === 0) {
+        return;
+      }
+      lastHandledFocusActionIdRef.current = focusActionId;
+      setSearchText("");
       setExpandedIds(matchedIds);
       setExpandedContributorEndpointByRowId((previous) => {
         const next: Record<string, string | null> = { ...previous };
@@ -512,6 +520,12 @@ export function ProfilingPanel({
           next[rowId] = focusSubscriberEndpointId;
         }
         return next;
+      });
+      window.requestAnimationFrame(() => {
+        rowRefs.current[matchedIds[0]]?.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
       });
       return;
     }
@@ -848,6 +862,9 @@ export function ProfilingPanel({
             return (
               <article
                 key={row.id}
+                ref={(element) => {
+                  rowRefs.current[row.id] = element;
+                }}
                 className={`publisher-row severity-${row.severity}`}
               >
                 <button

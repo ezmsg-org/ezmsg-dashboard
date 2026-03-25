@@ -13,8 +13,41 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import { Panel } from "./Panel";
+import {
+  COLLECTION_NODE_HEIGHT,
+  COLLECTION_NODE_HEADER_HEIGHT,
+  COLLECTION_NODE_WIDTH,
+  COLLECTION_SCOPE_BOTTOM_PADDING,
+  FOCUS_VIEW_DURATION_MS,
+  FOCUS_VIEW_MAX_ZOOM,
+  FOCUS_VIEW_MIN_ZOOM,
+  FOCUS_VIEW_PADDING,
+  MIN_UNIT_HEIGHT,
+  ORPHAN_NODE_WIDTH,
+  OWNER_X_GAP,
+  OWNER_Y_GAP,
+  RANK_X_GAP,
+  RANK_Y_GAP,
+  requiredRowWidth,
+  STREAM_NODE_HEIGHT,
+  STREAM_NODE_WIDTH,
+  STREAM_ROW_GAP,
+  STREAM_ROW_HORIZONTAL_PADDING,
+  TASK_NODE_HEIGHT,
+  TASK_NODE_WIDTH,
+  TASK_ROW_GAP,
+  TASK_ROW_HORIZONTAL_PADDING,
+  UNIT_NODE_HEADER_HEIGHT,
+  UNIT_WIDTH,
+  estimateCollectionHeaderMinWidth,
+  estimateUnitHeaderMinWidth,
+} from "./topologyLayout";
 import type { GraphSnapshotPayload, ProfilingSnapshotPayload } from "../types/api";
 import type { TopologyChangedEnvelope } from "../types/events";
+import {
+  parseTopicAndEndpoint,
+  streamAddressWithoutEndpoint,
+} from "../utils/streamAddress";
 
 export type TopologyEntitySelection =
   | {
@@ -91,22 +124,6 @@ type CollectionComponent = {
   children: string[];
 };
 
-const UNIT_WIDTH = 320;
-const MIN_UNIT_HEIGHT = 120;
-const RANK_Y_GAP = 88;
-const RANK_X_GAP = 120;
-const OWNER_X_GAP = 72;
-const OWNER_Y_GAP = 58;
-const STREAM_NODE_WIDTH = 100;
-const STREAM_NODE_HEIGHT = 30;
-const ORPHAN_NODE_WIDTH = 240;
-const COLLECTION_NODE_WIDTH = 300;
-const COLLECTION_NODE_HEIGHT = 168;
-const COLLECTION_NODE_HEADER_HEIGHT = 74;
-const COLLECTION_SCOPE_HEADER_HEIGHT = 136;
-const COLLECTION_SCOPE_STREAM_TOP = 96;
-const COLLECTION_SCOPE_BOTTOM_PADDING = 58;
-const UNIT_NODE_HEADER_HEIGHT = 48;
 const COLLECTION_BORDER = ["#94a3b8", "#60a5fa", "#22d3ee", "#34d399"];
 const COLLECTION_BG = [
   "rgba(226, 232, 240, 0.28)",
@@ -202,60 +219,6 @@ function compactCollectionAddress(address: string): string {
     return address;
   }
   return parts.slice(Math.max(0, parts.length - 3)).join("/");
-}
-
-function estimateCollectionHeaderMinWidth(
-  collectionName: string,
-  componentType: string
-): number {
-  const nameWidth = Math.min(176, Math.max(104, collectionName.length * 7.4));
-  const typeWidth = Math.min(
-    112,
-    Math.max(66, shortType(componentType).length * 6.1 + 14)
-  );
-  const openButtonWidth = 82;
-  const innerPadding = 18;
-  return nameWidth + typeWidth + openButtonWidth + innerPadding;
-}
-
-function estimateUnitHeaderMinWidth(
-  unitName: string,
-  componentType: string
-): number {
-  const nameWidth = Math.min(220, Math.max(96, unitName.length * 8));
-  const typeWidth = Math.min(
-    122,
-    Math.max(66, shortType(componentType).length * 6.1 + 14)
-  );
-  const innerPadding = 30;
-  return nameWidth + typeWidth + innerPadding;
-}
-
-function requiredRowWidth(
-  count: number,
-  itemWidth: number,
-  minGap: number,
-  horizontalPadding: number
-): number {
-  if (count <= 0) {
-    return horizontalPadding;
-  }
-  return count * itemWidth + Math.max(0, count - 1) * minGap + horizontalPadding;
-}
-
-function streamAddressWithoutEndpoint(address: string): string {
-  return address.split(":")[0] ?? address;
-}
-
-function parseTopicAndEndpoint(streamAddress: string): {
-  topic: string;
-  endpointToken: string;
-} {
-  const [topic, ...endpointParts] = streamAddress.split(":");
-  return {
-    topic: topic ?? "",
-    endpointToken: endpointParts.join(":"),
-  };
 }
 
 function belongsToCollection(
@@ -1062,9 +1025,23 @@ function buildFlowData(
     const unknown = unit.streams.filter((stream) => stream.direction === "unknown").length;
     const tasks = unit.tasks.length;
     const maxRows = Math.max(1, inputs, outputs, tasks, unknown);
-    const headerMinWidth = estimateUnitHeaderMinWidth(unit.name, unit.componentType);
-    const streamRowMinWidth = requiredRowWidth(maxRows, STREAM_NODE_WIDTH, 6, 22);
-    const taskRowMinWidthTb = requiredRowWidth(tasks, 92, 10, 20);
+    const headerMinWidth = estimateUnitHeaderMinWidth(
+      unit.name,
+      unit.componentType,
+      shortType
+    );
+    const streamRowMinWidth = requiredRowWidth(
+      maxRows,
+      STREAM_NODE_WIDTH,
+      STREAM_ROW_GAP,
+      STREAM_ROW_HORIZONTAL_PADDING
+    );
+    const taskRowMinWidthTb = requiredRowWidth(
+      tasks,
+      TASK_NODE_WIDTH,
+      TASK_ROW_GAP,
+      TASK_ROW_HORIZONTAL_PADDING
+    );
     const width =
       layoutMode === "lr"
         ? Math.max(356, headerMinWidth, streamRowMinWidth)
@@ -1108,11 +1085,17 @@ function buildFlowData(
     const maxRows = Math.max(1, inputs, outputs, unknown);
     const streamDrivenWidth = Math.max(
       layoutMode === "lr" ? COLLECTION_NODE_WIDTH : 300,
-      requiredRowWidth(maxRows, STREAM_NODE_WIDTH, 6, 22)
+      requiredRowWidth(
+        maxRows,
+        STREAM_NODE_WIDTH,
+        STREAM_ROW_GAP,
+        STREAM_ROW_HORIZONTAL_PADDING
+      )
     );
     const headerMinWidth = estimateCollectionHeaderMinWidth(
       collection.name,
-      collection.componentType
+      collection.componentType,
+      shortType
     );
     const width = Math.max(streamDrivenWidth, headerMinWidth);
     const height = layoutMode === "lr"
@@ -1227,7 +1210,12 @@ function buildFlowData(
     const scopedOutputs = scopedCollection.streams.filter((stream) => stream.direction === "output");
     const scopedUnknown = scopedCollection.streams.filter((stream) => stream.direction === "unknown");
     const scopedStreamMax = Math.max(1, scopedInputs.length, scopedOutputs.length, scopedUnknown.length);
-    const scopedRowMinWidth = requiredRowWidth(scopedStreamMax, STREAM_NODE_WIDTH, 6, 24);
+    const scopedRowMinWidth = requiredRowWidth(
+      scopedStreamMax,
+      STREAM_NODE_WIDTH,
+      STREAM_ROW_GAP,
+      24
+    );
     const hasScopedInputRow = scopedInputs.length > 0;
     const hasScopedOutputRow = scopedOutputs.length > 0;
     const scopedStreamTop = layoutMode === "lr" ? 72 : 76;
@@ -1718,8 +1706,8 @@ function buildFlowData(
     });
 
     if (layoutMode === "lr") {
-      const taskHeight = 22;
-      const taskWidth = 96;
+      const taskHeight = TASK_NODE_HEIGHT;
+      const taskWidth = TASK_NODE_WIDTH;
       const rowStep = 30;
       const bodyTop = UNIT_NODE_HEADER_HEIGHT;
       const top = bodyTop + 6;
@@ -1865,8 +1853,8 @@ function buildFlowData(
         );
       }
     } else {
-      const taskWidth = 92;
-      const taskHeight = 22;
+      const taskWidth = TASK_NODE_WIDTH;
+      const taskHeight = TASK_NODE_HEIGHT;
       const topInputY = UNIT_NODE_HEADER_HEIGHT + 2;
       const bottomOutputY = size.height - STREAM_NODE_HEIGHT - 12;
       const taskBandTop = topInputY + STREAM_NODE_HEIGHT + 10;
@@ -1904,7 +1892,10 @@ function buildFlowData(
       const totalTaskWidth = taskCount * taskWidth;
       const taskGap =
         taskCount > 1
-          ? Math.max(10, Math.min(22, Math.floor((taskAvailable - totalTaskWidth) / (taskCount - 1))))
+          ? Math.max(
+            TASK_ROW_GAP,
+            Math.min(22, Math.floor((taskAvailable - totalTaskWidth) / (taskCount - 1)))
+          )
           : 0;
       const used = totalTaskWidth + taskGap * Math.max(0, taskCount - 1);
       const taskStart = 10 + Math.max(0, Math.floor((taskAvailable - used) / 2));
@@ -2681,10 +2672,10 @@ export function TopologyPanel({
       }
       latestInstance.fitView({
         nodes: [{ id: nodeId }],
-        padding: 0.36,
-        duration: 240,
-        minZoom: 0.35,
-        maxZoom: 1.8,
+        padding: FOCUS_VIEW_PADDING,
+        duration: FOCUS_VIEW_DURATION_MS,
+        minZoom: FOCUS_VIEW_MIN_ZOOM,
+        maxZoom: FOCUS_VIEW_MAX_ZOOM,
       });
       lastHandledFocusRequestRef.current = focusRequestId;
       pendingScopeFocusRequestRef.current = null;

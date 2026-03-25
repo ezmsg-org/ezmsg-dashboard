@@ -7,7 +7,9 @@ import {
   type TopologyEntitySelection,
 } from "./components/TopologyPanel";
 import { useDashboardData } from "./hooks/useDashboardData";
+import { parseStreamAddress } from "./utils/streamAddress";
 import ezmsgLogo from "./assets/ezmsg_logo.png";
+import type { SettingsSnapshotPayload } from "./types/api";
 
 type InspectorState =
   | {
@@ -51,6 +53,10 @@ type TraceDockState = {
   endpointId: string;
   status: "capturing" | "stopped" | "applying";
 } | null;
+type ActiveInspectorState = Exclude<InspectorState, null>;
+type ComponentInspectorState =
+  | Extract<ActiveInspectorState, { kind: "unit" }>
+  | Extract<ActiveInspectorState, { kind: "collection" }>;
 
 const SETTINGS_STORAGE_KEY = "ezmsg-dashboard-global-settings";
 const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
@@ -68,7 +74,6 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
 type HealthTone = "ok" | "warn" | "err";
 
-
 function toEpochMillis(timestamp: number): number | null {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return null;
@@ -82,14 +87,49 @@ function toEpochMillis(timestamp: number): number | null {
   return null;
 }
 
-function parseStreamAddress(
-  streamAddress: string
-): { topic: string | null; endpointId: string | null } {
-  const [topic, ...endpointParts] = streamAddress.split(":");
+function isCollectionComponentType(componentType: string): boolean {
+  return componentType.toLowerCase().includes("collection");
+}
+
+function inspectorFromTopologySelection(
+  selection: TopologyEntitySelection
+): ActiveInspectorState {
+  if (selection.kind === "unit") {
+    return { kind: "unit", unitAddress: selection.unitAddress };
+  }
+  if (selection.kind === "collection") {
+    return {
+      kind: "collection",
+      collectionAddress: selection.collectionAddress,
+    };
+  }
+  const parsed = parseStreamAddress(selection.streamAddress);
   return {
-    topic: topic?.length ? topic : null,
-    endpointId: endpointParts.length > 0 ? endpointParts.join(":") : null,
+    kind: selection.kind,
+    unitAddress: selection.unitAddress,
+    endpointId: parsed.endpointId,
+    topic: parsed.topic,
   };
+}
+
+function inspectorFromSettingsAddress(
+  address: string,
+  settings: SettingsSnapshotPayload | null | undefined
+): ComponentInspectorState {
+  const componentType = settings?.[address]?.component_type ?? "";
+  return isCollectionComponentType(componentType)
+    ? { kind: "collection", collectionAddress: address }
+    : { kind: "unit", unitAddress: address };
+}
+
+function settingsFocusAddressForInspector(inspector: InspectorState): string | null {
+  if (inspector?.kind === "unit") {
+    return inspector.unitAddress;
+  }
+  if (inspector?.kind === "collection") {
+    return inspector.collectionAddress;
+  }
+  return null;
 }
 
 function normalizeGlobalSettings(value: unknown): GlobalSettings {
@@ -279,47 +319,14 @@ export function App() {
       return;
     }
     setInspectorCollapsed(false);
-    if (selection.kind === "unit") {
+    const nextInspector = inspectorFromTopologySelection(selection);
+    if (nextInspector.kind === "unit" || nextInspector.kind === "collection") {
       setSettingsSectionCollapsed(false);
       setSettingsFocusActionId((previous) => previous + 1);
-      setInspector({
-        kind: "unit",
-        unitAddress: selection.unitAddress,
-      });
-      return;
-    }
-    if (selection.kind === "collection") {
-      setSettingsSectionCollapsed(false);
-      setSettingsFocusActionId((previous) => previous + 1);
-      setInspector({
-        kind: "collection",
-        collectionAddress: selection.collectionAddress,
-      });
-      return;
-    }
-    if (selection.kind === "publisher") {
-      const parsed = parseStreamAddress(selection.streamAddress);
+    } else {
       setProfilingFocusActionId((previous) => previous + 1);
-      setInspector({
-        kind: "publisher",
-        unitAddress: selection.unitAddress,
-        endpointId: parsed.endpointId,
-        topic: parsed.topic,
-      });
-      return;
     }
-    if (selection.kind === "subscriber") {
-      const parsed = parseStreamAddress(selection.streamAddress);
-      setProfilingFocusActionId((previous) => previous + 1);
-      setInspector({
-        kind: "subscriber",
-        unitAddress: selection.unitAddress,
-        endpointId: parsed.endpointId,
-        topic: parsed.topic,
-      });
-      return;
-    }
-    setInspector(null);
+    setInspector(nextInspector);
   };
 
   const requestTopologyFocus = (selection: TopologyEntitySelection | null) => {
@@ -416,34 +423,29 @@ export function App() {
                 <SettingsPanel
                   settings={snapshot?.settings ?? null}
                   patchSettingField={patchSettingField}
-                  focusComponentAddress={
-                    inspector?.kind === "unit"
-                      ? inspector.unitAddress
-                      : inspector?.kind === "collection"
-                        ? inspector.collectionAddress
-                        : null
-                  }
+                  focusComponentAddress={settingsFocusAddressForInspector(inspector)}
                   focusActionId={settingsFocusActionId}
                   onComponentSelect={(address) => {
                     if (!address) {
                       setInspector(null);
                       return;
                     }
-                    const componentType =
-                      snapshot?.settings?.[address]?.component_type ?? "";
-                    const isCollection = componentType
-                      .toLowerCase()
-                      .includes("collection");
                     setSettingsFocusActionId((previous) => previous + 1);
-                    setInspector(
-                      isCollection
-                        ? { kind: "collection", collectionAddress: address }
-                        : { kind: "unit", unitAddress: address }
+                    const nextInspector = inspectorFromSettingsAddress(
+                      address,
+                      snapshot?.settings
                     );
+                    setInspector(nextInspector);
                     requestTopologyFocus(
-                      isCollection
-                        ? { kind: "collection", collectionAddress: address }
-                        : { kind: "unit", unitAddress: address }
+                      nextInspector.kind === "collection"
+                        ? {
+                            kind: "collection",
+                            collectionAddress: nextInspector.collectionAddress,
+                          }
+                        : {
+                            kind: "unit",
+                            unitAddress: nextInspector.unitAddress,
+                          }
                     );
                   }}
                 />

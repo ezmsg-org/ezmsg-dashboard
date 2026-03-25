@@ -134,6 +134,18 @@ function initialDraftValueForRow(row: FieldRow): unknown {
   return toDisplayJson(row.currentValue);
 }
 
+function sameDraftMap(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
 export function SettingsPanel({
   settings,
   patchSettingField,
@@ -160,6 +172,8 @@ export function SettingsPanel({
   const [errorByField, setErrorByField] = useState<Record<string, string | null>>({});
   const [successByField, setSuccessByField] = useState<Record<string, string | null>>({});
   const rowRefs = useRef<Record<string, HTMLElement | null>>({});
+  const initializedDraftsRef = useRef<Record<string, unknown>>({});
+  const lastDraftComponentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (selectedComponent && !allComponentAddresses.includes(selectedComponent)) {
@@ -245,15 +259,36 @@ export function SettingsPanel({
   }, [allComponentAddresses, searchText, settings]);
 
   useEffect(() => {
-    const drafts: Record<string, unknown> = {};
+    const nextInitialDrafts: Record<string, unknown> = {};
     for (const row of fieldRows) {
-      drafts[row.path] = initialDraftValueForRow(row);
+      nextInitialDrafts[row.path] = initialDraftValueForRow(row);
     }
-    setFieldDrafts(drafts);
-    setPendingByField({});
-    setErrorByField({});
-    setSuccessByField({});
-  }, [selectedComponent]);
+
+    const componentChanged = lastDraftComponentRef.current !== selectedComponent;
+    setFieldDrafts((previous) => {
+      if (componentChanged) {
+        return nextInitialDrafts;
+      }
+      const merged: Record<string, unknown> = {};
+      for (const [path, nextInitial] of Object.entries(nextInitialDrafts)) {
+        const previousDraft = previous[path];
+        const previousInitial = initializedDraftsRef.current[path];
+        merged[path] =
+          previousDraft === undefined || previousDraft === previousInitial
+            ? nextInitial
+            : previousDraft;
+      }
+      return sameDraftMap(previous, merged) ? previous : merged;
+    });
+
+    if (componentChanged) {
+      setPendingByField({});
+      setErrorByField({});
+      setSuccessByField({});
+    }
+    initializedDraftsRef.current = nextInitialDrafts;
+    lastDraftComponentRef.current = selectedComponent;
+  }, [fieldRows, selectedComponent]);
 
   const parseRowDraft = (row: FieldRow): unknown => {
     const draftValue = fieldDrafts[row.path];
