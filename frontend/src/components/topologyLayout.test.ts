@@ -8,6 +8,7 @@ import {
   TASK_NODE_WIDTH,
   TASK_ROW_GAP,
   TASK_ROW_HORIZONTAL_PADDING,
+  UNIT_LR_MIN_WIDTH,
   estimateCollectionHeaderMinWidth,
   estimateUnitHeaderMinWidth,
   requiredRowWidth,
@@ -49,5 +50,9 @@ describe("topology layout helpers", () => {
     expect(width).toBeGreaterThan(
       estimateUnitHeaderMinWidth("SYSTEM", "fixture.Unit", shortType) - 20
     );
+  });
+
+  it("keeps lr unit width tied to one lane per side instead of stream count", () => {
+    expect(UNIT_LR_MIN_WIDTH).toBe(2 * STREAM_NODE_WIDTH + TASK_NODE_WIDTH + 60);
   });
 });

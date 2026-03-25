@@ -1,5 +1,12 @@
 export const UNIT_WIDTH = 320;
 export const MIN_UNIT_HEIGHT = 120;
+export const COLLECTION_BORDER = ["#94a3b8", "#60a5fa", "#22d3ee", "#34d399"];
+export const COLLECTION_BG = [
+  "rgba(226, 232, 240, 0.28)",
+  "rgba(219, 234, 254, 0.28)",
+  "rgba(207, 250, 254, 0.28)",
+  "rgba(209, 250, 229, 0.24)",
+];
 export const RANK_Y_GAP = 88;
 export const RANK_X_GAP = 120;
 export const OWNER_X_GAP = 72;
@@ -25,6 +32,7 @@ export const FOCUS_VIEW_PADDING = 0.36;
 export const FOCUS_VIEW_DURATION_MS = 240;
 export const FOCUS_VIEW_MIN_ZOOM = 0.35;
 export const FOCUS_VIEW_MAX_ZOOM = 1.8;
+export const UNIT_LR_MIN_WIDTH = STREAM_NODE_WIDTH * 2 + TASK_NODE_WIDTH + 60;
 
 export function estimateCollectionHeaderMinWidth(
   collectionName: string,

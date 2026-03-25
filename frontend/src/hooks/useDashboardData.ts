@@ -23,6 +23,7 @@ const SNAPSHOT_REFRESH_DEBOUNCE_MS = 250;
 const RECONNECT_DELAY_MS = 1000;
 const WS_DEFAULT_PROFILING_INTERVAL = 0.05;
 const WS_DEFAULT_PROFILING_MAX_SAMPLES = 5000;
+const FIXTURE_TRACE_MIN_INTERVAL_MS = 60;
 
 type DashboardDataOptions = {
   snapshotPollSeconds?: number;
@@ -205,6 +206,26 @@ export function useDashboardData(options?: DashboardDataOptions) {
 
   const refreshTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const fixtureTraceTimersRef = useRef<Map<string, number>>(new Map());
+  const fixtureTraceSequenceRef = useRef<Map<string, number>>(new Map());
+  const fixtureTraceOriginNsRef = useRef<Map<string, number>>(new Map());
+
+  const clearFixtureTraceTimer = useCallback((key: string) => {
+    const timerId = fixtureTraceTimersRef.current.get(key);
+    if (timerId !== undefined) {
+      window.clearInterval(timerId);
+      fixtureTraceTimersRef.current.delete(key);
+    }
+  }, []);
+
+  const clearAllFixtureTraceTimers = useCallback(() => {
+    for (const timerId of fixtureTraceTimersRef.current.values()) {
+      window.clearInterval(timerId);
+    }
+    fixtureTraceTimersRef.current.clear();
+    fixtureTraceSequenceRef.current.clear();
+    fixtureTraceOriginNsRef.current.clear();
+  }, []);
 
   const refreshSnapshot = useCallback(async () => {
     if (dashboardFixture) {
@@ -233,6 +254,7 @@ export function useDashboardData(options?: DashboardDataOptions) {
     if (!dashboardFixture) {
       return;
     }
+    clearAllFixtureTraceTimers();
     setHealth(cloneFixturePayload(dashboardFixture.health));
     setSnapshot(cloneFixturePayload(dashboardFixture.snapshot));
     setLatestTraceEvent(null);
@@ -240,7 +262,10 @@ export function useDashboardData(options?: DashboardDataOptions) {
     setConnectionState("open");
     setError(null);
     setLastSnapshotUpdateMs(Date.now());
-  }, [dashboardFixture]);
+    return () => {
+      clearAllFixtureTraceTimers();
+    };
+  }, [clearAllFixtureTraceTimers, dashboardFixture]);
 
   const scheduleSnapshotRefresh = useCallback(() => {
     if (refreshTimerRef.current !== null) {
@@ -501,6 +526,119 @@ export function useDashboardData(options?: DashboardDataOptions) {
   const setProfilingTraceControl = useCallback(
     async (request: ProfilingTraceControlRequest) => {
       if (dashboardFixture) {
+        const key = `${request.process_id}:${request.publisher_endpoint_id ?? "*"}`;
+        if (!request.enabled) {
+          if (request.publisher_endpoint_id) {
+            clearFixtureTraceTimer(key);
+          } else {
+            for (const timerKey of Array.from(fixtureTraceTimersRef.current.keys())) {
+              if (timerKey.startsWith(`${request.process_id}:`)) {
+                clearFixtureTraceTimer(timerKey);
+              }
+            }
+          }
+          return {
+            process_id: request.process_id,
+            unit_address: "",
+            enabled: false,
+            control: {
+              fixture: true,
+              metrics: request.metrics ?? [],
+            },
+          };
+        }
+
+        const scenario = (dashboardFixture.traceScenarios ?? []).find(
+          (candidate) =>
+            candidate.processId === request.process_id
+            && candidate.publisherEndpointId === request.publisher_endpoint_id
+            && candidate.publisherTopic === request.publisher_topic
+        );
+
+        if (scenario) {
+          clearFixtureTraceTimer(key);
+          if (!fixtureTraceOriginNsRef.current.has(key)) {
+            fixtureTraceOriginNsRef.current.set(key, Date.now() * 1_000_000);
+          }
+          if (!fixtureTraceSequenceRef.current.has(key)) {
+            fixtureTraceSequenceRef.current.set(key, 0);
+          }
+
+          const emitScenarioBatch = () => {
+            const originNs = fixtureTraceOriginNsRef.current.get(key) ?? Date.now() * 1_000_000;
+            const startSeq = fixtureTraceSequenceRef.current.get(key) ?? 0;
+            const samples: Array<Record<string, unknown>> = [];
+
+            for (let offset = 0; offset < scenario.samplesPerTick; offset += 1) {
+              const sampleSeq = startSeq + offset;
+              const timestamp = originNs + sampleSeq * scenario.timestampStepNs;
+              const phase = sampleSeq / Math.max(1, scenario.samplesPerTick * 2);
+              const publishDeltaValue =
+                scenario.publishDeltaNsBase
+                + Math.sin(phase) * scenario.publishDeltaNsJitter;
+              samples.push({
+                endpoint_id: scenario.publisherEndpointId,
+                topic: scenario.publisherTopic,
+                metric: "publish_delta_ns",
+                value: Math.max(0, Math.round(publishDeltaValue)),
+                timestamp,
+                sample_seq: sampleSeq,
+              });
+              for (const [subscriberIndex, subscriber] of scenario.subscribers.entries()) {
+                const leasePhase = phase + subscriberIndex * 0.37;
+                samples.push({
+                  endpoint_id: subscriber.endpointId,
+                  topic: subscriber.topic,
+                  metric: "lease_time_ns",
+                  value: Math.max(
+                    0,
+                    Math.round(
+                      subscriber.leaseTimeNsBase
+                        + Math.sin(leasePhase) * subscriber.leaseTimeNsBase * 0.18
+                    )
+                  ),
+                  timestamp,
+                  sample_seq: sampleSeq,
+                });
+                samples.push({
+                  endpoint_id: subscriber.endpointId,
+                  topic: subscriber.topic,
+                  metric: "attributable_backpressure_ns",
+                  value: Math.max(
+                    0,
+                    Math.round(
+                      subscriber.attributableBackpressureNsBase
+                        + Math.cos(leasePhase) * subscriber.attributableBackpressureNsBase * 0.22
+                    )
+                  ),
+                  timestamp,
+                  sample_seq: sampleSeq,
+                });
+              }
+            }
+
+            fixtureTraceSequenceRef.current.set(key, startSeq + scenario.samplesPerTick);
+            setLatestTraceEvent({
+              kind: "profiling.trace",
+              data: {
+                timestamp: originNs + (startSeq + scenario.samplesPerTick) * scenario.timestampStepNs,
+                batches: {
+                  [scenario.processId]: {
+                    samples,
+                  },
+                },
+              },
+            });
+          };
+
+          emitScenarioBatch();
+          const timerId = window.setInterval(
+            emitScenarioBatch,
+            Math.max(FIXTURE_TRACE_MIN_INTERVAL_MS, scenario.eventIntervalMs)
+          );
+          fixtureTraceTimersRef.current.set(key, timerId);
+        }
+
         return {
           process_id: request.process_id,
           unit_address: "",
@@ -516,7 +654,7 @@ export function useDashboardData(options?: DashboardDataOptions) {
         request
       );
     },
-    [dashboardFixture]
+    [clearFixtureTraceTimer, dashboardFixture]
   );
 
   return {

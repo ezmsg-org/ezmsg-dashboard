@@ -409,11 +409,19 @@ export function SettingsPanel({
                   >
                   <div className="settings-component-row__identity">
                     <div className="settings-component-row__heading">
-                      <p className="mono settings-component-title" title={address}>
+                      <p
+                        className="mono settings-component-title"
+                        title={componentDisplayName}
+                      >
                         {componentDisplayName}
                       </p>
                       {value?.component_type ? (
-                        <span className="settings-type">{value.component_type}</span>
+                        <span
+                          className="settings-type"
+                          title={value.component_type}
+                        >
+                          {value.component_type}
+                        </span>
                       ) : null}
                     </div>
                     <p className="mono settings-component-address" title={address}>
@@ -451,7 +459,9 @@ export function SettingsPanel({
                                   </p>
                                 ) : null}
                               </div>
-                              <div className="settings-field-row__control">
+                              <div
+                                className={`settings-field-row__control ${row.mode === "boolean" ? "is-boolean" : ""}`}
+                              >
                                 {row.mode === "boolean" ? (
                                   <label className="patch-checkbox">
                                     <input

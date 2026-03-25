@@ -11,6 +11,62 @@ import { parseStreamAddress } from "./utils/streamAddress";
 import ezmsgLogo from "./assets/ezmsg_logo.png";
 import type { SettingsSnapshotPayload } from "./types/api";
 
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="4.2" fill="currentColor" />
+      <path
+        d="M12 2.5v2.4M12 19.1v2.4M21.5 12h-2.4M4.9 12H2.5M18.7 5.3l-1.7 1.7M7 17l-1.7 1.7M18.7 18.7 17 17M7 7 5.3 5.3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M15.6 3.2a8.9 8.9 0 1 0 5.2 15.6A9.5 9.5 0 0 1 15.6 3.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DownArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M12 4.5v12.2M6.8 11.8 12 17.3l5.2-5.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+function RightArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M4.5 12h12.2M11.8 6.8l5.5 5.2-5.5 5.2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
 type InspectorState =
   | {
       kind: "unit";
@@ -490,15 +546,66 @@ export function App() {
               <span className="mono">Snapshot {snapshotTimeLabel}</span>
             </p>
           </section>
-          <button
-            type="button"
-            className="topology-layout-btn dashboard-floating-gear-btn"
-            onClick={() => setGlobalSettingsOpen(true)}
-            title="Global Settings"
-            aria-label="Global Settings"
-          >
-            ⚙
-          </button>
+          <div className="dashboard-floating-control-dock" aria-label="Viewport shortcuts">
+            <button
+              type="button"
+              className="topology-layout-btn dashboard-floating-shortcut-btn"
+              onClick={() =>
+                setGlobalSettings((previous) => ({
+                  ...previous,
+                  topologyDefaultLayout:
+                    previous.topologyDefaultLayout === "lr" ? "tb" : "lr",
+                }))
+              }
+              title={
+                globalSettings.topologyDefaultLayout === "lr"
+                  ? "Topology layout: left-to-right"
+                  : "Topology layout: top-to-bottom"
+              }
+              aria-label={
+                globalSettings.topologyDefaultLayout === "lr"
+                  ? "Topology layout left-to-right"
+                  : "Topology layout top-to-bottom"
+              }
+            >
+              {globalSettings.topologyDefaultLayout === "lr" ? (
+                <RightArrowIcon />
+              ) : (
+                <DownArrowIcon />
+              )}
+            </button>
+            <button
+              type="button"
+              className="topology-layout-btn dashboard-floating-shortcut-btn"
+              onClick={() =>
+                setGlobalSettings((previous) => ({
+                  ...previous,
+                  themeMode: previous.themeMode === "dark" ? "light" : "dark",
+                }))
+              }
+              title={
+                globalSettings.themeMode === "dark"
+                  ? "Theme: dark"
+                  : "Theme: light"
+              }
+              aria-label={
+                globalSettings.themeMode === "dark"
+                  ? "Theme dark"
+                  : "Theme light"
+              }
+            >
+              {globalSettings.themeMode === "dark" ? <MoonIcon /> : <SunIcon />}
+            </button>
+            <button
+              type="button"
+              className="topology-layout-btn dashboard-floating-gear-btn"
+              onClick={() => setGlobalSettingsOpen(true)}
+              title="Global Settings"
+              aria-label="Global Settings"
+            >
+              ⚙
+            </button>
+          </div>
           <button
             type="button"
             className={`topology-layout-btn dashboard-floating-inspector-btn ${
