@@ -69,35 +69,35 @@ The dashboard has three major areas:
 
 ![Annotated publishers panel](./screenshots/publishers-panel.png)
 
-1. **Publisher row**: the border and dot encode backpressure severity.
+1. **Publisher row**: surfaces always-on snapshot metrics for a publisher topic.
 2. **Trace control**: starts or stops profiling trace capture for the selected publisher endpoint.
-3. **Subscriber filter**: hides subscribers with zero attributable backpressure in the current profiling window.
-4. **Subscriber row**: shows the subscriber topic and key per-subscriber metrics.
+3. **Subscriber filter**: hides subscribers with zero messages in the current snapshot window.
+4. **Subscriber row**: shows the subscriber topic, host, channel kind, and snapshot message count.
 
 ### Typical Workflow
 
 1. Search for a topic or endpoint.
 2. Expand a publisher row.
-3. Inspect its rate, backpressure, and inflight counts.
+3. Inspect its rate, message count, inflight state, and host.
 4. Review the subscriber list.
-5. Start a profiling trace if the publisher needs deeper investigation.
+5. Start a profiling trace if the publisher needs timing-oriented investigation.
 
 ## Trace Dock
 
 ![Annotated trace dock](./screenshots/trace-dock.png)
 
 1. **Window**: controls how many seconds of trace history are visible.
-2. **Backpressure toggle**: shows or hides the aggregate attributable backpressure series.
-3. **Subscribers toggle**: shows or hides subscriber lease-time traces.
+2. **Subscriber metric selector**: switches subscriber traces between lease time and user span.
+3. **Publish Delta key**: identifies the fixed publisher cadence trace.
 4. **Y max**: fixes the Y scale instead of using auto-scaling.
-5. **Trace canvas**: plots publish timing and subscriber timing series over time.
+5. **Trace canvas**: plots publish delta, lease time, and user span series over time.
 
 ### Trace Workflow
 
 1. Start profiling trace from a publisher row.
 2. Wait for the trace dock to populate.
 3. Adjust the time window if the graph is too sparse or too dense.
-4. Toggle subscriber traces or aggregate backpressure traces on and off.
+4. Switch the subscriber metric between lease time and user span as needed.
 5. Lock `Y max` if the auto scale is making comparisons hard.
 
 ## Theme And Layout Controls
@@ -112,7 +112,7 @@ The top-right dock in the topology viewport contains:
 
 - If the graph is visually dense, switch layout direction.
 - If the inspector feels cramped, increase inspector width in global settings.
-- If the publisher list is noisy, use search and the zero-backpressure filter.
+- If the publisher list is noisy, use search and the idle-subscriber filter.
 - If a trace looks flat or over-compressed, adjust `Window (s)` or switch `Y max` from `Auto` to `Fixed`.
 - If a component is not editable, check whether it is marked `PATCHABLE` in Settings.
 

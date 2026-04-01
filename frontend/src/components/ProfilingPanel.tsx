@@ -46,9 +46,10 @@ type ProfilingPanelProps = {
     endpointId: string;
     topic: string;
   }) => void;
+  darkMode?: boolean;
 };
 
-type Severity = "none" | "low" | "medium" | "high";
+type PublisherActivityTone = "idle" | "active" | "backpressure";
 
 type SubscriberContributor = {
   id: string;
@@ -58,9 +59,7 @@ type SubscriberContributor = {
   pid: number;
   host: string;
   messagesWindow: number;
-  attributableBackpressureNsWindow: number;
-  attributableBackpressureEvents: number;
-  userSpanNsAvgWindow: number;
+  channelKindLast: string;
   unitAddress: string | null;
 };
 
@@ -74,11 +73,9 @@ type PublisherRow = {
   windowSeconds: number;
   publishRateHzWindow: number;
   messagesPublishedWindow: number;
-  publishDeltaNsAvgWindow: number;
   inflightCurrent: number;
-  inflightDisplayTotal: number;
-  backpressureNsWindow: number;
-  severity: Severity;
+  numBuffers: number | null;
+  activityTone: PublisherActivityTone;
   contributors: SubscriberContributor[];
   unitAddress: string | null;
 };
@@ -98,26 +95,15 @@ type PublisherTraceSample = {
 const TRACE_DEFAULT_WINDOW_SECONDS = 2.0;
 const TRACE_WINDOW_MIN_SECONDS = 0.5;
 const TRACE_WINDOW_MAX_SECONDS = 30.0;
-const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns", "backpressure_wait_ns"]);
-const TRACE_SUBSCRIBER_METRICS = new Set([
-  "lease_time_ns",
-  "attributable_backpressure_ns",
-]);
+const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns"]);
+const TRACE_SUBSCRIBER_METRICS = new Set(["lease_time_ns", "user_span_ns"]);
 
 function toNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function nsToMs(ns: number): number {
-  return ns / 1_000_000;
-}
-
 function formatRate(hz: number): string {
   return `${hz.toFixed(1)} Hz`;
-}
-
-function formatMs(ns: number): string {
-  return `${nsToMs(ns).toFixed(2)} ms`;
 }
 
 function formatWindowSeconds(seconds: number): string {
@@ -165,17 +151,18 @@ function shortTopic(topic: string, max = 48): string {
   return `${topic.slice(0, max - 1)}…`;
 }
 
-function backpressureSeverity(backpressureNsWindow: number): Severity {
-  if (backpressureNsWindow <= 0) {
-    return "none";
+function publisherActivityTone(
+  messagesPublishedWindow: number,
+  inflightCurrent: number,
+  numBuffers: number | null
+): PublisherActivityTone {
+  if (numBuffers !== null && numBuffers > 0 && inflightCurrent / numBuffers > 0.5) {
+    return "backpressure";
   }
-  if (backpressureNsWindow < 1_000_000) {
-    return "low";
+  if (messagesPublishedWindow > 0) {
+    return "active";
   }
-  if (backpressureNsWindow < 20_000_000) {
-    return "medium";
-  }
-  return "high";
+  return "idle";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -252,13 +239,10 @@ function toContributor(
     pid: process.pid,
     host: process.host,
     messagesWindow: toNumber(subscriber.messages_received_window),
-    attributableBackpressureNsWindow: toNumber(
-      subscriber.attributable_backpressure_ns_window
-    ),
-    attributableBackpressureEvents: toNumber(
-      subscriber.attributable_backpressure_events_total
-    ),
-    userSpanNsAvgWindow: toNumber(subscriber.user_span_ns_avg_window),
+    channelKindLast:
+      typeof subscriber.channel_kind_last === "string"
+        ? subscriber.channel_kind_last
+        : "unknown",
     unitAddress: endpointOwnerById.get(subscriber.endpoint_id) ?? null,
   };
 }
@@ -300,10 +284,17 @@ function contributorListForPublisher(
 
   return subscribers
     .filter((subscriber) => candidateTopics.has(subscriber.topic))
-    .sort(
-      (a, b) =>
-        b.attributableBackpressureNsWindow - a.attributableBackpressureNsWindow
-    );
+    .sort((a, b) => {
+      const byTopic = a.topic.localeCompare(b.topic);
+      if (byTopic !== 0) {
+        return byTopic;
+      }
+      const byProcess = a.processId.localeCompare(b.processId);
+      if (byProcess !== 0) {
+        return byProcess;
+      }
+      return a.endpointId.localeCompare(b.endpointId);
+    });
 }
 
 function toPublisherRow(
@@ -313,15 +304,12 @@ function toPublisherRow(
   graphSnapshot: GraphSnapshotPayload | null,
   endpointOwnerById: Map<string, string>
 ): PublisherRow {
-  const backpressureNsWindow = toNumber(publisher.backpressure_wait_ns_window);
-  const severity = backpressureSeverity(backpressureNsWindow);
   const rowId = `${process.process_id}:${publisher.endpoint_id}`;
   const rawNumBuffers = publisher["num_buffers"];
   const numBuffers =
     typeof rawNumBuffers === "number" && Number.isFinite(rawNumBuffers)
       ? Math.max(0, Math.trunc(rawNumBuffers))
       : null;
-  const inflightPeakWindow = toNumber(publisher.inflight_messages_peak_window);
   return {
     id: rowId,
     endpointId: publisher.endpoint_id,
@@ -332,11 +320,13 @@ function toPublisherRow(
     windowSeconds: toNumber(process.window_seconds),
     publishRateHzWindow: toNumber(publisher.publish_rate_hz_window),
     messagesPublishedWindow: toNumber(publisher.messages_published_window),
-    publishDeltaNsAvgWindow: toNumber(publisher.publish_delta_ns_avg_window),
     inflightCurrent: toNumber(publisher.inflight_messages_current),
-    inflightDisplayTotal: numBuffers ?? inflightPeakWindow,
-    backpressureNsWindow,
-    severity,
+    numBuffers,
+    activityTone: publisherActivityTone(
+      toNumber(publisher.messages_published_window),
+      toNumber(publisher.inflight_messages_current),
+      numBuffers
+    ),
     contributors: contributorListForPublisher(
       publisher.topic,
       allSubscribers,
@@ -356,19 +346,16 @@ export function ProfilingPanel({
   focusSubscriberEndpointId = null,
   focusActionId = 0,
   hideFilters = false,
-  defaultTraceMetrics = [
-    "publish_delta_ns",
-    "lease_time_ns",
-    "attributable_backpressure_ns",
-  ],
+  defaultTraceMetrics = ["publish_delta_ns", "lease_time_ns", "user_span_ns"],
   traceDockHost = null,
   onTraceDockStateChange,
   traceCloseSignal = 0,
   onPublisherSelect,
   onSubscriberSelect,
+  darkMode = false,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
-  const [hideZeroContributorRows, setHideZeroContributorRows] = useState(false);
+  const [hideIdleSubscriberRows, setHideIdleSubscriberRows] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [activeTraceRowIds, setActiveTraceRowIds] = useState<string[]>([]);
   const [traceSamplesByRowId, setTraceSamplesByRowId] = useState<
@@ -446,7 +433,17 @@ export function ProfilingPanel({
       }
     }
 
-    return rows.sort((a, b) => b.backpressureNsWindow - a.backpressureNsWindow);
+    return rows.sort((a, b) => {
+      const byTopic = a.topic.localeCompare(b.topic);
+      if (byTopic !== 0) {
+        return byTopic;
+      }
+      const byProcess = a.processId.localeCompare(b.processId);
+      if (byProcess !== 0) {
+        return byProcess;
+      }
+      return a.endpointId.localeCompare(b.endpointId);
+    });
   }, [endpointOwnerById, graphSnapshot, processRows]);
 
   const filteredRows = useMemo(() => {
@@ -723,12 +720,14 @@ export function ProfilingPanel({
   const activeTraceTopicScope = activeTraceRow
     ? Array.from(topicScopeForPublisher(activeTraceRow.topic, graphSnapshot))
     : [];
-  const activeTraceLeaseEndpointIds = activeTraceSamples
-    .filter((sample) => sample.metric === "lease_time_ns")
+  const activeTraceSubscriberEndpointIds = activeTraceSamples
+    .filter(
+      (sample) => sample.metric === "lease_time_ns" || sample.metric === "user_span_ns"
+    )
     .map((sample) => sample.endpointId);
   const activeTraceLeaseColorMap = buildLeaseColorMap([
     ...(activeTraceRow?.contributors.map((contributor) => contributor.endpointId) ?? []),
-    ...activeTraceLeaseEndpointIds,
+    ...activeTraceSubscriberEndpointIds,
   ]);
   const activeSelectedContributorEndpointId =
     activeTraceRowId
@@ -796,8 +795,9 @@ export function ProfilingPanel({
                 topic={activeTraceRow.topic}
                 topicScope={activeTraceTopicScope}
                 leaseColorMap={activeTraceLeaseColorMap}
-                selectedLeaseEndpointId={activeSelectedContributorEndpointId}
+                selectedSubscriberEndpointId={activeSelectedContributorEndpointId}
                 windowSeconds={activeTraceWindowSeconds}
+                darkMode={darkMode}
                 onWindowSecondsChange={(nextSeconds) =>
                   setTraceWindowSecondsByRowId((previous) => ({
                     ...previous,
@@ -847,9 +847,9 @@ export function ProfilingPanel({
             const leaseColorMap = buildLeaseColorMap(
               row.contributors.map((contributor) => contributor.endpointId)
             );
-            const visibleContributors = hideZeroContributorRows
+            const visibleContributors = hideIdleSubscriberRows
               ? row.contributors.filter(
-                  (contributor) => contributor.attributableBackpressureNsWindow > 0
+                  (contributor) => contributor.messagesWindow > 0
                 )
               : row.contributors;
             const expandedContributorEndpointId =
@@ -865,7 +865,7 @@ export function ProfilingPanel({
                 ref={(element) => {
                   rowRefs.current[row.id] = element;
                 }}
-                className={`publisher-row severity-${row.severity}`}
+                className={`publisher-row activity-${row.activityTone}`}
               >
                 <button
                   type="button"
@@ -875,17 +875,9 @@ export function ProfilingPanel({
                 >
                   <div className="publisher-row__top">
                     <div className="publisher-row__identity">
-                      <span className={`severity-dot severity-${row.severity}`} />
                       <div className="publisher-row__identity-text">
                         <p className="mono publisher-topic" title={row.topic}>
                           {row.topic}
-                        </p>
-                        <p
-                          className="muted mono publisher-subline"
-                          title={`endpoint ${row.endpointId} · process ${row.processId} · pid ${row.pid}`}
-                        >
-                          endpoint {shortEndpointToken(row.endpointId)} · process{" "}
-                          {row.processId.slice(0, 8)} · pid {row.pid}
                         </p>
                       </div>
                     </div>
@@ -898,14 +890,20 @@ export function ProfilingPanel({
                       <strong>{formatRate(row.publishRateHzWindow)}</strong>
                     </div>
                     <div>
-                      <span>Backpressure</span>
-                      <strong>{formatMs(row.backpressureNsWindow)}</strong>
+                      <span>{windowLabel ? `Msgs (${windowLabel})` : "Msgs"}</span>
+                      <strong>{row.messagesPublishedWindow}</strong>
                     </div>
                     <div>
                       <span>Inflight</span>
                       <strong>
-                        {row.inflightCurrent} / {row.inflightDisplayTotal}
+                        {row.numBuffers === null
+                          ? `${row.inflightCurrent}`
+                          : `${row.inflightCurrent} / ${row.numBuffers}`}
                       </strong>
+                    </div>
+                    <div>
+                      <span>Subscribers</span>
+                      <strong>{row.contributors.length}</strong>
                     </div>
                   </div>
                 </button>
@@ -914,34 +912,20 @@ export function ProfilingPanel({
                   <div className="publisher-row__details">
                     <div className="publisher-kpis">
                       <article className="mini-kpi">
-                        <span>{windowLabel ? `Messages (${windowLabel})` : "Messages"}</span>
-                        <strong>{row.messagesPublishedWindow}</strong>
-                      </article>
-                      <article className="mini-kpi">
-                        <span>Publish Delta Avg</span>
-                        <strong>{formatMs(row.publishDeltaNsAvgWindow)}</strong>
-                      </article>
-                      <article className="mini-kpi">
                         <span>Host</span>
                         <strong>{row.host}</strong>
                       </article>
+                      <article className="mini-kpi">
+                        <span>PID</span>
+                        <strong>{row.pid}</strong>
+                      </article>
+                      <article className="mini-kpi">
+                        <span>Process</span>
+                        <strong className="mono" title={row.processId}>
+                          {row.processId.slice(0, 8)}
+                        </strong>
+                      </article>
                     </div>
-                    <button
-                      type="button"
-                      className={`publisher-trace-button ${
-                        traceOpen ? "is-stop" : "is-start"
-                      }`}
-                      onClick={() => toggleTraceCapture(row, !traceOpen)}
-                      disabled={traceBusy}
-                      aria-pressed={traceOpen}
-                    >
-                      <span aria-hidden="true" className="publisher-trace-button__icon">
-                        {traceOpen ? "■" : "▶"}
-                      </span>
-                      <span>
-                        {traceBusy ? "Applying..." : traceOpen ? "Stop Profiling Trace" : "Start Profiling Trace"}
-                      </span>
-                    </button>
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
@@ -952,20 +936,34 @@ export function ProfilingPanel({
                     </div>
 
                     <div className="panel-section">
+                      <button
+                        type="button"
+                        className={`publisher-trace-button ${
+                          traceOpen ? "is-stop" : "is-start"
+                        }`}
+                        onClick={() => toggleTraceCapture(row, !traceOpen)}
+                        disabled={traceBusy}
+                        aria-pressed={traceOpen}
+                      >
+                        <span aria-hidden="true" className="publisher-trace-button__icon">
+                          {traceOpen ? "■" : "▶"}
+                        </span>
+                        <span>
+                          {traceBusy ? "Applying..." : traceOpen ? "Stop Profiling Trace" : "Start Profiling Trace"}
+                        </span>
+                      </button>
                       <div className="subscriber-section-header">
                         <h3>Subscribers</h3>
                         <button
                           type="button"
                           className={`subscriber-filter-btn ${
-                            hideZeroContributorRows ? "is-active" : ""
+                            hideIdleSubscriberRows ? "is-active" : ""
                           }`}
-                          onClick={() =>
-                            setHideZeroContributorRows((previous) => !previous)
-                          }
+                          onClick={() => setHideIdleSubscriberRows((previous) => !previous)}
                         >
-                          {hideZeroContributorRows
-                            ? "Hide Zero Backpressure: On"
-                            : "Hide Zero Backpressure: Off"}
+                          {hideIdleSubscriberRows
+                            ? "Hide Idle Subscribers: On"
+                            : "Hide Idle Subscribers: Off"}
                         </button>
                       </div>
                       {row.contributors.length === 0 ? (
@@ -979,11 +977,6 @@ export function ProfilingPanel({
                       ) : (
                         <div className="subscriber-list">
                           {visibleContributors.map((contributor) => {
-                            const attrBpAvgPerMessageNs =
-                              contributor.messagesWindow > 0
-                                ? contributor.attributableBackpressureNsWindow
-                                  / contributor.messagesWindow
-                                : 0;
                             const contributorExpanded =
                               selectedContributorEndpointId === contributor.endpointId;
                             return (
@@ -1030,63 +1023,54 @@ export function ProfilingPanel({
                                             ),
                                           }}
                                         />
-                                        {shortTopic(contributor.topic, 72)}
+                                        <span className="subscriber-topic-label">
+                                          {shortTopic(contributor.topic, 72)}
+                                        </span>
                                       </span>
-                                    </p>
-                                    <p
-                                      className="muted mono subscriber-endpoint-token"
-                                      title={contributor.endpointId}
-                                    >
-                                      endpoint {shortEndpointToken(contributor.endpointId)}
                                     </p>
                                   </div>
                                   <div className="subscriber-item__metrics">
                                     <span>
-                                      <em>Backpressure Avg</em>
-                                      <strong>
-                                        {formatMs(attrBpAvgPerMessageNs)}
-                                      </strong>
-                                    </span>
-                                    <span>
-                                      <em>Events (total)</em>
-                                      <strong>{contributor.attributableBackpressureEvents}</strong>
-                                    </span>
-                                    <span>
-                                      <em>Msgs</em>
+                                      <em>{windowLabel ? `Msgs (${windowLabel})` : "Msgs"}</em>
                                       <strong>{contributor.messagesWindow}</strong>
+                                    </span>
+                                    <span>
+                                      <em>Channel</em>
+                                      <strong>{contributor.channelKindLast}</strong>
                                     </span>
                                   </div>
                                 </button>
                                 {contributorExpanded ? (
                                   <div className="subscriber-item__detail">
-                                    <dl>
-                                      <div className="subscriber-item__detail-row-full">
-                                        <dt>Topic</dt>
-                                        <dd className="mono">{contributor.topic}</dd>
+                                    <>
+                                      <div className="publisher-kpis">
+                                        <article className="mini-kpi">
+                                          <span>Host</span>
+                                          <strong>{contributor.host}</strong>
+                                        </article>
+                                        <article className="mini-kpi">
+                                          <span>PID</span>
+                                          <strong>{contributor.pid}</strong>
+                                        </article>
+                                        <article className="mini-kpi">
+                                          <span>Process</span>
+                                          <strong
+                                            className="mono"
+                                            title={contributor.processId}
+                                          >
+                                            {contributor.processId.slice(0, 8)}
+                                          </strong>
+                                        </article>
                                       </div>
-                                      <div className="subscriber-item__detail-row-full">
-                                        <dt>Endpoint</dt>
-                                        <dd className="mono">{contributor.endpointId}</dd>
+                                      <div className="publisher-detail-line">
+                                        <div className="publisher-endpoint">
+                                          <span>Endpoint</span>
+                                          <code className="mono" title={contributor.endpointId}>
+                                            {contributor.endpointId}
+                                          </code>
+                                        </div>
                                       </div>
-                                      <div>
-                                        <dt>Process</dt>
-                                        <dd className="mono">
-                                          {contributor.processId.slice(0, 8)} (pid {contributor.pid})
-                                        </dd>
-                                      </div>
-                                      <div>
-                                        <dt>Host</dt>
-                                        <dd>{contributor.host}</dd>
-                                      </div>
-                                      <div>
-                                        <dt>User Span Avg</dt>
-                                        <dd>{formatMs(contributor.userSpanNsAvgWindow)}</dd>
-                                      </div>
-                                      <div>
-                                        <dt>Backpressure Sum (Window)</dt>
-                                        <dd>{formatMs(contributor.attributableBackpressureNsWindow)}</dd>
-                                      </div>
-                                    </dl>
+                                    </>
                                   </div>
                                 ) : null}
                               </article>

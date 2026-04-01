@@ -387,9 +387,9 @@ class GraphContextLifecycleService:
                 continue
 
     def _subscriber_trace_metrics(self, metrics: list[str] | None) -> list[str]:
-        allowed = {"lease_time_ns", "attributable_backpressure_ns"}
+        allowed = {"lease_time_ns", "user_span_ns"}
         if metrics is None:
-            return ["lease_time_ns", "attributable_backpressure_ns"]
+            return ["lease_time_ns", "user_span_ns"]
         return [metric for metric in metrics if metric in allowed]
 
     def _topic_scope_for_seed(

@@ -11,7 +11,7 @@ export type DashboardFixtureTraceSubscriber = {
   endpointId: string;
   topic: string;
   leaseTimeNsBase: number;
-  attributableBackpressureNsBase: number;
+  userSpanNsBase: number;
 };
 
 export type DashboardFixtureTraceScenario = {
@@ -75,13 +75,9 @@ function publisherSnapshot(
   options: {
     messagesPublishedWindow: number;
     publishRateHzWindow: number;
-    publishDeltaNsAvgWindow: number;
     inflightCurrent?: number;
     numBuffers?: number;
-    inflightPeakWindow?: number;
-    backpressureWaitNsWindow?: number;
     messagesPublishedTotal?: number;
-    backpressureWaitNsTotal?: number;
     timestamp?: number;
   }
 ): PublisherProfilingSnapshot {
@@ -91,14 +87,9 @@ function publisherSnapshot(
     messages_published_total:
       options.messagesPublishedTotal ?? options.messagesPublishedWindow * 10,
     messages_published_window: options.messagesPublishedWindow,
-    publish_delta_ns_avg_window: options.publishDeltaNsAvgWindow,
     publish_rate_hz_window: options.publishRateHzWindow,
     inflight_messages_current: options.inflightCurrent ?? 0,
     num_buffers: options.numBuffers ?? 8,
-    inflight_messages_peak_window: options.inflightPeakWindow ?? Math.max(1, options.inflightCurrent ?? 0),
-    backpressure_wait_ns_total:
-      options.backpressureWaitNsTotal ?? options.backpressureWaitNsWindow ?? 0,
-    backpressure_wait_ns_window: options.backpressureWaitNsWindow ?? 0,
     timestamp: options.timestamp ?? 1_711_111_111,
   };
 }
@@ -108,14 +99,7 @@ function subscriberSnapshot(
   topic: string,
   options: {
     messagesReceivedWindow: number;
-    leaseTimeNsAvgWindow: number;
-    userSpanNsAvgWindow: number;
-    attributableBackpressureNsWindow: number;
-    attributableBackpressureEventsTotal: number;
     messagesReceivedTotal?: number;
-    leaseTimeNsTotal?: number;
-    userSpanNsTotal?: number;
-    attributableBackpressureNsTotal?: number;
     channelKindLast?: string;
     timestamp?: number;
   }
@@ -126,17 +110,6 @@ function subscriberSnapshot(
     messages_received_total:
       options.messagesReceivedTotal ?? options.messagesReceivedWindow * 10,
     messages_received_window: options.messagesReceivedWindow,
-    lease_time_ns_total:
-      options.leaseTimeNsTotal ?? options.leaseTimeNsAvgWindow * Math.max(1, options.messagesReceivedWindow),
-    lease_time_ns_avg_window: options.leaseTimeNsAvgWindow,
-    user_span_ns_total:
-      options.userSpanNsTotal ?? options.userSpanNsAvgWindow * Math.max(1, options.messagesReceivedWindow),
-    user_span_ns_avg_window: options.userSpanNsAvgWindow,
-    attributable_backpressure_ns_total:
-      options.attributableBackpressureNsTotal
-      ?? options.attributableBackpressureNsWindow * Math.max(1, options.messagesReceivedWindow),
-    attributable_backpressure_ns_window: options.attributableBackpressureNsWindow,
-    attributable_backpressure_events_total: options.attributableBackpressureEventsTotal,
     channel_kind_last: options.channelKindLast ?? "fifo",
     timestamp: options.timestamp ?? 1_711_111_111,
   };
@@ -257,13 +230,9 @@ const rootScopeFixture: DashboardFixture = {
           topic: "SYSTEM/PING_TOPIC",
           messages_published_total: 120,
           messages_published_window: 20,
-          publish_delta_ns_avg_window: 1_500_000,
           publish_rate_hz_window: 10,
           inflight_messages_current: 1,
           num_buffers: 8,
-          inflight_messages_peak_window: 2,
-          backpressure_wait_ns_total: 2_000_000,
-          backpressure_wait_ns_window: 500_000,
           timestamp: 1_711_111_111,
         },
       }),
@@ -756,10 +725,7 @@ const profilingTraceFixture: DashboardFixture = {
             {
               messagesPublishedWindow: 2,
               publishRateHzWindow: 1,
-              publishDeltaNsAvgWindow: 950_000_000,
               numBuffers: 4,
-              inflightPeakWindow: 1,
-              backpressureWaitNsWindow: 900_000,
             }
           ),
           "TRACE_LAB/DENSE_TOPIC:dense-publisher-endpoint": publisherSnapshot(
@@ -768,11 +734,8 @@ const profilingTraceFixture: DashboardFixture = {
             {
               messagesPublishedWindow: 120,
               publishRateHzWindow: 60,
-              publishDeltaNsAvgWindow: 16_500_000,
               inflightCurrent: 2,
               numBuffers: 16,
-              inflightPeakWindow: 4,
-              backpressureWaitNsWindow: 3_800_000,
             }
           ),
         },
@@ -787,10 +750,7 @@ const profilingTraceFixture: DashboardFixture = {
                   `TRACE_LAB/SPARSE_SUB_${lane}_TOPIC`,
                   {
                     messagesReceivedWindow: 2,
-                    leaseTimeNsAvgWindow: 8_000_000 + index * 900_000,
-                    userSpanNsAvgWindow: 2_800_000 + index * 250_000,
-                    attributableBackpressureNsWindow: index % 2 === 0 ? 1_200_000 + index * 300_000 : 0,
-                    attributableBackpressureEventsTotal: index % 2 === 0 ? 4 + index : 0,
+                    channelKindLast: index % 2 === 0 ? "fifo" : "shared_memory",
                   }
                 ),
               ];
@@ -806,12 +766,8 @@ const profilingTraceFixture: DashboardFixture = {
                   `TRACE_LAB/DENSE_SUB_${lane}_TOPIC`,
                   {
                     messagesReceivedWindow: 120,
-                    leaseTimeNsAvgWindow: 1_400_000 + index * 180_000,
-                    userSpanNsAvgWindow: 950_000 + index * 90_000,
-                    attributableBackpressureNsWindow:
-                      index < 3 ? 6_000_000 + index * 800_000 : index % 2 === 0 ? 1_200_000 : 0,
-                    attributableBackpressureEventsTotal:
-                      index < 3 ? 28 + index * 3 : index % 2 === 0 ? 6 + index : 0,
+                    channelKindLast:
+                      index < 3 ? "tcp" : index % 2 === 0 ? "fifo" : "shared_memory",
                   }
                 ),
               ];
@@ -837,7 +793,7 @@ const profilingTraceFixture: DashboardFixture = {
           endpointId: `sparse-subscriber-${lane}`,
           topic: `TRACE_LAB/SPARSE_SUB_${lane}_TOPIC`,
           leaseTimeNsBase: 7_000_000 + index * 800_000,
-          attributableBackpressureNsBase: index % 2 === 0 ? 1_100_000 + index * 250_000 : 120_000,
+          userSpanNsBase: 2_500_000 + index * 240_000,
         };
       }),
     },
@@ -856,7 +812,7 @@ const profilingTraceFixture: DashboardFixture = {
           endpointId: `dense-subscriber-${lane}`,
           topic: `TRACE_LAB/DENSE_SUB_${lane}_TOPIC`,
           leaseTimeNsBase: 1_300_000 + index * 140_000,
-          attributableBackpressureNsBase: index < 3 ? 2_800_000 + index * 500_000 : 280_000 + index * 60_000,
+          userSpanNsBase: 920_000 + index * 110_000,
         };
       }),
     },

@@ -19,9 +19,10 @@ type TraceTimingPanelProps = {
   topic: string;
   topicScope?: string[];
   leaseColorMap?: Record<string, string>;
-  selectedLeaseEndpointId?: string | null;
+  selectedSubscriberEndpointId?: string | null;
   windowSeconds: number;
   onWindowSecondsChange?: (seconds: number) => void;
+  darkMode?: boolean;
 };
 
 type PlotLayout = {
@@ -51,17 +52,20 @@ type RendererState = {
   lastCursorCol: number | null;
   yMaxMs: number;
   publishCycle: Int32Array;
-  attrCycle: Int32Array;
   leaseCycleByEndpoint: Map<string, Int32Array>;
+  userCycleByEndpoint: Map<string, Int32Array>;
   publishBins: Float32Array;
   publishPeakBins: Float32Array;
   publishSumBins: Float64Array;
   publishCountBins: Uint16Array;
-  attrBins: Float32Array;
   leaseBinsByEndpoint: Map<string, Float32Array>;
   leasePeakBinsByEndpoint: Map<string, Float32Array>;
   leaseSumByEndpoint: Map<string, Float64Array>;
   leaseCountByEndpoint: Map<string, Uint16Array>;
+  userBinsByEndpoint: Map<string, Float32Array>;
+  userPeakBinsByEndpoint: Map<string, Float32Array>;
+  userSumByEndpoint: Map<string, Float64Array>;
+  userCountByEndpoint: Map<string, Uint16Array>;
 };
 
 type TraceCursorPosition = {
@@ -69,13 +73,35 @@ type TraceCursorPosition = {
   cycle: number;
 };
 
-const BG_COLOR = "#0f172a";
-const GRID_COLOR = "#1e293b";
-const AXIS_COLOR = "#334155";
-const LABEL_COLOR = "#cbd5e1";
-const PUBLISH_COLOR = "#38bdf8";
-const ATTR_BP_COLOR = "#f59e0b";
-const CURSOR_COLOR = "#fbbf24";
+type TracePalette = {
+  background: string;
+  grid: string;
+  axis: string;
+  label: string;
+  publish: string;
+  cursor: string;
+  waitingText: string;
+};
+
+const LIGHT_TRACE_PALETTE: TracePalette = {
+  background: "#f4f8fd",
+  grid: "#d9e4f0",
+  axis: "#bac9da",
+  label: "#5d6f86",
+  publish: "#0ea5e9",
+  cursor: "#e8a317",
+  waitingText: "#7a8ea8",
+};
+
+const DARK_TRACE_PALETTE: TracePalette = {
+  background: "#0f172a",
+  grid: "#1e293b",
+  axis: "#334155",
+  label: "#cbd5e1",
+  publish: "#38bdf8",
+  cursor: "#fbbf24",
+  waitingText: "#94a3b8",
+};
 const CURSOR_LEAD_COLS = 2;
 const MIN_Y_MAX_MS = 0.1;
 const DEFAULT_MANUAL_Y_MAX_MS = 5.0;
@@ -149,17 +175,20 @@ function makeRendererState(
     lastCursorCol: null,
     yMaxMs,
     publishCycle: new Int32Array(cycle),
-    attrCycle: new Int32Array(cycle),
     leaseCycleByEndpoint: new Map<string, Int32Array>(),
+    userCycleByEndpoint: new Map<string, Int32Array>(),
     publishBins: makeNaNBins(layout.cols),
     publishPeakBins: makeNaNBins(layout.cols),
     publishSumBins: new Float64Array(layout.cols),
     publishCountBins: new Uint16Array(layout.cols),
-    attrBins: makeNaNBins(layout.cols),
     leaseBinsByEndpoint: new Map<string, Float32Array>(),
     leasePeakBinsByEndpoint: new Map<string, Float32Array>(),
     leaseSumByEndpoint: new Map<string, Float64Array>(),
     leaseCountByEndpoint: new Map<string, Uint16Array>(),
+    userBinsByEndpoint: new Map<string, Float32Array>(),
+    userPeakBinsByEndpoint: new Map<string, Float32Array>(),
+    userSumByEndpoint: new Map<string, Float64Array>(),
+    userCountByEndpoint: new Map<string, Uint16Array>(),
   };
 }
 
@@ -209,8 +238,6 @@ function clearColumn(state: RendererState, col: number): void {
   state.publishSumBins[col] = 0;
   state.publishCountBins[col] = 0;
 
-  state.attrBins[col] = Number.NaN;
-
   for (const leaseBins of state.leaseBinsByEndpoint.values()) {
     leaseBins[col] = Number.NaN;
   }
@@ -223,6 +250,18 @@ function clearColumn(state: RendererState, col: number): void {
   for (const leaseCounts of state.leaseCountByEndpoint.values()) {
     leaseCounts[col] = 0;
   }
+  for (const userBins of state.userBinsByEndpoint.values()) {
+    userBins[col] = Number.NaN;
+  }
+  for (const userPeakBins of state.userPeakBinsByEndpoint.values()) {
+    userPeakBins[col] = Number.NaN;
+  }
+  for (const userSums of state.userSumByEndpoint.values()) {
+    userSums[col] = 0;
+  }
+  for (const userCounts of state.userCountByEndpoint.values()) {
+    userCounts[col] = 0;
+  }
 }
 
 function clearAllColumns(state: RendererState): void {
@@ -230,8 +269,6 @@ function clearAllColumns(state: RendererState): void {
   state.publishPeakBins.fill(Number.NaN);
   state.publishSumBins.fill(0);
   state.publishCountBins.fill(0);
-
-  state.attrBins.fill(Number.NaN);
 
   for (const leaseBins of state.leaseBinsByEndpoint.values()) {
     leaseBins.fill(Number.NaN);
@@ -244,6 +281,18 @@ function clearAllColumns(state: RendererState): void {
   }
   for (const leaseCounts of state.leaseCountByEndpoint.values()) {
     leaseCounts.fill(0);
+  }
+  for (const userBins of state.userBinsByEndpoint.values()) {
+    userBins.fill(Number.NaN);
+  }
+  for (const userPeakBins of state.userPeakBinsByEndpoint.values()) {
+    userPeakBins.fill(Number.NaN);
+  }
+  for (const userSums of state.userSumByEndpoint.values()) {
+    userSums.fill(0);
+  }
+  for (const userCounts of state.userCountByEndpoint.values()) {
+    userCounts.fill(0);
   }
 }
 
@@ -283,7 +332,8 @@ function clearRange(
   context: CanvasRenderingContext2D,
   layout: PlotLayout,
   startCol: number,
-  endCol: number
+  endCol: number,
+  palette: TracePalette
 ): void {
   const start = clamp(startCol, 0, layout.cols - 1);
   const end = clamp(endCol, 0, layout.cols - 1);
@@ -292,10 +342,10 @@ function clearRange(
   }
   const x0 = layout.left + start;
   const width = end - start + 1;
-  context.fillStyle = BG_COLOR;
+  context.fillStyle = palette.background;
   context.fillRect(x0, layout.top, width, layout.plotHeight);
 
-  context.strokeStyle = GRID_COLOR;
+  context.strokeStyle = palette.grid;
   context.lineWidth = 1;
   for (let i = 0; i <= layout.xTicks; i += 1) {
     const x = layout.left + (i / layout.xTicks) * layout.plotWidth;
@@ -315,7 +365,7 @@ function clearRange(
     context.lineTo(x0 + width, y);
     context.stroke();
   }
-  context.strokeStyle = AXIS_COLOR;
+  context.strokeStyle = palette.axis;
   context.beginPath();
   context.moveTo(x0, layout.plotBottom);
   context.lineTo(x0 + width, layout.plotBottom);
@@ -328,6 +378,8 @@ function drawLineRange(
   {
     color,
     lineWidth,
+    alpha = 1,
+    lineDash = [],
     startCol,
     endCol,
     yMaxMs,
@@ -335,6 +387,8 @@ function drawLineRange(
   }: {
     color: string;
     lineWidth: number;
+    alpha?: number;
+    lineDash?: number[];
     startCol: number;
     endCol: number;
     yMaxMs: number;
@@ -345,6 +399,8 @@ function drawLineRange(
   const to = Math.min(layout.cols - 1, endCol + 1);
   context.strokeStyle = color;
   context.lineWidth = lineWidth;
+  context.globalAlpha = alpha;
+  context.setLineDash(lineDash);
   context.beginPath();
   const overflowStarts: number[] = [];
   let previousCol: number | null = null;
@@ -388,66 +444,15 @@ function drawLineRange(
     previousWasOverflow = isOverflow;
   }
   context.stroke();
+  context.setLineDash([]);
+  context.globalAlpha = 1;
 
   if (overflowStarts.length > 0) {
     context.fillStyle = color;
-    context.globalAlpha = 0.72;
+    context.globalAlpha = Math.min(1, alpha + 0.1);
     for (const col of overflowStarts) {
       const x = layout.left + col;
       context.fillRect(x, layout.plotTop, 1, 3);
-    }
-    context.globalAlpha = 1;
-  }
-}
-
-function drawAttrRange(
-  context: CanvasRenderingContext2D,
-  bins: Float32Array,
-  {
-    startCol,
-    endCol,
-    yMaxMs,
-    layout,
-  }: {
-    startCol: number;
-    endCol: number;
-    yMaxMs: number;
-    layout: PlotLayout;
-  }
-): void {
-  context.strokeStyle = ATTR_BP_COLOR;
-  context.lineWidth = 1;
-  context.globalAlpha = 0.5;
-  const overflowStarts: number[] = [];
-  let previousWasOverflow = false;
-  for (let col = startCol; col <= endCol; col += 1) {
-    const valueMs = bins[col];
-    if (!Number.isFinite(valueMs)) {
-      previousWasOverflow = false;
-      continue;
-    }
-    const isOverflow = valueMs > yMaxMs;
-    if (isOverflow && !previousWasOverflow) {
-      overflowStarts.push(col);
-    }
-    previousWasOverflow = isOverflow;
-    if (isOverflow) {
-      continue;
-    }
-    const x = layout.left + col + 0.5;
-    const y = yFromMs(valueMs, yMaxMs, layout);
-    context.beginPath();
-    context.moveTo(x, layout.plotBottom);
-    context.lineTo(x, y);
-    context.stroke();
-  }
-  context.globalAlpha = 1;
-  if (overflowStarts.length > 0) {
-    context.fillStyle = ATTR_BP_COLOR;
-    context.globalAlpha = 0.75;
-    for (const col of overflowStarts) {
-      const x = layout.left + col;
-      context.fillRect(x, layout.plotTop + 1, 1, 2);
     }
     context.globalAlpha = 1;
   }
@@ -457,6 +462,49 @@ function drawPeakWhiskersRange(
   context: CanvasRenderingContext2D,
   avgBins: Float32Array,
   peakBins: Float32Array,
+  {
+    color,
+    alpha,
+    lineDash = [],
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  }: {
+    color: string;
+    alpha: number;
+    lineDash?: number[];
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+  }
+): void {
+  context.strokeStyle = color;
+  context.lineWidth = 1;
+  context.globalAlpha = alpha;
+  context.setLineDash(lineDash);
+  for (let col = startCol; col <= endCol; col += 1) {
+    const avgMs = avgBins[col];
+    const peakMs = peakBins[col];
+    if (!Number.isFinite(avgMs) || !Number.isFinite(peakMs) || peakMs <= avgMs) {
+      continue;
+    }
+    const x = layout.left + col + 0.5;
+    const yLow = avgMs > yMaxMs ? layout.plotTop : yFromMs(avgMs, yMaxMs, layout);
+    const yHigh = peakMs > yMaxMs ? layout.plotTop : yFromMs(peakMs, yMaxMs, layout);
+    context.beginPath();
+    context.moveTo(x, yLow);
+    context.lineTo(x, yHigh);
+    context.stroke();
+  }
+  context.setLineDash([]);
+  context.globalAlpha = 1;
+}
+
+function drawFilledBinsRange(
+  context: CanvasRenderingContext2D,
+  bins: Float32Array,
   {
     color,
     alpha,
@@ -473,24 +521,115 @@ function drawPeakWhiskersRange(
     layout: PlotLayout;
   }
 ): void {
-  context.strokeStyle = color;
-  context.lineWidth = 1;
-  context.globalAlpha = alpha;
-  for (let col = startCol; col <= endCol; col += 1) {
-    const avgMs = avgBins[col];
-    const peakMs = peakBins[col];
-    if (!Number.isFinite(avgMs) || !Number.isFinite(peakMs) || peakMs <= avgMs) {
+  const from = Math.max(0, startCol - 1);
+  const to = Math.min(layout.cols - 1, endCol + 1);
+  let firstCol: number | null = null;
+  let lastCol: number | null = null;
+
+  for (let col = from; col <= to; col += 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs) || valueMs <= 0) {
       continue;
     }
-    const x = layout.left + col + 0.5;
-    const yLow = avgMs > yMaxMs ? layout.plotTop : yFromMs(avgMs, yMaxMs, layout);
-    const yHigh = peakMs > yMaxMs ? layout.plotTop : yFromMs(peakMs, yMaxMs, layout);
-    context.beginPath();
-    context.moveTo(x, yLow);
-    context.lineTo(x, yHigh);
-    context.stroke();
+    if (firstCol === null) {
+      firstCol = col;
+    }
+    lastCol = col;
   }
+
+  if (firstCol === null || lastCol === null) {
+    return;
+  }
+
+  context.fillStyle = color;
+  context.globalAlpha = alpha;
+  context.beginPath();
+  context.moveTo(layout.left + firstCol + 0.5, layout.plotBottom);
+
+  for (let col = firstCol; col <= lastCol; col += 1) {
+    const valueMs = bins[col];
+    if (!Number.isFinite(valueMs) || valueMs <= 0) {
+      continue;
+    }
+    const clampedMs = Math.min(valueMs, yMaxMs);
+    const x = layout.left + col + 0.5;
+    const y = yFromMs(clampedMs, yMaxMs, layout);
+    context.lineTo(x, y);
+  }
+  context.lineTo(layout.left + lastCol + 0.5, layout.plotBottom);
+  context.closePath();
+  context.fill();
   context.globalAlpha = 1;
+}
+
+function drawSelectedSubscriberFlameRange(
+  context: CanvasRenderingContext2D,
+  {
+    leaseBins,
+    userBins,
+    color,
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  }: {
+    leaseBins: Float32Array;
+    userBins: Float32Array | null;
+    color: string;
+    startCol: number;
+    endCol: number;
+    yMaxMs: number;
+    layout: PlotLayout;
+  }
+): void {
+  drawFilledBinsRange(context, leaseBins, {
+    color,
+    alpha: 0.18,
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  });
+
+  if (userBins !== null) {
+    const clampedUserBins = new Float32Array(userBins.length);
+    clampedUserBins.fill(Number.NaN);
+    for (let col = startCol; col <= endCol && col < userBins.length; col += 1) {
+      const userMs = userBins[col];
+      const leaseMs = leaseBins[col];
+      if (!Number.isFinite(userMs)) {
+        continue;
+      }
+      clampedUserBins[col] = Number.isFinite(leaseMs) ? Math.min(userMs, leaseMs) : userMs;
+    }
+    drawFilledBinsRange(context, clampedUserBins, {
+      color,
+      alpha: 0.42,
+      startCol,
+      endCol,
+      yMaxMs,
+      layout,
+    });
+    drawLineRange(context, clampedUserBins, {
+      color,
+      lineWidth: 1.1,
+      alpha: 0.95,
+      startCol,
+      endCol,
+      yMaxMs,
+      layout,
+    });
+  }
+
+  drawLineRange(context, leaseBins, {
+    color,
+    lineWidth: 1.15,
+    alpha: 0.9,
+    startCol,
+    endCol,
+    yMaxMs,
+    layout,
+  });
 }
 
 function drawRange(
@@ -498,48 +637,63 @@ function drawRange(
   state: RendererState,
   startCol: number,
   endCol: number,
-  showAttrBp: boolean,
-  showSubscribers: boolean,
-  selectedLeaseEndpointId: string | null,
-  leaseColorMap?: Record<string, string>
+  subscriberMetric: "lease_time_ns" | "user_span_ns",
+  selectedSubscriberEndpointId: string | null,
+  leaseColorMap?: Record<string, string>,
+  palette: TracePalette = DARK_TRACE_PALETTE
 ): void {
-  clearRange(context, state.layout, startCol, endCol);
-  if (showAttrBp) {
-    drawAttrRange(context, state.attrBins, {
-      startCol,
-      endCol,
-      yMaxMs: state.yMaxMs,
-      layout: state.layout,
-    });
-  }
-  if (showSubscribers) {
-    for (const [endpointId, bins] of state.leaseBinsByEndpoint.entries()) {
-      if (selectedLeaseEndpointId && endpointId !== selectedLeaseEndpointId) {
-        continue;
-      }
-      const peakBins = state.leasePeakBinsByEndpoint.get(endpointId);
-      if (peakBins) {
-        drawPeakWhiskersRange(context, bins, peakBins, {
-          color: leaseColorForEndpoint(endpointId, leaseColorMap),
-          alpha: 0.3,
-          startCol,
-          endCol,
-          yMaxMs: state.yMaxMs,
-          layout: state.layout,
-        });
-      }
-      drawLineRange(context, bins, {
-        color: leaseColorForEndpoint(endpointId, leaseColorMap),
-        lineWidth: 1.1,
+  clearRange(context, state.layout, startCol, endCol, palette);
+  if (selectedSubscriberEndpointId) {
+    const selectedLeaseBins =
+      state.leaseBinsByEndpoint.get(selectedSubscriberEndpointId) ?? null;
+    if (selectedLeaseBins) {
+      drawSelectedSubscriberFlameRange(context, {
+        leaseBins: selectedLeaseBins,
+        userBins: state.userBinsByEndpoint.get(selectedSubscriberEndpointId) ?? null,
+        color: leaseColorForEndpoint(selectedSubscriberEndpointId, leaseColorMap),
         startCol,
         endCol,
         yMaxMs: state.yMaxMs,
         layout: state.layout,
       });
     }
+  } else {
+  const binsByEndpoint =
+    subscriberMetric === "lease_time_ns"
+      ? state.leaseBinsByEndpoint
+      : state.userBinsByEndpoint;
+  const peakBinsByEndpoint =
+    subscriberMetric === "lease_time_ns"
+      ? state.leasePeakBinsByEndpoint
+      : state.userPeakBinsByEndpoint;
+
+  for (const [endpointId, bins] of binsByEndpoint.entries()) {
+    if (selectedSubscriberEndpointId && endpointId !== selectedSubscriberEndpointId) {
+      continue;
+    }
+    const peakBins = peakBinsByEndpoint.get(endpointId);
+    if (peakBins) {
+      drawPeakWhiskersRange(context, bins, peakBins, {
+        color: leaseColorForEndpoint(endpointId, leaseColorMap),
+        alpha: 0.3,
+        startCol,
+        endCol,
+        yMaxMs: state.yMaxMs,
+        layout: state.layout,
+      });
+    }
+    drawLineRange(context, bins, {
+      color: leaseColorForEndpoint(endpointId, leaseColorMap),
+      lineWidth: 1.1,
+      startCol,
+      endCol,
+      yMaxMs: state.yMaxMs,
+      layout: state.layout,
+    });
+  }
   }
   drawPeakWhiskersRange(context, state.publishBins, state.publishPeakBins, {
-    color: PUBLISH_COLOR,
+    color: palette.publish,
     alpha: 0.35,
     startCol,
     endCol,
@@ -547,7 +701,7 @@ function drawRange(
     layout: state.layout,
   });
   drawLineRange(context, state.publishBins, {
-    color: PUBLISH_COLOR,
+    color: palette.publish,
     lineWidth: 1.25,
     startCol,
     endCol,
@@ -559,16 +713,17 @@ function drawRange(
 function drawLabelsAndCursor(
   context: CanvasRenderingContext2D,
   state: RendererState,
-  windowSeconds: number
+  windowSeconds: number,
+  palette: TracePalette
 ): void {
   const { layout } = state;
-  context.fillStyle = BG_COLOR;
+  context.fillStyle = palette.background;
   context.fillRect(0, 0, layout.left - 2, layout.height);
   context.fillRect(layout.left, layout.plotBottom + 1, layout.plotWidth, layout.bottom + 6);
 
   if (state.lastCursorCol !== null) {
     const x = layout.left + state.lastCursorCol + 0.5;
-    context.strokeStyle = CURSOR_COLOR;
+    context.strokeStyle = palette.cursor;
     context.lineWidth = 2;
     context.beginPath();
     context.moveTo(x, layout.top);
@@ -576,7 +731,7 @@ function drawLabelsAndCursor(
     context.stroke();
   }
 
-  context.fillStyle = LABEL_COLOR;
+  context.fillStyle = palette.label;
   context.font = '11px "Avenir Next", sans-serif';
   context.textAlign = "right";
   context.fillText(
@@ -611,6 +766,52 @@ function estimateAutoYMaxMsFromRateHz(rateHz: number): number {
   return roundUpLog10Ms(nominalPublishDeltaMs * 1.25);
 }
 
+function getOrCreateEndpointSeries(
+  binsByEndpoint: Map<string, Float32Array>,
+  peakBinsByEndpoint: Map<string, Float32Array>,
+  sumByEndpoint: Map<string, Float64Array>,
+  countByEndpoint: Map<string, Uint16Array>,
+  cycleByEndpoint: Map<string, Int32Array>,
+  endpointId: string,
+  cols: number
+): {
+  bins: Float32Array;
+  peakBins: Float32Array;
+  sumBins: Float64Array;
+  countBins: Uint16Array;
+  cycleBins: Int32Array;
+} {
+  let bins = binsByEndpoint.get(endpointId);
+  let peakBins = peakBinsByEndpoint.get(endpointId);
+  let sumBins = sumByEndpoint.get(endpointId);
+  let countBins = countByEndpoint.get(endpointId);
+  let cycleBins = cycleByEndpoint.get(endpointId);
+
+  if (!bins) {
+    bins = makeNaNBins(cols);
+    binsByEndpoint.set(endpointId, bins);
+  }
+  if (!peakBins) {
+    peakBins = makeNaNBins(cols);
+    peakBinsByEndpoint.set(endpointId, peakBins);
+  }
+  if (!sumBins) {
+    sumBins = new Float64Array(cols);
+    sumByEndpoint.set(endpointId, sumBins);
+  }
+  if (!countBins) {
+    countBins = new Uint16Array(cols);
+    countByEndpoint.set(endpointId, countBins);
+  }
+  if (!cycleBins) {
+    cycleBins = new Int32Array(cols);
+    cycleBins.fill(-2147483648);
+    cycleByEndpoint.set(endpointId, cycleBins);
+  }
+
+  return { bins, peakBins, sumBins, countBins, cycleBins };
+}
+
 export function TraceTimingPanel({
   samples,
   publisherProcessId,
@@ -619,9 +820,10 @@ export function TraceTimingPanel({
   topic,
   topicScope,
   leaseColorMap,
-  selectedLeaseEndpointId = null,
+  selectedSubscriberEndpointId = null,
   windowSeconds,
   onWindowSecondsChange,
+  darkMode = false,
 }: TraceTimingPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasPixelSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -634,8 +836,17 @@ export function TraceTimingPanel({
   const [manualYMaxInput, setManualYMaxInput] = useState(
     `${DEFAULT_MANUAL_Y_MAX_MS.toFixed(2)}`
   );
-  const [showAttrBp, setShowAttrBp] = useState(true);
-  const [showSubscribers, setShowSubscribers] = useState(true);
+  const [subscriberMetric, setSubscriberMetric] = useState<
+    "lease_time_ns" | "user_span_ns"
+  >("lease_time_ns");
+  const selectedSubscriberColor = useMemo(
+    () =>
+      selectedSubscriberEndpointId
+        ? leaseColorForEndpoint(selectedSubscriberEndpointId, leaseColorMap)
+        : null,
+    [leaseColorMap, selectedSubscriberEndpointId]
+  );
+  const palette = darkMode ? DARK_TRACE_PALETTE : LIGHT_TRACE_PALETTE;
 
   const manualYMaxMs = useMemo(
     () => parsePositiveFloat(manualYMaxInput),
@@ -731,7 +942,7 @@ export function TraceTimingPanel({
       );
       rendererRef.current = renderer;
       lastBatchRef.current = null;
-      context.fillStyle = BG_COLOR;
+      context.fillStyle = palette.background;
       context.fillRect(0, 0, layout.width, layout.height);
     }
 
@@ -769,9 +980,9 @@ export function TraceTimingPanel({
         sample.metric === "publish_delta_ns"
         && sample.processId === publisherProcessId
         && sample.endpointId === publisherEndpointId;
-      const isAttrMetric = sample.metric === "attributable_backpressure_ns";
       const isLeaseMetric = sample.metric === "lease_time_ns";
-      if (!isPublisherMetric && !isAttrMetric && !isLeaseMetric) {
+      const isUserMetric = sample.metric === "user_span_ns";
+      if (!isPublisherMetric && !isLeaseMetric && !isUserMetric) {
         continue;
       }
 
@@ -829,64 +1040,46 @@ export function TraceTimingPanel({
           renderer.publishPeakBins[col] = valueMs;
           changedCols.add(col);
         }
-      } else if (isAttrMetric) {
-        if (cycle > renderer.attrCycle[col]) {
-          renderer.attrCycle[col] = cycle;
-          renderer.attrBins[col] = Number.NaN;
-          changedCols.add(col);
-        }
-        const current = renderer.attrBins[col];
-        if (!Number.isFinite(current) || valueMs > current) {
-          renderer.attrBins[col] = valueMs;
-          changedCols.add(col);
-        }
       } else {
-        let leaseBins = renderer.leaseBinsByEndpoint.get(sample.endpointId);
-        let leasePeakBins = renderer.leasePeakBinsByEndpoint.get(sample.endpointId);
-        let leaseSumBins = renderer.leaseSumByEndpoint.get(sample.endpointId);
-        let leaseCountBins = renderer.leaseCountByEndpoint.get(sample.endpointId);
-        let leaseCycle = renderer.leaseCycleByEndpoint.get(sample.endpointId);
-        if (!leaseBins) {
-          leaseBins = makeNaNBins(renderer.layout.cols);
-          renderer.leaseBinsByEndpoint.set(sample.endpointId, leaseBins);
-        }
-        if (!leasePeakBins) {
-          leasePeakBins = makeNaNBins(renderer.layout.cols);
-          renderer.leasePeakBinsByEndpoint.set(sample.endpointId, leasePeakBins);
-        }
-        if (!leaseSumBins) {
-          leaseSumBins = new Float64Array(renderer.layout.cols);
-          renderer.leaseSumByEndpoint.set(sample.endpointId, leaseSumBins);
-        }
-        if (!leaseCountBins) {
-          leaseCountBins = new Uint16Array(renderer.layout.cols);
-          renderer.leaseCountByEndpoint.set(sample.endpointId, leaseCountBins);
-        }
-        if (!leaseCycle) {
-          leaseCycle = new Int32Array(renderer.layout.cols);
-          leaseCycle.fill(-2147483648);
-          renderer.leaseCycleByEndpoint.set(sample.endpointId, leaseCycle);
-        }
-        if (cycle > leaseCycle[col]) {
-          leaseCycle[col] = cycle;
-          leaseBins[col] = Number.NaN;
-          leasePeakBins[col] = Number.NaN;
-          leaseSumBins[col] = 0;
-          leaseCountBins[col] = 0;
+        const endpointSeries = isLeaseMetric
+          ? getOrCreateEndpointSeries(
+            renderer.leaseBinsByEndpoint,
+            renderer.leasePeakBinsByEndpoint,
+            renderer.leaseSumByEndpoint,
+            renderer.leaseCountByEndpoint,
+            renderer.leaseCycleByEndpoint,
+            sample.endpointId,
+            renderer.layout.cols
+          )
+          : getOrCreateEndpointSeries(
+            renderer.userBinsByEndpoint,
+            renderer.userPeakBinsByEndpoint,
+            renderer.userSumByEndpoint,
+            renderer.userCountByEndpoint,
+            renderer.userCycleByEndpoint,
+            sample.endpointId,
+            renderer.layout.cols
+          );
+        if (cycle > endpointSeries.cycleBins[col]) {
+          endpointSeries.cycleBins[col] = cycle;
+          endpointSeries.bins[col] = Number.NaN;
+          endpointSeries.peakBins[col] = Number.NaN;
+          endpointSeries.sumBins[col] = 0;
+          endpointSeries.countBins[col] = 0;
           changedCols.add(col);
         }
-        const nextCount = Math.min(65535, leaseCountBins[col] + 1);
-        leaseCountBins[col] = nextCount;
-        leaseSumBins[col] += valueMs;
-        const nextAvg = leaseSumBins[col] / nextCount;
-        const currentAvg = leaseBins[col];
+        const nextCount = Math.min(65535, endpointSeries.countBins[col] + 1);
+        endpointSeries.countBins[col] = nextCount;
+        endpointSeries.sumBins[col] += valueMs;
+        const nextAvg = endpointSeries.sumBins[col] / nextCount;
+        const currentAvg = endpointSeries.bins[col];
         if (!Number.isFinite(currentAvg) || Math.abs(nextAvg - currentAvg) > 1e-6) {
-          leaseBins[col] = nextAvg;
+          endpointSeries.bins[col] = nextAvg;
           changedCols.add(col);
         }
-        const currentPeak = leasePeakBins[col];
+        const currentPeak = endpointSeries.peakBins[col];
         if (!Number.isFinite(currentPeak) || valueMs > currentPeak) {
-          leasePeakBins[col] = valueMs;
+          endpointSeries.peakBins[col] = valueMs;
           changedCols.add(col);
         }
       }
@@ -936,33 +1129,34 @@ export function TraceTimingPanel({
     }
 
     if (needsReinit || changedCols.size > 0) {
-      context.fillStyle = BG_COLOR;
+      context.fillStyle = palette.background;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
       drawRange(
         context,
         renderer,
         0,
         renderer.layout.cols - 1,
-        showAttrBp,
-        showSubscribers,
-        selectedLeaseEndpointId,
-        leaseColorMap
+        subscriberMetric,
+        selectedSubscriberEndpointId,
+        leaseColorMap,
+        palette
       );
     }
 
     if (renderer.lastTimestamp <= 0) {
-      context.fillStyle = BG_COLOR;
+      context.fillStyle = palette.background;
       context.fillRect(0, 0, renderer.layout.width, renderer.layout.height);
-      context.fillStyle = "#94a3b8";
+      context.fillStyle = palette.waitingText;
       context.font = '12px "Avenir Next", sans-serif';
       context.fillText("Waiting for trace samples...", renderer.layout.left, 26);
-      drawLabelsAndCursor(context, renderer, windowSeconds);
+      drawLabelsAndCursor(context, renderer, windowSeconds, palette);
       return;
     }
 
-    drawLabelsAndCursor(context, renderer, windowSeconds);
+    drawLabelsAndCursor(context, renderer, windowSeconds, palette);
   }, [
     autoYAxis,
+    darkMode,
     effectiveTopicScope,
     leaseColorMap,
     manualYMaxMs,
@@ -970,12 +1164,12 @@ export function TraceTimingPanel({
     publisherEndpointId,
     publisherProcessId,
     publisherSignature,
-    selectedLeaseEndpointId,
+    selectedSubscriberEndpointId,
     samples,
-    showAttrBp,
-    showSubscribers,
+    subscriberMetric,
     scopeSignature,
     windowSeconds,
+    palette,
   ]);
 
   return (
@@ -1031,37 +1225,53 @@ export function TraceTimingPanel({
             />
           </label>
           <span className="timing-trace__legend-item is-static">
-            <i style={{ background: PUBLISH_COLOR }} />
+            <i style={{ background: palette.publish }} />
             Publish Delta
           </span>
-          <button
-            type="button"
-            className={`timing-trace__legend-item timing-trace__legend-toggle ${
-              showAttrBp ? "is-active" : ""
-            }`}
-            onClick={() => setShowAttrBp((previous) => !previous)}
-            aria-pressed={showAttrBp}
-          >
-            <i style={{ background: ATTR_BP_COLOR }} />
-            Backpressure (all subs)
-          </button>
-          <button
-            type="button"
-            className={`timing-trace__legend-item timing-trace__legend-toggle ${
-              showSubscribers ? "is-active" : ""
-            }`}
-            onClick={() => setShowSubscribers((previous) => !previous)}
-            aria-pressed={showSubscribers}
-          >
-            <i
-              style={{
-                background: selectedLeaseEndpointId
-                  ? leaseColorForEndpoint(selectedLeaseEndpointId, leaseColorMap)
-                  : "#93c5fd",
-              }}
-            />
-            Subscribers
-          </button>
+          {selectedSubscriberEndpointId ? (
+            <>
+              <span className="timing-trace__legend-item is-static">
+                <i
+                  style={{
+                    background: "transparent",
+                    border: `2px solid ${selectedSubscriberColor ?? "#94a3b8"}`,
+                  }}
+                />
+                Lease Time
+              </span>
+              <span className="timing-trace__legend-item is-static">
+                <i
+                  style={{
+                    background: selectedSubscriberColor ?? "#94a3b8",
+                  }}
+                />
+                User Span
+              </span>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`timing-trace__legend-item timing-trace__legend-toggle ${
+                  subscriberMetric === "lease_time_ns" ? "is-active" : ""
+                }`}
+                onClick={() => setSubscriberMetric("lease_time_ns")}
+                aria-pressed={subscriberMetric === "lease_time_ns"}
+              >
+                Lease Time
+              </button>
+              <button
+                type="button"
+                className={`timing-trace__legend-item timing-trace__legend-toggle ${
+                  subscriberMetric === "user_span_ns" ? "is-active" : ""
+                }`}
+                onClick={() => setSubscriberMetric("user_span_ns")}
+                aria-pressed={subscriberMetric === "user_span_ns"}
+              >
+                User Span
+              </button>
+            </>
+          )}
         </div>
         <div className="timing-trace__controls-right">
           <label className="timing-trace__axis-input timing-trace__axis-input--ymax">

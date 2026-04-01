@@ -26,7 +26,7 @@ async function primeGlobalSettings(
     edgeConnectorStyle: "curved",
     showLegend: true,
     showMiniMap: true,
-    traceMetricsPreset: "publish+lease+backpressure",
+    traceMetricsPreset: "publish+lease+user",
     autoFitOnLayoutScopeChange: true,
     autoFocusOnInspectorSelection: true,
     inspectorWidthPx: 500,
@@ -560,7 +560,7 @@ test("dark mode keeps the zoom controls readable", async ({ page }) => {
   await expect(controlIcon).toHaveCSS("color", "rgb(219, 231, 245)");
 });
 
-test("dark mode keeps publisher severity highlights visible", async ({ page }) => {
+test("dark mode keeps publisher snapshot metrics readable", async ({ page }) => {
   await enableDarkMode(page);
   await page.goto("/?fixture=profiling-trace-rates");
 
@@ -571,8 +571,13 @@ test("dark mode keeps publisher severity highlights visible", async ({ page }) =
     has: page.locator('.publisher-topic[title="TRACE_LAB/SPARSE_TOPIC"]'),
   });
 
-  await expect(denseRow).toHaveCSS("border-top-color", "rgb(251, 191, 36)");
-  await expect(sparseRow).toHaveCSS("border-top-color", "rgb(74, 222, 128)");
+  await expect(denseRow).toContainText("Rate");
+  await expect(denseRow).toContainText("Msgs (2s)");
+  await expect(denseRow).toContainText("Inflight");
+  await expect(denseRow.locator(".publisher-row__metrics strong").first()).toBeVisible();
+  await expect(sparseRow).toContainText("Rate");
+  await expect(sparseRow).toContainText("Msgs (2s)");
+  await expect(sparseRow).toContainText("Inflight");
 });
 
 test.describe("visual baselines", () => {

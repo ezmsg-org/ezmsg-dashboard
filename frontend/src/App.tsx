@@ -97,7 +97,7 @@ type GlobalSettings = {
   edgeConnectorStyle: "curved" | "orthogonal" | "smooth";
   showLegend: boolean;
   showMiniMap: boolean;
-  traceMetricsPreset: "publish+lease+backpressure" | "publish+backpressure" | "publish";
+  traceMetricsPreset: "publish+lease+user" | "publish+lease" | "publish";
   autoFitOnLayoutScopeChange: boolean;
   autoFocusOnInspectorSelection: boolean;
   inspectorWidthPx: number;
@@ -122,7 +122,7 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   edgeConnectorStyle: "curved",
   showLegend: true,
   showMiniMap: true,
-  traceMetricsPreset: "publish+lease+backpressure",
+  traceMetricsPreset: "publish+lease+user",
   autoFitOnLayoutScopeChange: true,
   autoFocusOnInspectorSelection: true,
   inspectorWidthPx: 500,
@@ -202,9 +202,9 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       ? Math.min(900, Math.max(360, Math.round(raw.inspectorWidthPx)))
       : DEFAULT_GLOBAL_SETTINGS.inspectorWidthPx;
   const traceMetricsPreset =
-    raw.traceMetricsPreset === "publish+backpressure"
+    raw.traceMetricsPreset === "publish+lease"
     || raw.traceMetricsPreset === "publish"
-    || raw.traceMetricsPreset === "publish+lease+backpressure"
+    || raw.traceMetricsPreset === "publish+lease+user"
       ? raw.traceMetricsPreset
       : DEFAULT_GLOBAL_SETTINGS.traceMetricsPreset;
   const edgeConnectorStyle =
@@ -355,10 +355,10 @@ export function App() {
     if (globalSettings.traceMetricsPreset === "publish") {
       return ["publish_delta_ns"];
     }
-    if (globalSettings.traceMetricsPreset === "publish+backpressure") {
-      return ["publish_delta_ns", "attributable_backpressure_ns"];
+    if (globalSettings.traceMetricsPreset === "publish+lease") {
+      return ["publish_delta_ns", "lease_time_ns"];
     }
-    return ["publish_delta_ns", "lease_time_ns", "attributable_backpressure_ns"];
+    return ["publish_delta_ns", "lease_time_ns", "user_span_ns"];
   }, [globalSettings.traceMetricsPreset]);
   const dashboardLayoutStyle = useMemo(
     () =>
@@ -418,6 +418,7 @@ export function App() {
                 profilingSnapshot={snapshot?.profiling ?? null}
                 latestTraceEvent={latestTraceEvent}
                 setProfilingTraceControl={setProfilingTraceControl}
+                darkMode={globalSettings.themeMode === "dark"}
                 focusPublisherEndpointId={
                   inspector?.kind === "publisher" ? inspector.endpointId : null
                 }
@@ -718,17 +719,17 @@ export function App() {
                           ...previous,
                           traceMetricsPreset:
                             event.target.value === "publish"
-                            || event.target.value === "publish+backpressure"
+                            || event.target.value === "publish+lease"
                               ? event.target.value
-                              : "publish+lease+backpressure",
+                              : "publish+lease+user",
                         }))
                       }
                     >
-                      <option value="publish+lease+backpressure">
-                        Publish + Lease + Backpressure
+                      <option value="publish+lease+user">
+                        Publish + Lease + User
                       </option>
-                      <option value="publish+backpressure">
-                        Publish + Backpressure
+                      <option value="publish+lease">
+                        Publish + Lease
                       </option>
                       <option value="publish">Publish Only</option>
                     </select>

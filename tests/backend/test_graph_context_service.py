@@ -256,7 +256,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
         metrics=[
             "publish_delta_ns",
             "lease_time_ns",
-            "attributable_backpressure_ns",
+            "user_span_ns",
         ],
         sample_mod=1,
         ttl_seconds=12.0,
@@ -278,7 +278,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
         "metrics": [
             "publish_delta_ns",
             "lease_time_ns",
-            "attributable_backpressure_ns",
+            "user_span_ns",
         ],
         "sample_mod": 1,
         "ttl_seconds": 12.0,
@@ -290,7 +290,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
         "publisher_endpoint_ids": [],
         "publisher_topics": [],
         "subscriber_topics": ["TOPIC"],
-        "metrics": ["lease_time_ns", "attributable_backpressure_ns"],
+        "metrics": ["lease_time_ns", "user_span_ns"],
         "sample_mod": 1,
         "ttl_seconds": 12.0,
         "timeout": 1.25,
@@ -319,7 +319,7 @@ async def test_set_profiling_trace_control_disable_disables_all_active_route_uni
         metrics=[
             "publish_delta_ns",
             "lease_time_ns",
-            "attributable_backpressure_ns",
+            "user_span_ns",
         ],
         sample_mod=1,
         ttl_seconds=12.0,

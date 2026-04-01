@@ -568,6 +568,13 @@ export function useDashboardData(options?: DashboardDataOptions) {
             const originNs = fixtureTraceOriginNsRef.current.get(key) ?? Date.now() * 1_000_000;
             const startSeq = fixtureTraceSequenceRef.current.get(key) ?? 0;
             const samples: Array<Record<string, unknown>> = [];
+            const requestedMetrics = new Set(request.metrics ?? []);
+            const includePublish =
+              requestedMetrics.size === 0 || requestedMetrics.has("publish_delta_ns");
+            const includeLease =
+              requestedMetrics.size === 0 || requestedMetrics.has("lease_time_ns");
+            const includeUser =
+              requestedMetrics.size === 0 || requestedMetrics.has("user_span_ns");
 
             for (let offset = 0; offset < scenario.samplesPerTick; offset += 1) {
               const sampleSeq = startSeq + offset;
@@ -576,44 +583,50 @@ export function useDashboardData(options?: DashboardDataOptions) {
               const publishDeltaValue =
                 scenario.publishDeltaNsBase
                 + Math.sin(phase) * scenario.publishDeltaNsJitter;
-              samples.push({
-                endpoint_id: scenario.publisherEndpointId,
-                topic: scenario.publisherTopic,
-                metric: "publish_delta_ns",
-                value: Math.max(0, Math.round(publishDeltaValue)),
-                timestamp,
-                sample_seq: sampleSeq,
-              });
+              if (includePublish) {
+                samples.push({
+                  endpoint_id: scenario.publisherEndpointId,
+                  topic: scenario.publisherTopic,
+                  metric: "publish_delta_ns",
+                  value: Math.max(0, Math.round(publishDeltaValue)),
+                  timestamp,
+                  sample_seq: sampleSeq,
+                });
+              }
               for (const [subscriberIndex, subscriber] of scenario.subscribers.entries()) {
                 const leasePhase = phase + subscriberIndex * 0.37;
-                samples.push({
-                  endpoint_id: subscriber.endpointId,
-                  topic: subscriber.topic,
-                  metric: "lease_time_ns",
-                  value: Math.max(
-                    0,
-                    Math.round(
-                      subscriber.leaseTimeNsBase
-                        + Math.sin(leasePhase) * subscriber.leaseTimeNsBase * 0.18
-                    )
-                  ),
-                  timestamp,
-                  sample_seq: sampleSeq,
-                });
-                samples.push({
-                  endpoint_id: subscriber.endpointId,
-                  topic: subscriber.topic,
-                  metric: "attributable_backpressure_ns",
-                  value: Math.max(
-                    0,
-                    Math.round(
-                      subscriber.attributableBackpressureNsBase
-                        + Math.cos(leasePhase) * subscriber.attributableBackpressureNsBase * 0.22
-                    )
-                  ),
-                  timestamp,
-                  sample_seq: sampleSeq,
-                });
+                if (includeLease) {
+                  samples.push({
+                    endpoint_id: subscriber.endpointId,
+                    topic: subscriber.topic,
+                    metric: "lease_time_ns",
+                    value: Math.max(
+                      0,
+                      Math.round(
+                        subscriber.leaseTimeNsBase
+                          + Math.sin(leasePhase) * subscriber.leaseTimeNsBase * 0.18
+                      )
+                    ),
+                    timestamp,
+                    sample_seq: sampleSeq,
+                  });
+                }
+                if (includeUser) {
+                  samples.push({
+                    endpoint_id: subscriber.endpointId,
+                    topic: subscriber.topic,
+                    metric: "user_span_ns",
+                    value: Math.max(
+                      0,
+                      Math.round(
+                        subscriber.userSpanNsBase
+                          + Math.cos(leasePhase) * subscriber.userSpanNsBase * 0.22
+                      )
+                    ),
+                    timestamp,
+                    sample_seq: sampleSeq,
+                  });
+                }
               }
             }
 
