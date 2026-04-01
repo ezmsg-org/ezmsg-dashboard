@@ -511,8 +511,16 @@ body {
   gap: 0.5rem;
 }
 
+.dashboard-inspector__body.is-publishers-collapsed {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .dashboard-inspector__body.is-settings-collapsed {
   grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.dashboard-inspector__body.is-publishers-collapsed.is-settings-collapsed {
+  grid-template-rows: auto auto;
 }
 
 .dashboard-inspector__body .panel {

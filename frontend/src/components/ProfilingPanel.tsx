@@ -355,7 +355,6 @@ export function ProfilingPanel({
   darkMode = false,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
-  const [hideIdleSubscriberRows, setHideIdleSubscriberRows] = useState(false);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [activeTraceRowIds, setActiveTraceRowIds] = useState<string[]>([]);
   const [traceSamplesByRowId, setTraceSamplesByRowId] = useState<
@@ -847,14 +846,9 @@ export function ProfilingPanel({
             const leaseColorMap = buildLeaseColorMap(
               row.contributors.map((contributor) => contributor.endpointId)
             );
-            const visibleContributors = hideIdleSubscriberRows
-              ? row.contributors.filter(
-                  (contributor) => contributor.messagesWindow > 0
-                )
-              : row.contributors;
             const expandedContributorEndpointId =
               expandedContributorEndpointByRowId[row.id] ?? null;
-            const selectedContributorEndpointId = visibleContributors.some(
+            const selectedContributorEndpointId = row.contributors.some(
               (contributor) => contributor.endpointId === expandedContributorEndpointId
             )
               ? expandedContributorEndpointId
@@ -954,29 +948,14 @@ export function ProfilingPanel({
                       </button>
                       <div className="subscriber-section-header">
                         <h3>Subscribers</h3>
-                        <button
-                          type="button"
-                          className={`subscriber-filter-btn ${
-                            hideIdleSubscriberRows ? "is-active" : ""
-                          }`}
-                          onClick={() => setHideIdleSubscriberRows((previous) => !previous)}
-                        >
-                          {hideIdleSubscriberRows
-                            ? "Hide Idle Subscribers: On"
-                            : "Hide Idle Subscribers: Off"}
-                        </button>
                       </div>
                       {row.contributors.length === 0 ? (
                         <p className="muted">
                           No subscriber profiling data is available for this topic.
                         </p>
-                      ) : visibleContributors.length === 0 ? (
-                        <p className="muted">
-                          No subscribers pass the current filter for this topic.
-                        </p>
                       ) : (
                         <div className="subscriber-list">
-                          {visibleContributors.map((contributor) => {
+                          {row.contributors.map((contributor) => {
                             const contributorExpanded =
                               selectedContributorEndpointId === contributor.endpointId;
                             return (

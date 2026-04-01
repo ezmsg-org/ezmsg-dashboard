@@ -277,6 +277,7 @@ export function App() {
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [profilingFocusActionId, setProfilingFocusActionId] = useState(0);
   const [settingsFocusActionId, setSettingsFocusActionId] = useState(0);
+  const [publishersSectionCollapsed, setPublishersSectionCollapsed] = useState(false);
   const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(true);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [traceDockState, setTraceDockState] = useState<TraceDockState>(null);
@@ -380,6 +381,7 @@ export function App() {
       setSettingsSectionCollapsed(false);
       setSettingsFocusActionId((previous) => previous + 1);
     } else {
+      setPublishersSectionCollapsed(false);
       setProfilingFocusActionId((previous) => previous + 1);
     }
     setInspector(nextInspector);
@@ -395,6 +397,32 @@ export function App() {
     setTraceDockState(null);
   };
 
+  const togglePublishersSection = () => {
+    if (publishersSectionCollapsed) {
+      setPublishersSectionCollapsed(false);
+      return;
+    }
+    if (settingsSectionCollapsed) {
+      setPublishersSectionCollapsed(true);
+      setSettingsSectionCollapsed(false);
+      return;
+    }
+    setPublishersSectionCollapsed(true);
+  };
+
+  const toggleSettingsSection = () => {
+    if (settingsSectionCollapsed) {
+      setSettingsSectionCollapsed(false);
+      return;
+    }
+    if (publishersSectionCollapsed) {
+      setSettingsSectionCollapsed(true);
+      setPublishersSectionCollapsed(false);
+      return;
+    }
+    setSettingsSectionCollapsed(true);
+  };
+
   return (
     <div
       className={`dashboard-layout is-comfortable ${
@@ -407,27 +435,37 @@ export function App() {
       <aside className="dashboard-inspector dashboard-inspector--pinned">
         <div
           className={`dashboard-inspector__body ${
-            settingsSectionCollapsed ? "is-settings-collapsed" : ""
-          }`}
+            publishersSectionCollapsed ? "is-publishers-collapsed " : ""
+          }${settingsSectionCollapsed ? "is-settings-collapsed" : ""}`}
         >
           <section className="inspector-section inspector-section--split">
-            <header className="inspector-section__header">Publishers</header>
-            <div className="inspector-section__content inspector-section__content--scroll">
-              <ProfilingPanel
-                graphSnapshot={snapshot?.snapshot ?? null}
-                profilingSnapshot={snapshot?.profiling ?? null}
-                latestTraceEvent={latestTraceEvent}
-                setProfilingTraceControl={setProfilingTraceControl}
-                darkMode={globalSettings.themeMode === "dark"}
-                focusPublisherEndpointId={
-                  inspector?.kind === "publisher" ? inspector.endpointId : null
-                }
-                focusPublisherTopic={
-                  inspector?.kind === "publisher" ? inspector.topic : null
-                }
-                focusSubscriberEndpointId={
-                  inspector?.kind === "subscriber" ? inspector.endpointId : null
-                }
+            <header className="inspector-section__header">
+              <span>Publishers</span>
+              <button
+                type="button"
+                className="inspector-section__collapse-btn"
+                onClick={togglePublishersSection}
+              >
+                {publishersSectionCollapsed ? "Expand" : "Collapse"}
+              </button>
+            </header>
+            {publishersSectionCollapsed ? null : (
+              <div className="inspector-section__content inspector-section__content--scroll">
+                <ProfilingPanel
+                  graphSnapshot={snapshot?.snapshot ?? null}
+                  profilingSnapshot={snapshot?.profiling ?? null}
+                  latestTraceEvent={latestTraceEvent}
+                  setProfilingTraceControl={setProfilingTraceControl}
+                  darkMode={globalSettings.themeMode === "dark"}
+                  focusPublisherEndpointId={
+                    inspector?.kind === "publisher" ? inspector.endpointId : null
+                  }
+                  focusPublisherTopic={
+                    inspector?.kind === "publisher" ? inspector.topic : null
+                  }
+                  focusSubscriberEndpointId={
+                    inspector?.kind === "subscriber" ? inspector.endpointId : null
+                  }
                   focusActionId={profilingFocusActionId}
                   hideFilters={false}
                   defaultTraceMetrics={traceMetrics}
@@ -462,6 +500,7 @@ export function App() {
                   }}
                 />
               </div>
+            )}
           </section>
 
           <section className="inspector-section inspector-section--split">
@@ -470,7 +509,7 @@ export function App() {
               <button
                 type="button"
                 className="inspector-section__collapse-btn"
-                onClick={() => setSettingsSectionCollapsed((previous) => !previous)}
+                onClick={toggleSettingsSection}
               >
                 {settingsSectionCollapsed ? "Expand" : "Collapse"}
               </button>
