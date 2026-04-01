@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .models.events import SystemErrorEnvelope
@@ -21,6 +23,29 @@ NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+PACKAGE_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "_web"
+
+
+class DashboardStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict[str, Any]) -> FileResponse | JSONResponse:
+        response = await super().get_response(path, scope)
+        if response.status_code != 404:
+            return response
+
+        request_path = scope.get("path", "")
+        if request_path == "/api" or request_path.startswith("/api/"):
+            return response
+        if request_path == "/ws" or request_path.startswith("/ws/"):
+            return response
+        if "." in Path(request_path).name:
+            return response
+
+        index_path = Path(self.directory or "") / "index.html"
+        if index_path.is_file():
+            return FileResponse(index_path)
+
+        return response
 
 
 def get_graph_service(request: Request) -> GraphServiceProtocol:
@@ -51,12 +76,25 @@ class ProfilingTraceControlRequest(BaseModel):
     timeout: float = Field(default=2.0, gt=0.0)
 
 
-def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
+def get_packaged_frontend_dir() -> Path | None:
+    index_path = PACKAGE_FRONTEND_DIR / "index.html"
+    if index_path.is_file():
+        return PACKAGE_FRONTEND_DIR
+    return None
+
+
+def create_app(
+    graph_service: GraphServiceProtocol | None = None,
+    *,
+    frontend_dir: Path | None = None,
+) -> FastAPI:
     service = graph_service or GraphContextLifecycleService()
+    resolved_frontend_dir = frontend_dir if frontend_dir is not None else get_packaged_frontend_dir()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.graph_service = service
+        app.state.frontend_dir = resolved_frontend_dir
         await service.startup()
         try:
             yield
@@ -157,6 +195,13 @@ def create_app(graph_service: GraphServiceProtocol | None = None) -> FastAPI:
             await websocket.close(code=1011)
         except Exception:
             await websocket.close(code=1011)
+
+    if resolved_frontend_dir is not None:
+        app.mount(
+            "/",
+            DashboardStaticFiles(directory=str(resolved_frontend_dir), html=True),
+            name="dashboard-frontend",
+        )
 
     return app
 

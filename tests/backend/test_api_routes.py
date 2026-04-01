@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -183,6 +184,58 @@ def test_snapshot_route() -> None:
     assert "profiling" in payload
     assert response.headers["cache-control"].startswith("no-store")
     assert payload["settings"]["unit.alpha"]["serialized_present"] is True
+
+
+def test_frontend_index_route_serves_packaged_assets(tmp_path: Path) -> None:
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "index.html").write_text(
+        "<!doctype html><html><body><div id='root'>dashboard</div></body></html>",
+        encoding="utf-8",
+    )
+
+    app = create_app(FakeGraphService(), frontend_dir=frontend_dir)
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "dashboard" in response.text
+
+
+def test_frontend_static_assets_are_served_without_shadowing_api(tmp_path: Path) -> None:
+    frontend_dir = tmp_path / "frontend"
+    assets_dir = frontend_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (frontend_dir / "index.html").write_text(
+        "<!doctype html><html><body><script src='/assets/app.js'></script></body></html>",
+        encoding="utf-8",
+    )
+    (assets_dir / "app.js").write_text("console.log('dashboard');", encoding="utf-8")
+
+    app = create_app(FakeGraphService(), frontend_dir=frontend_dir)
+    with TestClient(app) as client:
+        asset_response = client.get("/assets/app.js")
+        api_response = client.get("/api/health")
+
+    assert asset_response.status_code == 200
+    assert "dashboard" in asset_response.text
+    assert api_response.status_code == 200
+    assert api_response.json()["status"] == "ok"
+
+
+def test_frontend_fallback_does_not_mask_unknown_api_routes(tmp_path: Path) -> None:
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "index.html").write_text(
+        "<!doctype html><html><body><div id='root'>dashboard</div></body></html>",
+        encoding="utf-8",
+    )
+
+    app = create_app(FakeGraphService(), frontend_dir=frontend_dir)
+    with TestClient(app) as client:
+        response = client.get("/api/does-not-exist")
+
+    assert response.status_code == 404
 
 
 def test_settings_route() -> None:

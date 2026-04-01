@@ -15,6 +15,9 @@ dependencies = [
   "uvicorn[standard]>=0.42.0",
 ]
 
+[project.scripts]
+ezmsg-dashboard = "ezmsg.dashboard.server:cmdline"
+
 [dependency-groups]
 dev = [
   "typer>=0.12.5",
@@ -46,6 +49,11 @@ version-file = "src/ezmsg/dashboard/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]
+
+[tool.hatch.build]
+artifacts = [
+  "src/ezmsg/dashboard/_web/**/*",
+]
 
 [tool.pytest.ini_options]
 norecursedirs = "tests/helpers"

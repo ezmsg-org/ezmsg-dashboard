@@ -11,6 +11,14 @@ It combines:
 
 This package is published as `ezmsg.dashboard` and follows the namespace packaging style used by other `ezmsg` extensions.
 
+The release artifact is intended to be installed as a normal Python package:
+
+```bash
+pip install ezmsg ezmsg-dashboard
+```
+
+Runtime installs do not require `npm`. The published wheel/sdist includes a prebuilt frontend bundle that the Python backend serves directly.
+
 User documentation lives in [docs/README.md](/Users/milsagw1/repos/ezmsg-dashboard/docs/README.md).
 
 ## Features
@@ -33,8 +41,8 @@ User documentation lives in [docs/README.md](/Users/milsagw1/repos/ezmsg-dashboa
 ## Requirements
 
 - Python `>=3.11`
-- Node.js with npm
 - a local `ezmsg` checkout if you want to use the editable source override already configured in `pyproject.toml`
+- Node.js with npm only if you are developing the frontend or refreshing the packaged frontend bundle for a release
 
 The repo currently expects:
 
@@ -62,20 +70,46 @@ npm install
 
 ## Running Locally
 
-Run the backend:
+### End-user runtime
+
+After installing `ezmsg` and `ezmsg-dashboard`, launch the packaged dashboard server directly:
+
+```bash
+ezmsg dashboard --graph-address 127.0.0.1:25978
+```
+
+or use the fallback console script:
+
+```bash
+ezmsg-dashboard --graph-address 127.0.0.1:25978
+```
+
+This starts the Python backend and serves the packaged frontend from the same process.
+
+If you want core `ezmsg` to host the graph server and dashboard together:
+
+```bash
+ezmsg serve --dashboard
+```
+
+### Development mode
+
+Run the backend API:
 
 ```bash
 uv run uvicorn ezmsg.dashboard.backend.app:app --reload --port 8000
 ```
 
-Run the frontend in a separate terminal:
+Run the frontend dev server in a separate terminal:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-By default the frontend is served by Vite and the backend serves:
+In development, Vite serves the frontend and proxies API traffic to the Python backend. In release mode, the Python package serves both.
+
+The backend serves:
 
 - `GET /api/health`
 - `GET /api/snapshot`
@@ -113,6 +147,12 @@ cd frontend
 npm run test:e2e:update-snapshots
 ```
 
+Verify the vendored frontend bundle matches `frontend/dist`:
+
+```bash
+uv run python -m ezmsg.dashboard.build_frontend --check
+```
+
 ## Frontend Fixture Mode
 
 The frontend includes deterministic fixture scenarios for stress-testing layout and inspector behavior without a live backend.
@@ -143,6 +183,27 @@ These fixtures are used by Playwright to validate:
   - Playwright interaction tests for graph and inspector behavior
   - a small set of screenshot baselines for high-value readability checks
 - The screenshot suite is intentionally narrow. It is meant to catch meaningful visual regressions, not lock the UI to exact pixel output everywhere.
+
+## Release Workflow
+
+When the frontend changes, refresh the packaged assets before publishing:
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+uv run python -m ezmsg.dashboard.build_frontend
+```
+
+Then verify the package and tests:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/pycache .venv/bin/pytest tests/backend -q
+uv run python -m build
+```
+
+The `_web/` bundle under `src/ezmsg/dashboard/` is part of the Python package and should be updated as part of the release.
 
 ## License
 
