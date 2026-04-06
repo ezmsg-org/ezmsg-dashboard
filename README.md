@@ -21,6 +21,8 @@ Runtime installs do not require `npm`. The published wheel/sdist includes a preb
 
 Documentation lives in [docs/README.md](/Users/milsagw1/repos/ezmsg-dashboard/docs/README.md).
 
+__NOTE:__ This software was written in heavy collaboration (vibe coded) with ChatGPT 5.4.  It appears functional and has been used to evaluate a variety of `ezmsg` deployments, but this in no way implies fitness for any particular use, or that the code is anything more than AI slop.  The human(s) who have their name associated with this package do not fully understand how the code was designed/functions and will not necessarily be helpful in GitHub issues or PRs.  It should be treated as a tool that is nice when it works well and solves a problem, and as an inspirational jumping board/mockup for what `ezmsg-dashboard` could be with a real development push by human developers.
+
 ## Features
 
 - Live topology rendering with left-to-right and top-to-bottom layouts
