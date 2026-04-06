@@ -2,6 +2,8 @@
 
 - [User Guide](./user-guide.md)
 - [Metrics Reference](./metrics-reference.md)
+- [Development Guide](./development.md)
+- [Code Tour](./code-tour.md)
 
 This initial docs set is fixture-backed and written against the current MVP dashboard behavior.
 

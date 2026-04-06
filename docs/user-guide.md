@@ -27,7 +27,7 @@ The dashboard has three major areas:
 
 - Click a unit to focus it in **Settings**.
 - Click a publisher or subscriber stream to focus it in **Publishers** and fit the topology view.
-- Use the top-right shortcuts to toggle layout direction and theme.
+- Use the floating viewport shortcuts to toggle layout direction, theme, or open global settings.
 - Use `Open` on a collection to descend into that scope.
 - Use `Up` or breadcrumbs to move back out.
 
@@ -52,7 +52,7 @@ The dashboard has three major areas:
 
 - Only components with patchable settings can be edited.
 - Patchable components are marked `PATCHABLE`.
-- Read-only components are shown but cannot be modified.
+- Read-only components are marked `READ ONLY`.
 - The dashboard patches one field at a time.
 - Successful patches show a short applied status inline.
 - Failed patches show an inline error.
@@ -69,10 +69,12 @@ The dashboard has three major areas:
 
 ![Annotated publishers panel](./screenshots/publishers-panel.png)
 
-1. **Publisher row**: surfaces always-on snapshot metrics for a publisher topic.
-2. **Trace control**: starts or stops profiling trace capture for the selected publisher endpoint.
-3. **Subscriber filter**: hides subscribers with zero messages in the current snapshot window.
-4. **Subscriber row**: shows the subscriber topic, host, channel kind, and snapshot message count.
+The Publishers pane currently centers on four things:
+
+1. **Search**: filter publisher rows by topic, endpoint, or process id.
+2. **Publisher row**: surfaces always-on snapshot metrics for a publisher topic.
+3. **Trace control**: starts or stops profiling trace capture for the selected publisher endpoint.
+4. **Subscriber row**: shows the subscriber topic, channel kind, and snapshot message count. Expanding one shows host, pid, process id, and endpoint id.
 
 ### Typical Workflow
 
@@ -86,10 +88,12 @@ The dashboard has three major areas:
 
 ![Annotated trace dock](./screenshots/trace-dock.png)
 
+The trace dock exposes five main controls and readouts:
+
 1. **Window**: controls how many seconds of trace history are visible.
-2. **Subscriber metric selector**: switches subscriber traces between lease time and user span.
-3. **Publish Delta key**: identifies the fixed publisher cadence trace.
-4. **Y max**: fixes the Y scale instead of using auto-scaling.
+2. **Lease Time toggle**: shows per-subscriber lease timing traces.
+3. **User Span toggle**: shows per-subscriber user-code span traces.
+4. **Y max / Auto-Fixed**: sets a manual ceiling or lets the trace dock auto-scale the vertical axis.
 5. **Trace canvas**: plots publish delta, lease time, and user span series over time.
 
 ### Trace Workflow
@@ -97,8 +101,8 @@ The dashboard has three major areas:
 1. Start profiling trace from a publisher row.
 2. Wait for the trace dock to populate.
 3. Adjust the time window if the graph is too sparse or too dense.
-4. Switch the subscriber metric between lease time and user span as needed.
-5. Lock `Y max` if the auto scale is making comparisons hard.
+4. Switch between `Lease Time` and `User Span` as needed.
+5. Switch `Y max` from `Auto` to `Fixed` if the auto scale is making comparisons hard.
 
 ## Theme And Layout Controls
 
@@ -106,13 +110,13 @@ The top-right dock in the topology viewport contains:
 
 - **Layout toggle**: left-to-right vs top-to-bottom
 - **Theme toggle**: light vs dark
-- **Global settings**: snapshot interval, default layout, legend/minimap visibility, trace defaults, inspector width, and auto-fit/auto-focus behaviors
+- **Global settings**: snapshot poll frequency, theme, default layout, edge connector type, default trace metrics, inspector width, legend/minimap visibility, and auto-fit/auto-focus behaviors
 
 ## Good Troubleshooting Patterns
 
 - If the graph is visually dense, switch layout direction.
 - If the inspector feels cramped, increase inspector width in global settings.
-- If the publisher list is noisy, use search and the idle-subscriber filter.
+- If the publisher list is noisy, use the publisher search box to narrow by topic, endpoint, or process.
 - If a trace looks flat or over-compressed, adjust `Window (s)` or switch `Y max` from `Auto` to `Fixed`.
 - If a component is not editable, check whether it is marked `PATCHABLE` in Settings.
 

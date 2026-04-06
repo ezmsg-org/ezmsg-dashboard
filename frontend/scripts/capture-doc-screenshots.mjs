@@ -19,7 +19,7 @@ function globalSettings(overrides = {}) {
     edgeConnectorStyle: "curved",
     showLegend: false,
     showMiniMap: false,
-    traceMetricsPreset: "publish+lease+backpressure",
+    traceMetricsPreset: "publish+lease+user",
     autoFitOnLayoutScopeChange: true,
     autoFocusOnInspectorSelection: true,
     inspectorWidthPx: 560,
@@ -187,16 +187,12 @@ async function capturePublishersPanel(page) {
   await denseRow.locator(".publisher-row__toggle").click();
   await page.waitForTimeout(180);
   await clearCallouts(page);
-  await addCallout(page, denseRow, 1, { anchor: "top-left", dx: 8, dy: 8 });
-  await addCallout(page, denseRow.getByRole("button", { name: /Start Profiling Trace/ }), 2, {
+  await addCallout(page, publishersSection.locator('input[type="search"]'), 1);
+  await addCallout(page, denseRow, 2, { anchor: "top-left", dx: 8, dy: 8 });
+  await addCallout(page, denseRow.getByRole("button", { name: /Start Profiling Trace/ }), 3, {
     anchor: "top-left",
     dx: 10,
     dy: 6,
-  });
-  await addCallout(page, denseRow.getByRole("button", { name: /Hide Zero Backpressure/ }), 3, {
-    anchor: "top-right",
-    dx: -20,
-    dy: 4,
   });
   await addCallout(page, denseRow.locator(".subscriber-item").first(), 4, {
     anchor: "top-left",
@@ -223,17 +219,17 @@ async function captureTraceDock(page) {
     dx: 4,
     dy: 4,
   });
-  await addCallout(page, traceDock.getByRole("button", { name: "Backpressure (all subs)" }), 2, {
+  await addCallout(page, traceDock.getByRole("button", { name: "Lease Time" }), 2, {
     anchor: "top-left",
     dx: 8,
     dy: 4,
   });
-  await addCallout(page, traceDock.getByRole("button", { name: "Subscribers" }), 3, {
+  await addCallout(page, traceDock.getByRole("button", { name: "User Span" }), 3, {
     anchor: "top-left",
     dx: 8,
     dy: 4,
   });
-  await addCallout(page, traceDock.locator('.timing-trace__axis-input--ymax input'), 4, {
+  await addCallout(page, traceDock.locator(".timing-trace__controls-right"), 4, {
     anchor: "top-left",
     dx: 4,
     dy: 4,
