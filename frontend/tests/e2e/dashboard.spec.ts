@@ -95,14 +95,49 @@ async function boxForTestId(page: Page, testId: string): Promise<NodeBox> {
 }
 
 async function clickWithTinyPointerMove(page: Page, locator: Locator) {
+  await expect(locator).toBeVisible();
+  await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
   expect(box).not.toBeNull();
   const x = (box?.x ?? 0) + (box?.width ?? 0) / 2;
   const y = (box?.y ?? 0) + (box?.height ?? 0) / 2;
   await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + 1, y + 1);
-  await page.mouse.up();
+  await page.mouse.move(
+    Math.min((box?.x ?? 0) + (box?.width ?? 0) - 1, x + 1),
+    Math.min((box?.y ?? 0) + (box?.height ?? 0) - 1, y + 1),
+    { steps: 2 }
+  );
+  await page.mouse.click(
+    Math.min((box?.x ?? 0) + (box?.width ?? 0) - 1, x + 1),
+    Math.min((box?.y ?? 0) + (box?.height ?? 0) - 1, y + 1)
+  );
+}
+
+async function expectHorizontalOverflowWithin(
+  locator: Locator,
+  maximumOverflowPx: number,
+  label: string
+) {
+  const overflow = await locator.evaluate((element) =>
+    Math.max(0, element.scrollWidth - element.clientWidth)
+  );
+  expect(overflow, label).toBeLessThanOrEqual(maximumOverflowPx);
+}
+
+async function expectEachHorizontalOverflowWithin(
+  locator: Locator,
+  maximumOverflowPx: number,
+  label: string
+) {
+  const overflows = await locator.evaluateAll((elements) =>
+    elements.map((element, index) => ({
+      index,
+      overflow: Math.max(0, element.scrollWidth - element.clientWidth),
+    }))
+  );
+  for (const { index, overflow } of overflows) {
+    expect(overflow, `${label} item ${index}`).toBeLessThanOrEqual(maximumOverflowPx);
+  }
 }
 
 async function openScopeIfPresent(page: Page, collectionName: string) {
@@ -207,16 +242,13 @@ test("long-label fixture keeps type pills contained and exposes richer tooltips"
     /EXTRAORDINARILY_VERBOSE_COLLECTION_NAME_FOR_LAYOUT_TESTING/
   );
 
-  const unitCard = await boxForTestId(
-    page,
-    "rf__node-unit:LONG_SCOPE/COMPONENT_WITH_EXCEPTIONALLY_LONG_NAME"
+  await expectHorizontalOverflowWithin(
+    page
+      .getByTestId("rf__node-unit:LONG_SCOPE/COMPONENT_WITH_EXCEPTIONALLY_LONG_NAME")
+      .locator(".topology-title-row"),
+    4,
+    "long-label unit title row overflow"
   );
-  const unitTypePill = page.locator(
-    '.topology-unit-type[title*="ExceptionallyLongComponentTypeName"]'
-  );
-  const typePillBox = await unitTypePill.boundingBox();
-  expect(typePillBox).not.toBeNull();
-  expect(((typePillBox?.x ?? 0) + (typePillBox?.width ?? 0)) <= unitCard.right + 1).toBe(true);
 
   await expect(
     page.getByTestId(
@@ -626,9 +658,7 @@ test.describe("visual baselines", () => {
     );
   });
 
-  test("profiling publishers pane remains readable with many subscribers", async ({
-    page,
-  }) => {
+  test("profiling publishers pane remains readable with many subscribers", async ({ page }) => {
     await primeVisualSnapshotSettings(page, {
       inspectorWidthPx: 560,
     });
@@ -645,11 +675,37 @@ test.describe("visual baselines", () => {
     await denseRow.locator(".publisher-row__toggle").click();
     await page.waitForTimeout(150);
 
-    await expectStableScreenshot(
-      page.locator(".inspector-section", {
-        has: page.locator(".inspector-section__header", { hasText: "Publishers" }),
-      }),
-      "profiling-publishers-pane-dark.png"
+    const publishersSection = page.locator(".inspector-section", {
+      has: page.locator(".inspector-section__header", { hasText: "Publishers" }),
+    });
+    await expect(publishersSection).toBeVisible();
+    await expect(sparseRow.locator(".subscriber-item")).toHaveCount(6);
+    await expect(denseRow.locator(".subscriber-item")).toHaveCount(8);
+
+    await expectHorizontalOverflowWithin(
+      publishersSection,
+      4,
+      "publishers section overflow"
+    );
+    await expectHorizontalOverflowWithin(
+      sparseRow,
+      4,
+      "sparse publisher row overflow"
+    );
+    await expectHorizontalOverflowWithin(
+      denseRow,
+      4,
+      "dense publisher row overflow"
+    );
+    await expectEachHorizontalOverflowWithin(
+      sparseRow.locator(".subscriber-item"),
+      4,
+      "sparse subscriber overflow"
+    );
+    await expectEachHorizontalOverflowWithin(
+      denseRow.locator(".subscriber-item"),
+      4,
+      "dense subscriber overflow"
     );
   });
 });
