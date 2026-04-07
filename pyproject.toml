@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = [
-  "ezmsg>=3.8.0",
+  "ezmsg>=3.9.0",
   "fastapi>=0.116.0",
   "numpy>=1.26.0",
   "uvicorn[standard]>=0.42.0",
@@ -56,5 +56,3 @@ artifacts = [
 norecursedirs = "tests/helpers"
 addopts = "-p no:warnings"
 
-[tool.uv.sources]
-ezmsg = { path = "../ezmsg", editable = true }
