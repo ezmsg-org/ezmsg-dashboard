@@ -33,7 +33,8 @@ jobs:
         run: npm test
 
   e2e-tests:
-    runs-on: ubuntu-latest
+    # Visual baselines currently live as darwin snapshots in the repo.
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: frontend
@@ -52,7 +53,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run frontend end-to-end tests
         run: npm run test:e2e
