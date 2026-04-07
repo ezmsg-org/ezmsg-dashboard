@@ -9,6 +9,7 @@ from ezmsg.dashboard.backend.services.graph_context_service import (
     GraphContextLifecycleService,
     SettingsPatchError,
 )
+from ezmsg.core.netprotocol import Address
 
 
 class FakeContext:
@@ -96,6 +97,18 @@ class FakeContext:
         return SimpleNamespace(ok=True, error=None)
 
 
+class FakeContextFactory:
+    def __init__(self, graph_address=None, auto_start=None) -> None:
+        self.graph_address = graph_address
+        self.auto_start = auto_start
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_health_payload_defaults_to_canonical_graph_address() -> None:
     service = GraphContextLifecycleService()
@@ -118,6 +131,30 @@ async def test_health_payload_prefers_context_graph_address() -> None:
 
     assert payload["graph_session_active"] is True
     assert payload["graph_address"] == "192.168.1.50:25978"
+
+
+@pytest.mark.asyncio
+async def test_startup_normalizes_string_graph_address_for_graphcontext() -> None:
+    captured: dict[str, object] = {}
+
+    def factory(*, graph_address, auto_start):
+        captured["graph_address"] = graph_address
+        captured["auto_start"] = auto_start
+        return FakeContextFactory(graph_address=graph_address, auto_start=auto_start)
+
+    service = GraphContextLifecycleService(
+        graph_address="10.10.0.1:30000",
+        auto_start=False,
+        graph_context_factory=factory,
+    )
+
+    await service.startup()
+    await service.shutdown()
+
+    assert captured == {
+        "graph_address": Address("10.10.0.1", 30000),
+        "auto_start": False,
+    }
 
 
 @pytest.mark.asyncio

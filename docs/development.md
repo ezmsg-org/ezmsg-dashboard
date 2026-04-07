@@ -50,12 +50,6 @@ After installing `ezmsg` and `ezmsg-dashboard`, launch the packaged dashboard se
 ezmsg dashboard --graph-address 127.0.0.1:25978
 ```
 
-or use the fallback console script:
-
-```bash
-ezmsg-dashboard --graph-address 127.0.0.1:25978
-```
-
 This starts the Python backend and serves the packaged frontend from the same process.
 
 If you want core `ezmsg` to host the graph server and dashboard together:

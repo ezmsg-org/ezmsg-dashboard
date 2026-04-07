@@ -19,7 +19,7 @@ The goal is not to describe every line. The goal is to give one human a reliable
 
 At runtime the data flow is:
 
-1. `ezmsg-dashboard` or `ezmsg dashboard` starts [`server.py`](../src/ezmsg/dashboard/server.py).
+1. `ezmsg dashboard` starts [`server.py`](../src/ezmsg/dashboard/server.py).
 2. The server builds a FastAPI app from [`backend/app.py`](../src/ezmsg/dashboard/backend/app.py).
 3. The app starts [`GraphContextLifecycleService`](../src/ezmsg/dashboard/backend/services/graph_context_service.py), which owns the live `GraphContext`.
 4. The frontend loads an initial snapshot over HTTP.

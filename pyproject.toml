@@ -15,9 +15,6 @@ dependencies = [
   "uvicorn[standard]>=0.42.0",
 ]
 
-[project.scripts]
-ezmsg-dashboard = "ezmsg.dashboard.server:cmdline"
-
 [dependency-groups]
 dev = [
   "typer>=0.12.5",

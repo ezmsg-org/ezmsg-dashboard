@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Callable, Protocol
 
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
-from ezmsg.core.netprotocol import GRAPHSERVER_ADDR
+from ezmsg.core.netprotocol import Address, GRAPHSERVER_ADDR
 
 from ..models.events import (
     EventEnvelopeModel,
@@ -106,6 +106,13 @@ class GraphContextLifecycleService:
         self._context: GraphContext | None = None
         self._active_trace_route_units: set[str] = set()
 
+    def _graph_context_address(self) -> Address | None:
+        if self._graph_address is None:
+            return None
+        if isinstance(self._graph_address, Address):
+            return self._graph_address
+        return Address.from_string(str(self._graph_address))
+
     @property
     def is_started(self) -> bool:
         return self._context is not None
@@ -115,7 +122,7 @@ class GraphContextLifecycleService:
             if self._context is not None:
                 return
             context = self._graph_context_factory(
-                graph_address=self._graph_address,
+                graph_address=self._graph_context_address(),
                 auto_start=self._auto_start,
             )
             await context.__aenter__()
