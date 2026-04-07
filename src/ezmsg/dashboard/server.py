@@ -8,7 +8,6 @@ import threading
 import time
 import webbrowser
 from dataclasses import dataclass
-from typing import Any
 
 import uvicorn
 from ezmsg.core.netprotocol import (
