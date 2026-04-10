@@ -2,6 +2,7 @@ import { MarkerType, Position, type Edge, type Node } from "reactflow";
 
 import {
   belongsToCollection,
+  buildRelayAliasIndex,
   buildCollectionParentMap,
   classifyComponents,
   computeRanks,
@@ -389,6 +390,7 @@ export function buildFlowData(
         ? "smoothstep"
         : "default";
   const { units, collections } = classifyComponents(graphSnapshot);
+  const relayAliasIndex = buildRelayAliasIndex(collections);
   const visibleAddresses = visibleComponentAddresses(
     units,
     collections,
@@ -431,6 +433,9 @@ export function buildFlowData(
       collectionOwnerByStreamAddress.set(streamAddressWithoutEndpoint(stream.address), collection.address);
     }
   }
+  for (const [internalTopic, collectionAddress] of relayAliasIndex.collectionByInternalTopic.entries()) {
+    collectionOwnerByStreamAddress.set(internalTopic, collectionAddress);
+  }
 
   const canonicalStreamByAlias = new Map<string, string>();
   for (const unit of units.values()) {
@@ -445,13 +450,26 @@ export function buildFlowData(
       canonicalStreamByAlias.set(streamAddressWithoutEndpoint(stream.address), stream.address);
     }
   }
+  for (const [internalTopic, endpointAddress] of relayAliasIndex.endpointByInternalTopic.entries()) {
+    canonicalStreamByAlias.set(internalTopic, endpointAddress);
+  }
+
+  const canonicalizeStreamAddress = (streamAddress: string): string =>
+    canonicalStreamByAlias.get(streamAddress)
+    ?? canonicalStreamByAlias.get(streamAddressWithoutEndpoint(streamAddress))
+    ?? streamAddress;
 
   const rawEdges: Array<{ from: string; to: string }> = [];
   for (const [fromTopic, toTopics] of Object.entries(graphSnapshot.graph)) {
     for (const toTopic of toTopics) {
+      const from = canonicalizeStreamAddress(fromTopic);
+      const to = canonicalizeStreamAddress(toTopic);
+      if (from === to) {
+        continue;
+      }
       rawEdges.push({
-        from: canonicalStreamByAlias.get(fromTopic) ?? fromTopic,
-        to: canonicalStreamByAlias.get(toTopic) ?? toTopic,
+        from,
+        to,
       });
     }
   }

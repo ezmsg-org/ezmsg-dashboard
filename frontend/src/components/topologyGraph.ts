@@ -4,18 +4,29 @@ import { streamAddressWithoutEndpoint } from "../utils/streamAddress";
 type AnyRecord = Record<string, unknown>;
 
 export type StreamDirection = "input" | "output" | "unknown";
+export type RelayMetadataType =
+  | "RelayMetadata"
+  | "InputRelayMetadata"
+  | "OutputRelayMetadata"
+  | null;
+
+export type ComponentStream = {
+  name: string;
+  address: string;
+  direction: StreamDirection;
+  msgType: string | null;
+  collectionKind: "topic" | "relay" | null;
+  relayMetadataType: RelayMetadataType;
+  relayGroup: string | null;
+  relayInputTopic: string | null;
+  relayOutputTopic: string | null;
+};
 
 export type UnitComponent = {
   address: string;
   name: string;
   componentType: string;
-  streams: Array<{
-    name: string;
-    address: string;
-    direction: StreamDirection;
-    msgType: string | null;
-    collectionKind: "topic" | "relay" | null;
-  }>;
+  streams: ComponentStream[];
   tasks: Array<{
     name: string;
     subscribes: string | null;
@@ -27,14 +38,18 @@ export type CollectionComponent = {
   address: string;
   name: string;
   componentType: string;
-  streams: Array<{
-    name: string;
-    address: string;
-    direction: StreamDirection;
-    msgType: string | null;
-    collectionKind: "topic" | "relay" | null;
-  }>;
+  streams: ComponentStream[];
   children: string[];
+};
+
+export type TopologyComponents = {
+  units: Map<string, UnitComponent>;
+  collections: Map<string, CollectionComponent>;
+};
+
+export type RelayAliasIndex = {
+  endpointByInternalTopic: Map<string, string>;
+  collectionByInternalTopic: Map<string, string>;
 };
 
 function isRecord(value: unknown): value is AnyRecord {
@@ -66,46 +81,83 @@ function streamDirection(stream: AnyRecord): StreamDirection {
   return "unknown";
 }
 
+function relayMetadataType(stream: AnyRecord): RelayMetadataType {
+  const explicitType =
+    typeof stream.metadata_type === "string"
+      ? stream.metadata_type
+      : typeof stream.__type__ === "string"
+        ? stream.__type__
+        : typeof stream.type === "string"
+          ? stream.type
+          : null;
+  if (explicitType === "InputRelayMetadata" || explicitType.endsWith(".InputRelayMetadata")) {
+    return "InputRelayMetadata";
+  }
+  if (explicitType === "OutputRelayMetadata" || explicitType.endsWith(".OutputRelayMetadata")) {
+    return "OutputRelayMetadata";
+  }
+  if (explicitType === "RelayMetadata" || explicitType.endsWith(".RelayMetadata")) {
+    return "RelayMetadata";
+  }
+
+  const hasInputHints = "leaky" in stream || "max_queue" in stream;
+  const hasOutputHints =
+    "num_buffers" in stream
+    || "buf_size" in stream
+    || "force_tcp" in stream
+    || "host" in stream
+    || "port" in stream;
+  if (hasInputHints && !hasOutputHints) {
+    return "InputRelayMetadata";
+  }
+  if (hasOutputHints && !hasInputHints) {
+    return "OutputRelayMetadata";
+  }
+  if (hasInputHints || hasOutputHints) {
+    return "RelayMetadata";
+  }
+  return null;
+}
+
 function parseStreamEntries(
   streams: AnyRecord | null,
   collectionKind: "topic" | "relay" | null = null
-): Array<{
-  name: string;
-  address: string;
-  direction: StreamDirection;
-  msgType: string | null;
-  collectionKind: "topic" | "relay" | null;
-}> {
+): ComponentStream[] {
   if (!streams) {
     return [];
   }
-  const out: Array<{
-    name: string;
-    address: string;
-    direction: StreamDirection;
-    msgType: string | null;
-    collectionKind: "topic" | "relay" | null;
-  }> = [];
+  const out: ComponentStream[] = [];
   for (const [streamName, streamValue] of Object.entries(streams)) {
     if (!isRecord(streamValue) || typeof streamValue.address !== "string") {
       continue;
     }
+    const isRelay = collectionKind === "relay";
     out.push({
       name: streamName,
       address: streamValue.address,
       direction: streamDirection(streamValue),
       msgType: typeof streamValue.msg_type === "string" ? streamValue.msg_type : null,
       collectionKind,
+      relayMetadataType: isRelay ? relayMetadataType(streamValue) : null,
+      relayGroup:
+        isRelay && typeof streamValue.relay_group === "string"
+          ? streamValue.relay_group
+          : null,
+      relayInputTopic:
+        isRelay && typeof streamValue.relay_input_topic === "string"
+          ? streamValue.relay_input_topic
+          : null,
+      relayOutputTopic:
+        isRelay && typeof streamValue.relay_output_topic === "string"
+          ? streamValue.relay_output_topic
+          : null,
     });
   }
   out.sort((a, b) => a.address.localeCompare(b.address));
   return out;
 }
 
-export function classifyComponents(graphSnapshot: GraphSnapshotPayload): {
-  units: Map<string, UnitComponent>;
-  collections: Map<string, CollectionComponent>;
-} {
+export function classifyComponents(graphSnapshot: GraphSnapshotPayload): TopologyComponents {
   const componentRecords = new Map<string, AnyRecord>();
   for (const session of Object.values(graphSnapshot.sessions)) {
     const metadata = isRecord(session.metadata) ? session.metadata : null;
@@ -131,27 +183,23 @@ export function classifyComponents(graphSnapshot: GraphSnapshotPayload): {
         ? component.component_type
         : "Component";
 
+    const topicStreams = parseStreamEntries(
+      isRecord(component.topics) ? component.topics : null,
+      "topic"
+    );
+    const relayStreams = parseStreamEntries(
+      isRecord(component.relays) ? component.relays : null,
+      "relay"
+    );
     const childrenRaw = Array.isArray(component.children)
       ? component.children.filter((value): value is string => typeof value === "string")
       : [];
-    if (childrenRaw.length > 0) {
-      const collectionStreamMap = new Map<string, {
-        name: string;
-        address: string;
-        direction: StreamDirection;
-        msgType: string | null;
-        collectionKind: "topic" | "relay" | null;
-      }>();
-      for (const stream of parseStreamEntries(
-        isRecord(component.topics) ? component.topics : null,
-        "topic"
-      )) {
+    if (childrenRaw.length > 0 || topicStreams.length > 0 || relayStreams.length > 0) {
+      const collectionStreamMap = new Map<string, ComponentStream>();
+      for (const stream of topicStreams) {
         collectionStreamMap.set(stream.address, stream);
       }
-      for (const stream of parseStreamEntries(
-        isRecord(component.relays) ? component.relays : null,
-        "relay"
-      )) {
+      for (const stream of relayStreams) {
         collectionStreamMap.set(stream.address, stream);
       }
       collections.set(address, {
@@ -208,6 +256,35 @@ export function classifyComponents(graphSnapshot: GraphSnapshotPayload): {
   }
 
   return { units, collections };
+}
+
+function registerAlias<T>(index: Map<string, T>, streamAddress: string | null, value: T): void {
+  if (!streamAddress) {
+    return;
+  }
+  index.set(streamAddress, value);
+  index.set(streamAddressWithoutEndpoint(streamAddress), value);
+}
+
+export function buildRelayAliasIndex(
+  collections: Map<string, CollectionComponent>
+): RelayAliasIndex {
+  const endpointByInternalTopic = new Map<string, string>();
+  const collectionByInternalTopic = new Map<string, string>();
+
+  for (const collection of collections.values()) {
+    for (const stream of collection.streams) {
+      if (stream.collectionKind !== "relay") {
+        continue;
+      }
+      registerAlias(endpointByInternalTopic, stream.relayInputTopic, stream.address);
+      registerAlias(endpointByInternalTopic, stream.relayOutputTopic, stream.address);
+      registerAlias(collectionByInternalTopic, stream.relayInputTopic, collection.address);
+      registerAlias(collectionByInternalTopic, stream.relayOutputTopic, collection.address);
+    }
+  }
+
+  return { endpointByInternalTopic, collectionByInternalTopic };
 }
 
 export function computeRanks(
@@ -349,6 +426,7 @@ export function rootScopeHasExternalStreamContext(
   rootCollectionAddress: string
 ): boolean {
   const parentByAddress = buildCollectionParentMap(collections);
+  const relayAliasIndex = buildRelayAliasIndex(collections);
   const ownerByStreamAddress = new Map<string, string>();
   const registerOwner = (streamAddress: string, ownerAddress: string) => {
     ownerByStreamAddress.set(streamAddress, ownerAddress);
@@ -363,6 +441,9 @@ export function rootScopeHasExternalStreamContext(
     for (const stream of collection.streams) {
       registerOwner(stream.address, collection.address);
     }
+  }
+  for (const [internalTopic, collectionAddress] of relayAliasIndex.collectionByInternalTopic.entries()) {
+    ownerByStreamAddress.set(internalTopic, collectionAddress);
   }
 
   const streamAddresses = new Set<string>();
