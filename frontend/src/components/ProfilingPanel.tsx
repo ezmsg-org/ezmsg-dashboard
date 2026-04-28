@@ -7,6 +7,7 @@ import { buildRelayAliasIndex, classifyComponents } from "./topologyGraph";
 import { buildLeaseColorMap, leaseColorForEndpoint } from "../utils/traceColors";
 import {
   endpointIdFromStreamAddress,
+  parseTopicAndEndpoint,
   streamAddressWithoutEndpoint,
 } from "../utils/streamAddress";
 import type {
@@ -58,6 +59,7 @@ type PublisherActivityTone = "idle" | "active" | "backpressure";
 type SubscriberContributor = {
   id: string;
   endpointId: string;
+  displayEndpointId: string;
   topic: string;
   processId: string;
   pid: number;
@@ -70,6 +72,7 @@ type SubscriberContributor = {
 type PublisherRow = {
   id: string;
   endpointId: string;
+  displayEndpointId: string;
   topic: string;
   processId: string;
   pid: number;
@@ -184,6 +187,17 @@ function canonicalizeProfilingTopic(
   );
 }
 
+function canonicalizeProfilingEndpointId(
+  endpointId: string,
+  relayEndpointByInternalTopic: Map<string, string>
+): string {
+  const { topic, endpointToken } = parseTopicAndEndpoint(endpointId);
+  if (topic.length === 0 || endpointToken.length === 0) {
+    return endpointId;
+  }
+  return `${canonicalizeProfilingTopic(topic, relayEndpointByInternalTopic)}:${endpointToken}`;
+}
+
 function extractTraceSamples(
   event: ProfilingTraceEnvelope | null,
   relayEndpointByInternalTopic: Map<string, string>
@@ -256,6 +270,10 @@ function toContributor(
   return {
     id: `${process.process_id}:${subscriber.endpoint_id}`,
     endpointId: subscriber.endpoint_id,
+    displayEndpointId: canonicalizeProfilingEndpointId(
+      subscriber.endpoint_id,
+      relayEndpointByInternalTopic
+    ),
     topic,
     processId: process.process_id,
     pid: process.pid,
@@ -360,6 +378,10 @@ function toPublisherRow(
   return {
     id: rowId,
     endpointId: publisher.endpoint_id,
+    displayEndpointId: canonicalizeProfilingEndpointId(
+      publisher.endpoint_id,
+      relayEndpointByInternalTopic
+    ),
     topic,
     processId: process.process_id,
     pid: process.pid,
@@ -754,8 +776,8 @@ export function ProfilingPanel({
         process_id: row.processId,
         enabled: nextOpen,
         publisher_endpoint_id: nextOpen ? row.endpointId : null,
-        publisher_topic: nextOpen ? row.topic : null,
-        subscriber_topic: null,
+        publisher_topic: null,
+        subscriber_topic: nextOpen ? row.topic : null,
         metrics: nextOpen ? defaultTraceMetrics : null,
         sample_mod: 1,
         ttl_seconds: null,
@@ -1034,8 +1056,8 @@ export function ProfilingPanel({
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
-                        <code className="mono" title={row.endpointId}>
-                          {row.endpointId}
+                        <code className="mono" title={row.displayEndpointId}>
+                          {row.displayEndpointId}
                         </code>
                       </div>
                     </div>
@@ -1155,8 +1177,11 @@ export function ProfilingPanel({
                                       <div className="publisher-detail-line">
                                         <div className="publisher-endpoint">
                                           <span>Endpoint</span>
-                                          <code className="mono" title={contributor.endpointId}>
-                                            {contributor.endpointId}
+                                          <code
+                                            className="mono"
+                                            title={contributor.displayEndpointId}
+                                          >
+                                            {contributor.displayEndpointId}
                                           </code>
                                         </div>
                                       </div>

@@ -90,14 +90,25 @@ function relayMetadataType(stream: AnyRecord): RelayMetadataType {
         : typeof stream.type === "string"
           ? stream.type
           : null;
-  if (explicitType === "InputRelayMetadata" || explicitType.endsWith(".InputRelayMetadata")) {
-    return "InputRelayMetadata";
-  }
-  if (explicitType === "OutputRelayMetadata" || explicitType.endsWith(".OutputRelayMetadata")) {
-    return "OutputRelayMetadata";
-  }
-  if (explicitType === "RelayMetadata" || explicitType.endsWith(".RelayMetadata")) {
-    return "RelayMetadata";
+  if (typeof explicitType === "string") {
+    if (
+      explicitType === "InputRelayMetadata"
+      || explicitType.endsWith(".InputRelayMetadata")
+    ) {
+      return "InputRelayMetadata";
+    }
+    if (
+      explicitType === "OutputRelayMetadata"
+      || explicitType.endsWith(".OutputRelayMetadata")
+    ) {
+      return "OutputRelayMetadata";
+    }
+    if (
+      explicitType === "RelayMetadata"
+      || explicitType.endsWith(".RelayMetadata")
+    ) {
+      return "RelayMetadata";
+    }
   }
 
   const hasInputHints = "leaky" in stream || "max_queue" in stream;
