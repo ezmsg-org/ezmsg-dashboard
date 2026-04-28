@@ -203,6 +203,12 @@ function visibleExternalEdges(flow: FlowData): string[] {
     .sort();
 }
 
+function findNode(flow: FlowData, id: string) {
+  const node = flow.nodes.find((entry) => entry.id === id);
+  expect(node, `Missing node ${id}`).toBeDefined();
+  return node!;
+}
+
 describe("topologyFlowData", () => {
   it("lays out dense unit internals without overlap in both layouts", () => {
     for (const layoutMode of ["tb", "lr"] as LayoutMode[]) {
@@ -427,5 +433,51 @@ describe("topologyFlowData", () => {
       "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
       "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
     ]);
+  });
+
+  it("renders neutral collection topics and relays on the same lane with distinct legend styling", () => {
+    for (const layoutMode of ["tb", "lr"] as LayoutMode[]) {
+      const flow = buildFlowData(
+        relayCollapseSnapshot(
+          {},
+          {
+            name: "PASSTHROUGH",
+            component_type: "fixture.Passthrough",
+            children: [],
+            topics: {
+              MID_TOPIC: topicStream("SYSTEM/PASSTHROUGH/MID_TOPIC"),
+            },
+            relays: {
+              MID_RELAY: relayStream(
+                "SYSTEM/PASSTHROUGH/MID_RELAY",
+                "RelayMetadata",
+                "SYSTEM/PASSTHROUGH/__relays__/MID_RELAY/INPUT",
+                "SYSTEM/PASSTHROUGH/__relays__/MID_RELAY/OUTPUT",
+                {
+                  leaky: true,
+                  max_queue: 2,
+                  num_buffers: 2,
+                }
+              ),
+            },
+          }
+        ),
+        layoutMode,
+        null,
+        "curved",
+        false
+      );
+
+      expect(validateFlowData(flow)).toBe(true);
+
+      const topicNode = findNode(flow, "stream:SYSTEM/PASSTHROUGH/MID_TOPIC");
+      const relayNode = findNode(flow, "stream:SYSTEM/PASSTHROUGH/MID_RELAY");
+
+      expect(topicNode.position.y).toBe(relayNode.position.y);
+      expect(topicNode.style?.borderRadius).toBe(relayNode.style?.borderRadius);
+      expect(topicNode.style?.border).not.toBe(relayNode.style?.border);
+      expect(topicNode.style?.background).not.toBe(relayNode.style?.background);
+      expect(topicNode.style?.color).not.toBe(relayNode.style?.color);
+    }
   });
 });

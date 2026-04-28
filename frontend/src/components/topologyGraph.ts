@@ -56,7 +56,19 @@ function isRecord(value: unknown): value is AnyRecord {
   return typeof value === "object" && value !== null;
 }
 
-function streamDirection(stream: AnyRecord): StreamDirection {
+function streamDirection(
+  stream: AnyRecord,
+  relayType: RelayMetadataType = null
+): StreamDirection {
+  if (relayType === "RelayMetadata") {
+    return "unknown";
+  }
+  if (relayType === "InputRelayMetadata") {
+    return "input";
+  }
+  if (relayType === "OutputRelayMetadata") {
+    return "output";
+  }
   const hasInputHints = "leaky" in stream || "max_queue" in stream;
   if (hasInputHints) {
     return "input";
@@ -143,13 +155,14 @@ function parseStreamEntries(
       continue;
     }
     const isRelay = collectionKind === "relay";
+    const parsedRelayMetadataType = isRelay ? relayMetadataType(streamValue) : null;
     out.push({
       name: streamName,
       address: streamValue.address,
-      direction: streamDirection(streamValue),
+      direction: streamDirection(streamValue, parsedRelayMetadataType),
       msgType: typeof streamValue.msg_type === "string" ? streamValue.msg_type : null,
       collectionKind,
-      relayMetadataType: isRelay ? relayMetadataType(streamValue) : null,
+      relayMetadataType: parsedRelayMetadataType,
       relayGroup:
         isRelay && typeof streamValue.relay_group === "string"
           ? streamValue.relay_group
