@@ -56,5 +56,3 @@ artifacts = [
 norecursedirs = "tests/helpers"
 addopts = "-p no:warnings"
 
-[tool.uv.sources]
-ezmsg = { path = "../ezmsg", editable = true }
