@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { dashboardFixtures } from "../fixtures/dashboardFixtures";
 import { buildFlowData, validateFlowData, type FlowData, type LayoutMode } from "./topologyFlowData";
+import type { GraphSnapshotPayload } from "../types/api";
 
 type Box = {
   id: string;
@@ -110,6 +111,104 @@ function flowForFixture(
   );
 }
 
+function inputStream(address: string) {
+  return {
+    name: address.split("/").pop() ?? address,
+    address,
+    msg_type: "builtins.str",
+    leaky: false,
+    max_queue: 1,
+  };
+}
+
+function outputStream(address: string) {
+  return {
+    name: address.split("/").pop() ?? address,
+    address,
+    msg_type: "builtins.str",
+    num_buffers: 4,
+    buf_size: 256,
+    force_tcp: false,
+  };
+}
+
+function topicStream(address: string) {
+  return {
+    name: address.split("/").pop() ?? address,
+    address,
+    msg_type: "builtins.str",
+  };
+}
+
+function relayStream(
+  address: string,
+  metadataType: "RelayMetadata" | "InputRelayMetadata" | "OutputRelayMetadata",
+  relayInputTopic: string,
+  relayOutputTopic: string,
+  extra: Record<string, unknown> = {}
+) {
+  return {
+    name: address.split("/").pop() ?? address,
+    address,
+    msg_type: "builtins.str",
+    metadata_type: metadataType,
+    relay_group: relayInputTopic.split("/").slice(0, -1).join("/"),
+    relay_input_topic: relayInputTopic,
+    relay_output_topic: relayOutputTopic,
+    ...extra,
+  };
+}
+
+function relayCollapseSnapshot(
+  graph: Record<string, string[]>,
+  component: Record<string, unknown>
+): GraphSnapshotPayload {
+  return {
+    graph,
+    edge_owners: [],
+    sessions: {
+      "relay-session": {
+        edges: [],
+        metadata: {
+          components: {
+            "SYSTEM/SOURCE": {
+              name: "SOURCE",
+              component_type: "fixture.Source",
+              streams: {
+                OUTPUT: outputStream("SYSTEM/SOURCE/OUTPUT:source-output"),
+              },
+              tasks: [],
+            },
+            "SYSTEM/PASSTHROUGH": component,
+            "SYSTEM/SINK": {
+              name: "SINK",
+              component_type: "fixture.Sink",
+              streams: {
+                INPUT: inputStream("SYSTEM/SINK/INPUT:sink-input"),
+              },
+              tasks: [],
+            },
+          },
+        },
+      },
+    },
+    processes: {},
+  };
+}
+
+function visibleExternalEdges(flow: FlowData): string[] {
+  return flow.edges
+    .filter((edge) => edge.className !== "topology-internal-edge")
+    .map((edge) => `${edge.source}->${edge.target}`)
+    .sort();
+}
+
+function findNode(flow: FlowData, id: string) {
+  const node = flow.nodes.find((entry) => entry.id === id);
+  expect(node, `Missing node ${id}`).toBeDefined();
+  return node!;
+}
+
 describe("topologyFlowData", () => {
   it("lays out dense unit internals without overlap in both layouts", () => {
     for (const layoutMode of ["tb", "lr"] as LayoutMode[]) {
@@ -192,5 +291,189 @@ describe("topologyFlowData", () => {
       overlapArea(innerBox!, rootTopicBox!),
       "nested scope: ROOT_TOPIC overlaps INNER"
     ).toBe(0);
+  });
+
+  it("collapses neutral relay runtime topics to the relay endpoint", () => {
+    const flow = buildFlowData(
+      relayCollapseSnapshot(
+        {
+          "SYSTEM/SOURCE/OUTPUT": ["SYSTEM/PASSTHROUGH/IN"],
+          "SYSTEM/PASSTHROUGH/IN": ["SYSTEM/PASSTHROUGH/MID"],
+          "SYSTEM/PASSTHROUGH/MID": ["SYSTEM/PASSTHROUGH/OUT", "SYSTEM/PASSTHROUGH/__relays__/MID/INPUT"],
+          "SYSTEM/PASSTHROUGH/__relays__/MID/OUTPUT": ["SYSTEM/PASSTHROUGH/MID"],
+          "SYSTEM/PASSTHROUGH/OUT": ["SYSTEM/SINK/INPUT"],
+        },
+        {
+          name: "PASSTHROUGH",
+          component_type: "fixture.Passthrough",
+          children: [],
+          topics: {
+            IN: topicStream("SYSTEM/PASSTHROUGH/IN"),
+            OUT: topicStream("SYSTEM/PASSTHROUGH/OUT"),
+          },
+          relays: {
+            MID: relayStream(
+              "SYSTEM/PASSTHROUGH/MID",
+              "RelayMetadata",
+              "SYSTEM/PASSTHROUGH/__relays__/MID/INPUT",
+              "SYSTEM/PASSTHROUGH/__relays__/MID/OUTPUT",
+              {
+                leaky: true,
+                max_queue: 9,
+                num_buffers: 6,
+              }
+            ),
+          },
+        }
+      ),
+      "tb",
+      null,
+      "curved",
+      false
+    );
+
+    expect(validateFlowData(flow)).toBe(true);
+    expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
+    expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
+    expect(visibleExternalEdges(flow)).toEqual([
+      "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
+      "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
+    ]);
+  });
+
+  it("collapses input relay runtime topics to the collection boundary endpoints", () => {
+    const flow = buildFlowData(
+      relayCollapseSnapshot(
+        {
+          "SYSTEM/SOURCE/OUTPUT": ["SYSTEM/PASSTHROUGH/IN"],
+          "SYSTEM/PASSTHROUGH/IN": ["SYSTEM/PASSTHROUGH/__relays__/IN/INPUT"],
+          "SYSTEM/PASSTHROUGH/__relays__/IN/OUTPUT": ["SYSTEM/PASSTHROUGH/OUT"],
+          "SYSTEM/PASSTHROUGH/OUT": ["SYSTEM/SINK/INPUT"],
+        },
+        {
+          name: "PASSTHROUGH",
+          component_type: "fixture.Passthrough",
+          children: [],
+          topics: {
+            OUT: topicStream("SYSTEM/PASSTHROUGH/OUT"),
+          },
+          relays: {
+            IN: relayStream(
+              "SYSTEM/PASSTHROUGH/IN",
+              "InputRelayMetadata",
+              "SYSTEM/PASSTHROUGH/__relays__/IN/INPUT",
+              "SYSTEM/PASSTHROUGH/__relays__/IN/OUTPUT",
+              {
+                leaky: true,
+                max_queue: 7,
+              }
+            ),
+          },
+        }
+      ),
+      "tb",
+      null,
+      "curved",
+      false
+    );
+
+    expect(validateFlowData(flow)).toBe(true);
+    expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
+    expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
+    expect(visibleExternalEdges(flow)).toEqual([
+      "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
+      "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
+    ]);
+  });
+
+  it("collapses output relay runtime topics to the collection boundary endpoints", () => {
+    const flow = buildFlowData(
+      relayCollapseSnapshot(
+        {
+          "SYSTEM/SOURCE/OUTPUT": ["SYSTEM/PASSTHROUGH/IN"],
+          "SYSTEM/PASSTHROUGH/IN": ["SYSTEM/PASSTHROUGH/__relays__/OUT/INPUT"],
+          "SYSTEM/PASSTHROUGH/__relays__/OUT/OUTPUT": ["SYSTEM/PASSTHROUGH/OUT"],
+          "SYSTEM/PASSTHROUGH/OUT": ["SYSTEM/SINK/INPUT"],
+        },
+        {
+          name: "PASSTHROUGH",
+          component_type: "fixture.Passthrough",
+          children: [],
+          topics: {
+            IN: topicStream("SYSTEM/PASSTHROUGH/IN"),
+          },
+          relays: {
+            OUT: relayStream(
+              "SYSTEM/PASSTHROUGH/OUT",
+              "OutputRelayMetadata",
+              "SYSTEM/PASSTHROUGH/__relays__/OUT/INPUT",
+              "SYSTEM/PASSTHROUGH/__relays__/OUT/OUTPUT",
+              {
+                num_buffers: 8,
+                force_tcp: true,
+              }
+            ),
+          },
+        }
+      ),
+      "tb",
+      null,
+      "curved",
+      false
+    );
+
+    expect(validateFlowData(flow)).toBe(true);
+    expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
+    expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
+    expect(visibleExternalEdges(flow)).toEqual([
+      "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
+      "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
+    ]);
+  });
+
+  it("renders neutral collection topics and relays on the same lane with distinct legend styling", () => {
+    for (const layoutMode of ["tb", "lr"] as LayoutMode[]) {
+      const flow = buildFlowData(
+        relayCollapseSnapshot(
+          {},
+          {
+            name: "PASSTHROUGH",
+            component_type: "fixture.Passthrough",
+            children: [],
+            topics: {
+              MID_TOPIC: topicStream("SYSTEM/PASSTHROUGH/MID_TOPIC"),
+            },
+            relays: {
+              MID_RELAY: relayStream(
+                "SYSTEM/PASSTHROUGH/MID_RELAY",
+                "RelayMetadata",
+                "SYSTEM/PASSTHROUGH/__relays__/MID_RELAY/INPUT",
+                "SYSTEM/PASSTHROUGH/__relays__/MID_RELAY/OUTPUT",
+                {
+                  leaky: true,
+                  max_queue: 2,
+                  num_buffers: 2,
+                }
+              ),
+            },
+          }
+        ),
+        layoutMode,
+        null,
+        "curved",
+        false
+      );
+
+      expect(validateFlowData(flow)).toBe(true);
+
+      const topicNode = findNode(flow, "stream:SYSTEM/PASSTHROUGH/MID_TOPIC");
+      const relayNode = findNode(flow, "stream:SYSTEM/PASSTHROUGH/MID_RELAY");
+
+      expect(topicNode.position.y).toBe(relayNode.position.y);
+      expect(topicNode.style?.borderRadius).toBe(relayNode.style?.borderRadius);
+      expect(topicNode.style?.border).not.toBe(relayNode.style?.border);
+      expect(topicNode.style?.background).not.toBe(relayNode.style?.background);
+      expect(topicNode.style?.color).not.toBe(relayNode.style?.color);
+    }
   });
 });

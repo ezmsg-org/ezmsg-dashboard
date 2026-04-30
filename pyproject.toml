@@ -54,4 +54,7 @@ artifacts = [
 
 [tool.pytest.ini_options]
 norecursedirs = "tests/helpers"
-addopts = "-p no:warnings"
+
+[tool.uv.sources]
+# ezmsg = { path = "../ezmsg", editable = true }
+

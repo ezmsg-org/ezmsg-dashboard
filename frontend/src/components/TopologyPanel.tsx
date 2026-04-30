@@ -224,7 +224,12 @@ export function TopologyPanel({
     ]
   );
   const flowData = useMemo(() => {
-    if (computedFlowData.nodes.length > 0 && validateFlowData(computedFlowData)) {
+    if (computedFlowData.nodes.length === 0) {
+      flowCacheByScopeRef.current.delete(flowScopeKey);
+      return computedFlowData;
+    }
+
+    if (validateFlowData(computedFlowData)) {
       flowCacheByScopeRef.current.set(flowScopeKey, computedFlowData);
       return computedFlowData;
     }

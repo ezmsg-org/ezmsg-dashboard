@@ -2,7 +2,11 @@ import { MarkerType } from "reactflow";
 
 import type { GraphSnapshotPayload } from "../types/api";
 import { streamAddressWithoutEndpoint } from "../utils/streamAddress";
-import type { CollectionComponent, UnitComponent } from "./topologyGraph";
+import {
+  buildRelayAliasIndex,
+  type CollectionComponent,
+  type UnitComponent,
+} from "./topologyGraph";
 import type { FlowData } from "./topologyFlowData";
 
 export type TopologyComponents = {
@@ -28,6 +32,10 @@ export function buildCanonicalStreamAliasIndex(
       canonicalByAlias.set(stream.address, stream.address);
       canonicalByAlias.set(streamAddressWithoutEndpoint(stream.address), stream.address);
     }
+  }
+  const relayAliasIndex = buildRelayAliasIndex(topologyComponents.collections);
+  for (const [internalTopic, endpointAddress] of relayAliasIndex.endpointByInternalTopic.entries()) {
+    canonicalByAlias.set(internalTopic, endpointAddress);
   }
   return canonicalByAlias;
 }
