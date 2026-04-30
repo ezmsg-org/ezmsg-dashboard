@@ -548,11 +548,12 @@ export function useDashboardData(options?: DashboardDataOptions) {
           };
         }
 
+        const requestedTopic = request.publisher_topic ?? request.subscriber_topic;
         const scenario = (dashboardFixture.traceScenarios ?? []).find(
           (candidate) =>
             candidate.processId === request.process_id
             && candidate.publisherEndpointId === request.publisher_endpoint_id
-            && candidate.publisherTopic === request.publisher_topic
+            && candidate.publisherTopic === requestedTopic
         );
 
         if (scenario) {

@@ -233,11 +233,16 @@ function extractTraceSamples(
       ) {
         continue;
       }
-      out.push({
-        rowId: `${processId}:${endpointId}`,
-        processId,
+      const canonicalEndpointId = canonicalizeProfilingEndpointId(
         endpointId,
-        topic: canonicalizeProfilingTopic(topic, relayEndpointByInternalTopic),
+        relayEndpointByInternalTopic
+      );
+      const canonicalTopic = canonicalizeProfilingTopic(topic, relayEndpointByInternalTopic);
+      out.push({
+        rowId: `${processId}:${canonicalEndpointId}`,
+        processId,
+        endpointId: canonicalEndpointId,
+        topic: canonicalTopic,
         timestamp:
           typeof timestamp === "number" && Number.isFinite(timestamp)
             ? timestamp
