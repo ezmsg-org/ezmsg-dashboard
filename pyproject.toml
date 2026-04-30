@@ -55,6 +55,3 @@ artifacts = [
 [tool.pytest.ini_options]
 norecursedirs = "tests/helpers"
 addopts = "-p no:warnings"
-
-[tool.uv.sources]
-ezmsg = { git = "https://github.com/ezmsg-org/ezmsg", branch = "feature/dashboard-integration" }
