@@ -336,9 +336,7 @@ describe("topologyFlowData", () => {
     expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
     expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
     expect(visibleExternalEdges(flow)).toEqual([
-      "stream:SYSTEM/PASSTHROUGH/IN->stream:SYSTEM/PASSTHROUGH/MID",
       "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
-      "stream:SYSTEM/PASSTHROUGH/MID->stream:SYSTEM/PASSTHROUGH/OUT",
       "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
     ]);
   });
@@ -383,7 +381,6 @@ describe("topologyFlowData", () => {
     expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
     expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
     expect(visibleExternalEdges(flow)).toEqual([
-      "stream:SYSTEM/PASSTHROUGH/IN->stream:SYSTEM/PASSTHROUGH/OUT",
       "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
       "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
     ]);
@@ -429,7 +426,6 @@ describe("topologyFlowData", () => {
     expect(flow.nodes.some((node) => node.id.includes("__relays__"))).toBe(false);
     expect(flow.edges.some((edge) => edge.id.includes("__relays__"))).toBe(false);
     expect(visibleExternalEdges(flow)).toEqual([
-      "stream:SYSTEM/PASSTHROUGH/IN->stream:SYSTEM/PASSTHROUGH/OUT",
       "stream:SYSTEM/PASSTHROUGH/OUT->stream:SYSTEM/SINK/INPUT:sink-input",
       "stream:SYSTEM/SOURCE/OUTPUT:source-output->stream:SYSTEM/PASSTHROUGH/IN",
     ]);
