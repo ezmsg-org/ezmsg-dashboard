@@ -165,8 +165,7 @@ uv run python -m ezmsg.dashboard.build_frontend
 Then verify the package and tests:
 
 ```bash
-PYTHONPYCACHEPREFIX=/tmp/pycache .venv/bin/pytest tests/backend -q
-uv run python -m build
+uv run pytest tests/backend -q
 ```
 
 The `_web/` bundle under `src/ezmsg/dashboard/` is part of the Python package and should be updated as part of the release.

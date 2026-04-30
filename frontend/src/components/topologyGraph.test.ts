@@ -32,6 +32,20 @@ function collection(address: string, children: string[]): CollectionComponent {
   };
 }
 
+function stream(address: string, direction: "input" | "output" | "unknown" = "unknown") {
+  return {
+    name: address.split("/").pop() ?? address,
+    address,
+    direction,
+    msgType: "builtins.str",
+    collectionKind: null,
+    relayMetadataType: null,
+    relayGroup: null,
+    relayInputTopic: null,
+    relayOutputTopic: null,
+  } as const;
+}
+
 describe("topologyGraph helpers", () => {
   it("builds nested scope paths and parent membership", () => {
     const collections = new Map<string, CollectionComponent>([
@@ -84,6 +98,10 @@ describe("topologyGraph helpers", () => {
               direction: "output",
               msgType: "builtins.str",
               collectionKind: null,
+              relayMetadataType: null,
+              relayGroup: null,
+              relayInputTopic: null,
+              relayOutputTopic: null,
             },
           ],
         },
@@ -104,5 +122,75 @@ describe("topologyGraph helpers", () => {
     expect(
       rootScopeHasExternalStreamContext(graphSnapshot, units, collections, "LAB")
     ).toBe(true);
+  });
+
+  it("treats relay-internal topics as collection-owned root context", () => {
+    const units = new Map<string, UnitComponent>([
+      [
+        "SYSTEM/SOURCE",
+        {
+          ...unit("SYSTEM/SOURCE"),
+          streams: [stream("SYSTEM/SOURCE/OUTPUT:source-output", "output")],
+        },
+      ],
+      [
+        "SYSTEM/SINK",
+        {
+          ...unit("SYSTEM/SINK"),
+          streams: [stream("SYSTEM/SINK/INPUT:sink-input", "input")],
+        },
+      ],
+    ]);
+    const collections = new Map<string, CollectionComponent>([
+      [
+        "SYSTEM",
+        collection("SYSTEM", [
+          "SYSTEM/SOURCE",
+          "SYSTEM/PASSTHROUGH",
+          "SYSTEM/SINK",
+        ]),
+      ],
+      [
+        "SYSTEM/PASSTHROUGH",
+        {
+          ...collection("SYSTEM/PASSTHROUGH", []),
+          streams: [
+            {
+              ...stream("SYSTEM/PASSTHROUGH/IN", "input"),
+              name: "IN",
+              collectionKind: "relay",
+              relayMetadataType: "InputRelayMetadata",
+              relayGroup: "SYSTEM/PASSTHROUGH/__relays__/IN",
+              relayInputTopic: "SYSTEM/PASSTHROUGH/__relays__/IN/INPUT",
+              relayOutputTopic: "SYSTEM/PASSTHROUGH/__relays__/IN/OUTPUT",
+            },
+            {
+              ...stream("SYSTEM/PASSTHROUGH/OUT", "output"),
+              name: "OUT",
+              collectionKind: "topic",
+            },
+          ],
+        },
+      ],
+    ]);
+    const graphSnapshot: GraphSnapshotPayload = {
+      graph: {
+        "SYSTEM/SOURCE/OUTPUT": ["SYSTEM/PASSTHROUGH/__relays__/IN/INPUT"],
+        "SYSTEM/PASSTHROUGH/__relays__/IN/OUTPUT": ["SYSTEM/PASSTHROUGH/OUT"],
+        "SYSTEM/PASSTHROUGH/OUT": ["SYSTEM/SINK/INPUT"],
+      },
+      edge_owners: [],
+      sessions: {},
+      processes: {},
+    };
+
+    expect(
+      rootScopeHasExternalStreamContext(
+        graphSnapshot,
+        units,
+        collections,
+        "SYSTEM"
+      )
+    ).toBe(false);
   });
 });

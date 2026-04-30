@@ -2,6 +2,7 @@ import { MarkerType, Position, type Edge, type Node } from "reactflow";
 
 import {
   belongsToCollection,
+  buildRelayAliasIndex,
   buildCollectionParentMap,
   classifyComponents,
   computeRanks,
@@ -86,6 +87,21 @@ function compactMsgType(msgType: string | null): string | null {
   return `${short.slice(0, 15)}…`;
 }
 
+function isNeutralCollectionStream(stream: UnitComponent["streams"][number]): boolean {
+  return stream.collectionKind !== null && stream.direction === "unknown";
+}
+
+function scopedNeutralStreamOwnerId(streamAddress: string): string {
+  return `stream:${streamAddress}`;
+}
+
+function laneCount(...groups: Array<{ length: number }>): number {
+  return Math.max(
+    1,
+    groups.reduce((count, group) => count + (group.length > 0 ? 1 : 0), 0)
+  );
+}
+
 export function compactCollectionAddress(address: string): string {
   const parts = address.split("/");
   if (parts.length <= 2) {
@@ -121,6 +137,9 @@ function streamLabelClassName(
   ownerKind: "unit" | "collection"
 ): string {
   if (ownerKind === "collection" && stream.collectionKind) {
+    if (className === "is-unknown") {
+      return "mono topology-stream-label is-collection";
+    }
     return "mono topology-stream-label is-collection";
   }
   return `mono topology-stream-label ${className}`;
@@ -159,7 +178,7 @@ function streamNodeVisualStyle(
         border: darkMode ? "1px solid #fb923c" : "1px solid #f8b66f",
         background: darkMode ? "#2a2115" : "#fff8ef",
         color: darkMode ? "#fdba74" : "#8a4f10",
-        borderRadius: 10,
+        borderRadius: 999,
       };
     }
     if (className === "is-output") {
@@ -179,10 +198,10 @@ function streamNodeVisualStyle(
       };
     }
     return {
-      border: darkMode ? "1px solid #c084fc" : "1px solid #d3accb",
-      background: darkMode ? "#251b33" : "#fbf3f8",
+      border: darkMode ? "1px solid #d8b4fe" : "1px solid #b07aa1",
+      background: darkMode ? "#2a1d3a" : "#f8eef5",
       color: darkMode ? "#e9d5ff" : "#6f3f66",
-      borderRadius: 10,
+      borderRadius: 999,
     };
   }
 
@@ -389,6 +408,7 @@ export function buildFlowData(
         ? "smoothstep"
         : "default";
   const { units, collections } = classifyComponents(graphSnapshot);
+  const relayAliasIndex = buildRelayAliasIndex(collections);
   const visibleAddresses = visibleComponentAddresses(
     units,
     collections,
@@ -416,6 +436,12 @@ export function buildFlowData(
   const scopedCollectionOwnerId = scopedCollection
     ? `scope:${scopedCollection.address}`
     : null;
+  const scopedNeutralStreams = scopedCollection
+    ? scopedCollection.streams.filter(isNeutralCollectionStream)
+    : [];
+  const scopedNeutralStreamByOwnerId = new Map(
+    scopedNeutralStreams.map((stream) => [scopedNeutralStreamOwnerId(stream.address), stream] as const)
+  );
 
   const unitOwnerByStreamAddress = new Map<string, string>();
   const collectionOwnerByStreamAddress = new Map<string, string>();
@@ -431,6 +457,9 @@ export function buildFlowData(
       collectionOwnerByStreamAddress.set(streamAddressWithoutEndpoint(stream.address), collection.address);
     }
   }
+  for (const [internalTopic, collectionAddress] of relayAliasIndex.collectionByInternalTopic.entries()) {
+    collectionOwnerByStreamAddress.set(internalTopic, collectionAddress);
+  }
 
   const canonicalStreamByAlias = new Map<string, string>();
   for (const unit of units.values()) {
@@ -445,13 +474,26 @@ export function buildFlowData(
       canonicalStreamByAlias.set(streamAddressWithoutEndpoint(stream.address), stream.address);
     }
   }
+  for (const [internalTopic, endpointAddress] of relayAliasIndex.endpointByInternalTopic.entries()) {
+    canonicalStreamByAlias.set(internalTopic, endpointAddress);
+  }
+
+  const canonicalizeStreamAddress = (streamAddress: string): string =>
+    canonicalStreamByAlias.get(streamAddress)
+    ?? canonicalStreamByAlias.get(streamAddressWithoutEndpoint(streamAddress))
+    ?? streamAddress;
 
   const rawEdges: Array<{ from: string; to: string }> = [];
   for (const [fromTopic, toTopics] of Object.entries(graphSnapshot.graph)) {
     for (const toTopic of toTopics) {
+      const from = canonicalizeStreamAddress(fromTopic);
+      const to = canonicalizeStreamAddress(toTopic);
+      if (from === to) {
+        continue;
+      }
       rawEdges.push({
-        from: canonicalStreamByAlias.get(fromTopic) ?? fromTopic,
-        to: canonicalStreamByAlias.get(toTopic) ?? toTopic,
+        from,
+        to,
       });
     }
   }
@@ -476,6 +518,7 @@ export function buildFlowData(
         | "unit"
         | "collection"
         | "scope_collection"
+        | "scope_collection_stream"
         | "collection_proxy"
         | "orphan";
     }
@@ -498,6 +541,12 @@ export function buildFlowData(
         ownerKind: "collection",
       });
     }
+  }
+  for (const stream of scopedNeutralStreams) {
+    registerStreamOwner(stream.address, {
+      ownerId: scopedNeutralStreamOwnerId(stream.address),
+      ownerKind: "scope_collection_stream",
+    });
   }
 
   const ownedStreams = new Set(streamOwnerByAddress.keys());
@@ -522,6 +571,11 @@ export function buildFlowData(
     const ownerId = `collection:${collection.address}`;
     ownerIds.add(ownerId);
     ownerLabel.set(ownerId, collection.name);
+  }
+  for (const stream of scopedNeutralStreams) {
+    const ownerId = scopedNeutralStreamOwnerId(stream.address);
+    ownerIds.add(ownerId);
+    ownerLabel.set(ownerId, streamDisplayName(stream.name, stream.address));
   }
   for (const streamAddress of relevantStreams) {
     if (streamOwnerByAddress.has(streamAddress)) {
@@ -694,10 +748,14 @@ export function buildFlowData(
     ownerSizeById.set(`unit:${unit.address}`, { width, height });
   }
   for (const collection of visibleCollections.values()) {
-    const inputs = collection.streams.filter((stream) => stream.direction === "input").length;
-    const outputs = collection.streams.filter((stream) => stream.direction === "output").length;
-    const unknown = collection.streams.filter((stream) => stream.direction === "unknown").length;
-    const maxRows = Math.max(1, inputs, outputs, unknown);
+    const inputStreams = collection.streams.filter((stream) => stream.direction === "input");
+    const outputStreams = collection.streams.filter((stream) => stream.direction === "output");
+    const neutralStreams = collection.streams.filter(isNeutralCollectionStream);
+    const inputs = inputStreams.length;
+    const outputs = outputStreams.length;
+    const neutral = neutralStreams.length;
+    const rowLanes = laneCount(inputStreams, neutralStreams, outputStreams);
+    const maxRows = Math.max(1, inputs, outputs, neutral);
     const streamDrivenWidth = Math.max(
       layoutMode === "lr" ? COLLECTION_NODE_WIDTH : 300,
       requiredRowWidth(
@@ -718,23 +776,24 @@ export function buildFlowData(
         124,
         COLLECTION_NODE_HEADER_HEIGHT
           + 16
-          + Math.max(1, inputs, outputs) * 30
-          + (unknown > 0 ? STREAM_NODE_HEIGHT + 12 : 0)
+          + Math.max(1, inputs, neutral, outputs) * 30
           + 12
       )
       : Math.max(
         176,
         COLLECTION_NODE_HEADER_HEIGHT
-          + 14
-          + Math.max(
-            1,
-            (inputs > 0 ? 1 : 0)
-              + (unknown > 0 ? 1 : 0)
-              + (outputs > 0 ? 1 : 0)
-          ) * STREAM_NODE_HEIGHT
-          + 12
+          + 18
+          + rowLanes * STREAM_NODE_HEIGHT
+          + Math.max(0, rowLanes - 1) * 12
+          + 16
       );
     ownerSizeById.set(`collection:${collection.address}`, { width, height });
+  }
+  for (const stream of scopedNeutralStreams) {
+    ownerSizeById.set(scopedNeutralStreamOwnerId(stream.address), {
+      width: STREAM_NODE_WIDTH,
+      height: STREAM_NODE_HEIGHT,
+    });
   }
   for (const ownerId of orderedOwnerIds) {
     if (ownerSizeById.has(ownerId)) {
@@ -853,7 +912,10 @@ export function buildFlowData(
 
   if (scopedCollection && scopedCollectionOwnerId) {
     const scopedOwnerIds = orderedOwnerIds.filter(
-      (ownerId) => ownerId.startsWith("unit:") || ownerId.startsWith("collection:")
+      (ownerId) =>
+        ownerId.startsWith("unit:")
+        || ownerId.startsWith("collection:")
+        || scopedNeutralStreamByOwnerId.has(ownerId)
     );
     let minX = 24;
     let minY = 32;
@@ -885,8 +947,11 @@ export function buildFlowData(
 
     const scopedInputs = scopedCollection.streams.filter((stream) => stream.direction === "input");
     const scopedOutputs = scopedCollection.streams.filter((stream) => stream.direction === "output");
-    const scopedUnknown = scopedCollection.streams.filter((stream) => stream.direction === "unknown");
-    const scopedStreamMax = Math.max(1, scopedInputs.length, scopedOutputs.length, scopedUnknown.length);
+    const scopedStreamMax = Math.max(
+      1,
+      scopedInputs.length,
+      scopedOutputs.length
+    );
     const scopedRowMinWidth = requiredRowWidth(
       scopedStreamMax,
       STREAM_NODE_WIDTH,
@@ -904,12 +969,12 @@ export function buildFlowData(
         scopedHeaderBase,
         scopedStreamTop
           + Math.max(1, scopedInputs.length, scopedOutputs.length) * 30
-          + (scopedUnknown.length > 0 ? STREAM_NODE_HEIGHT + 10 : 0)
           + 8
       )
-      : hasScopedInputRow
-        ? Math.max(scopedHeaderBase, scopedStreamTop + STREAM_NODE_HEIGHT + 8)
-        : scopedHeaderBase;
+      : Math.max(
+        scopedHeaderBase,
+        scopedStreamTop + (hasScopedInputRow ? STREAM_NODE_HEIGHT + 8 : 0)
+      );
     const scopeBottomPadding = layoutMode === "tb"
       ? hasScopedOutputRow
         ? Math.max(COLLECTION_SCOPE_BOTTOM_PADDING, STREAM_NODE_HEIGHT + 20)
@@ -1087,23 +1152,8 @@ export function buildFlowData(
           },
         });
       });
-      if (scopedUnknown.length > 0) {
-        placeUnitStreamRow(
-          scopedCollectionOwnerId,
-          scopeSize,
-          scopedUnknown,
-          56 + Math.max(scopedInputs.length, scopedOutputs.length) * rowStep + 4,
-          "is-unknown",
-          "collection",
-          layoutMode,
-          nodes
-        );
-      }
     } else {
-      const topInputY = Math.max(
-        scopedStreamTop,
-        scopeHeaderHeight - STREAM_NODE_HEIGHT - 8
-      );
+      const topInputY = scopedStreamTop;
       const scopeFooterTop = scopeHeaderHeight + scopeContentHeight;
       const bottomOutputY = Math.min(
         scopeSize.height - STREAM_NODE_HEIGHT - 10,
@@ -1129,27 +1179,52 @@ export function buildFlowData(
         layoutMode,
         nodes
       );
-      if (scopedUnknown.length > 0) {
-        const unknownRowY = chooseScopedUnknownRowY(
-          scopedOwnerIds,
-          ownerPosition,
-          ownerSizeById,
-          scopePos.y,
-          scopeHeaderHeight,
-          scopeContentHeight,
-          scopeSize.height
-        );
-        placeUnitStreamRow(
-          scopedCollectionOwnerId,
-          scopeSize,
-          scopedUnknown,
-          unknownRowY,
-          "is-unknown",
-          "collection",
-          layoutMode,
-          nodes
-        );
+    }
+
+    for (const ownerId of scopedOwnerIds) {
+      const stream = scopedNeutralStreamByOwnerId.get(ownerId);
+      if (!stream) {
+        continue;
       }
+      const position = ownerPosition.get(ownerId);
+      if (!position) {
+        continue;
+      }
+      const visual = streamNodeVisualStyle(stream, "is-unknown", "collection", darkMode);
+      nodes.push({
+        id: ownerId,
+        parentNode: scopedCollectionOwnerId,
+        extent: "parent",
+        draggable: false,
+        data: {
+          label: (
+            <span
+              className={streamLabelClassName(stream, "is-unknown", "collection")}
+              title={streamTooltip(stream, "collection")}
+            >
+              <span className="topology-stream-name">
+                {streamDisplayName(stream.name, stream.address)}
+              </span>
+              {compactMsgType(stream.msgType) ? (
+                <span className="topology-stream-type">[{compactMsgType(stream.msgType)}]</span>
+              ) : null}
+            </span>
+          ),
+        },
+        position: { x: position.x - scopePos.x, y: position.y - scopePos.y },
+        sourcePosition: layoutMode === "tb" ? Position.Bottom : Position.Right,
+        targetPosition: layoutMode === "tb" ? Position.Top : Position.Left,
+        style: {
+          width: STREAM_NODE_WIDTH,
+          height: STREAM_NODE_HEIGHT,
+          borderRadius: visual.borderRadius,
+          border: visual.border,
+          background: visual.background,
+          color: visual.color,
+          fontSize: 8,
+          padding: "0 6px",
+        },
+      });
     }
   }
 
@@ -1222,7 +1297,7 @@ export function buildFlowData(
 
     const inputs = collection.streams.filter((stream) => stream.direction === "input");
     const outputs = collection.streams.filter((stream) => stream.direction === "output");
-    const unknown = collection.streams.filter((stream) => stream.direction === "unknown");
+    const neutral = collection.streams.filter(isNeutralCollectionStream);
 
     if (layoutMode === "lr") {
       const rowStep = 30;
@@ -1302,25 +1377,37 @@ export function buildFlowData(
         });
       });
 
-      if (unknown.length > 0) {
-        placeUnitStreamRow(
-          nodeId,
-          size,
-          unknown,
-          size.height - STREAM_NODE_HEIGHT - 10,
-          "is-unknown",
-          "collection",
-          layoutMode,
-          nodes
-        );
-      }
+      placeUnitStreamRow(
+        nodeId,
+        size,
+        neutral,
+        top,
+        "is-unknown",
+        "collection",
+        layoutMode,
+        nodes
+      );
     } else {
       const topInputY = 86;
       const bottomOutputY = Math.max(
         topInputY + STREAM_NODE_HEIGHT + 10,
         size.height - STREAM_NODE_HEIGHT - 12
       );
+      const neutralY = Math.min(
+        bottomOutputY - STREAM_NODE_HEIGHT - 12,
+        Math.floor((topInputY + bottomOutputY) / 2)
+      );
       placeUnitStreamRow(nodeId, size, inputs, topInputY, "is-input", "collection", layoutMode, nodes);
+      placeUnitStreamRow(
+        nodeId,
+        size,
+        neutral,
+        neutralY,
+        "is-unknown",
+        "collection",
+        layoutMode,
+        nodes
+      );
       placeUnitStreamRow(
         nodeId,
         size,
@@ -1331,18 +1418,6 @@ export function buildFlowData(
         layoutMode,
         nodes
       );
-      if (unknown.length > 0) {
-        placeUnitStreamRow(
-          nodeId,
-          size,
-          unknown,
-          Math.floor((size.height - STREAM_NODE_HEIGHT) / 2) + 14,
-          "is-unknown",
-          "collection",
-          layoutMode,
-          nodes
-        );
-      }
     }
   }
 
