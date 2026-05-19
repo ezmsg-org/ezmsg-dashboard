@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import math
 from typing import Any, Mapping
 from uuid import UUID
 
@@ -16,8 +17,13 @@ from ezmsg.core.graphmeta import (
 
 
 def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return str(value)
 
     if isinstance(value, UUID):
         return str(value)

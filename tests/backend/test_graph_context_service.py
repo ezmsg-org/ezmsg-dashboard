@@ -385,3 +385,44 @@ async def test_set_profiling_trace_control_disable_disables_all_active_route_uni
     }
     for call in fake_context.trace_control_calls:
         assert call["enabled"] is False
+
+@pytest.mark.asyncio
+async def test_settings_payload_coerces_non_finite_floats_to_strings() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    fake_context.settings_snapshot = None
+    service._context = fake_context  # controlled test context
+
+    async def settings_snapshot():
+        return {
+            "unit.patchable": SimpleNamespace(
+                serialized=b"bytes",
+                repr_value={
+                    "problematic": float("inf"),
+                    "negative": float("-inf"),
+                    "nan": float("nan"),
+                    "finite": 1.25,
+                },
+                structured_value={
+                    "problematic": float("inf"),
+                    "negative": float("-inf"),
+                    "nan": float("nan"),
+                    "finite": 1.25,
+                },
+                settings_schema=None,
+            )
+        }
+
+    fake_context.settings_snapshot = settings_snapshot
+
+    payload = await service.settings_payload()
+    value = payload["settings"]["unit.patchable"]
+
+    assert value["repr_value"]["problematic"] == "inf"
+    assert value["repr_value"]["negative"] == "-inf"
+    assert value["repr_value"]["nan"] == "nan"
+    assert value["repr_value"]["finite"] == 1.25
+    assert value["structured_value"]["problematic"] == "inf"
+    assert value["structured_value"]["negative"] == "-inf"
+    assert value["structured_value"]["nan"] == "nan"
+    assert value["structured_value"]["finite"] == 1.25
