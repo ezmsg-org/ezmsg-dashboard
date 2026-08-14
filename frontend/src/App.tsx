@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { ProfilingPanel } from "./components/ProfilingPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -128,7 +136,18 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   inspectorWidthPx: 500,
 };
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
+const INSPECTOR_WIDTH_MIN_PX = 360;
+const INSPECTOR_WIDTH_MAX_PX = 900;
+/** How far one arrow key press moves the inspector divider. */
+const INSPECTOR_WIDTH_KEY_STEP_PX = 16;
 type HealthTone = "ok" | "warn" | "err";
+
+function clampInspectorWidth(value: number): number {
+  return Math.min(
+    INSPECTOR_WIDTH_MAX_PX,
+    Math.max(INSPECTOR_WIDTH_MIN_PX, Math.round(value))
+  );
+}
 
 function toEpochMillis(timestamp: number): number | null {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
@@ -199,7 +218,7 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       : DEFAULT_GLOBAL_SETTINGS.snapshotPollSeconds;
   const inspectorWidthPx =
     typeof raw.inspectorWidthPx === "number" && Number.isFinite(raw.inspectorWidthPx)
-      ? Math.min(900, Math.max(360, Math.round(raw.inspectorWidthPx)))
+      ? clampInspectorWidth(raw.inspectorWidthPx)
       : DEFAULT_GLOBAL_SETTINGS.inspectorWidthPx;
   const traceMetricsPreset =
     raw.traceMetricsPreset === "publish+lease"
@@ -286,6 +305,12 @@ export function App() {
   const [topologyFocusSelection, setTopologyFocusSelection] =
     useState<TopologyEntitySelection | null>(null);
   const [topologyFocusRequestId, setTopologyFocusRequestId] = useState(0);
+  // Live width while the divider is being dragged; committed to global settings
+  // on release so a drag is one localStorage write instead of one per frame.
+  const [inspectorDragWidthPx, setInspectorDragWidthPx] = useState<number | null>(null);
+  const inspectorDragOriginRef = useRef<{ pointerX: number; widthPx: number } | null>(
+    null
+  );
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>(() => {
     try {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -361,12 +386,13 @@ export function App() {
     }
     return ["publish_delta_ns", "lease_time_ns", "user_span_ns"];
   }, [globalSettings.traceMetricsPreset]);
+  const inspectorWidthPx = inspectorDragWidthPx ?? globalSettings.inspectorWidthPx;
   const dashboardLayoutStyle = useMemo(
     () =>
       ({
-        "--inspector-width": `${globalSettings.inspectorWidthPx}px`,
+        "--inspector-width": `${inspectorWidthPx}px`,
       }) as CSSProperties,
-    [globalSettings.inspectorWidthPx]
+    [inspectorWidthPx]
   );
 
   const handleTopologySelection = (selection: TopologyEntitySelection | null) => {
@@ -380,6 +406,11 @@ export function App() {
     if (nextInspector.kind === "unit" || nextInspector.kind === "collection") {
       setSettingsSectionCollapsed(false);
       setSettingsFocusActionId((previous) => previous + 1);
+      if (nextInspector.kind === "unit") {
+        // Point the publishers list at the same unit. The section is left as
+        // the user set it; the panel picks the request up when it is expanded.
+        setProfilingFocusActionId((previous) => previous + 1);
+      }
     } else {
       setPublishersSectionCollapsed(false);
       setProfilingFocusActionId((previous) => previous + 1);
@@ -390,6 +421,73 @@ export function App() {
   const requestTopologyFocus = (selection: TopologyEntitySelection | null) => {
     setTopologyFocusSelection(selection);
     setTopologyFocusRequestId((previous) => previous + 1);
+  };
+
+  const commitInspectorWidth = (widthPx: number) => {
+    setGlobalSettings((previous) => ({
+      ...previous,
+      inspectorWidthPx: clampInspectorWidth(widthPx),
+    }));
+  };
+
+  const handleInspectorResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    inspectorDragOriginRef.current = {
+      pointerX: event.clientX,
+      widthPx: globalSettings.inspectorWidthPx,
+    };
+    setInspectorDragWidthPx(globalSettings.inspectorWidthPx);
+  };
+
+  const handleInspectorResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const origin = inspectorDragOriginRef.current;
+    if (!origin) {
+      return;
+    }
+    // The inspector is on the right, so dragging left widens it.
+    setInspectorDragWidthPx(
+      clampInspectorWidth(origin.widthPx + (origin.pointerX - event.clientX))
+    );
+  };
+
+  const handleInspectorResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!inspectorDragOriginRef.current) {
+      return;
+    }
+    inspectorDragOriginRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (inspectorDragWidthPx !== null) {
+      commitInspectorWidth(inspectorDragWidthPx);
+    }
+    setInspectorDragWidthPx(null);
+  };
+
+  const handleInspectorResizeKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>
+  ) => {
+    const step =
+      event.key === "ArrowLeft"
+        ? INSPECTOR_WIDTH_KEY_STEP_PX
+        : event.key === "ArrowRight"
+          ? -INSPECTOR_WIDTH_KEY_STEP_PX
+          : 0;
+    if (step !== 0) {
+      event.preventDefault();
+      commitInspectorWidth(globalSettings.inspectorWidthPx + step);
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      commitInspectorWidth(
+        event.key === "Home" ? INSPECTOR_WIDTH_MAX_PX : INSPECTOR_WIDTH_MIN_PX
+      );
+    }
   };
 
   const handleCloseTraceDock = () => {
@@ -427,12 +525,32 @@ export function App() {
     <div
       className={`dashboard-layout is-comfortable ${
         inspectorCollapsed ? "is-inspector-collapsed " : ""
-      }${
+      }${inspectorDragWidthPx === null ? "" : "is-resizing-inspector "}${
         globalSettings.themeMode === "dark" ? "is-dark" : ""
       }`}
       style={dashboardLayoutStyle}
     >
       <aside className="dashboard-inspector dashboard-inspector--pinned">
+        {inspectorCollapsed ? null : (
+          <div
+            className="inspector-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize inspector"
+            aria-valuemin={INSPECTOR_WIDTH_MIN_PX}
+            aria-valuemax={INSPECTOR_WIDTH_MAX_PX}
+            aria-valuenow={inspectorWidthPx}
+            tabIndex={0}
+            onPointerDown={handleInspectorResizeStart}
+            onPointerMove={handleInspectorResizeMove}
+            onPointerUp={handleInspectorResizeEnd}
+            onPointerCancel={handleInspectorResizeEnd}
+            onKeyDown={handleInspectorResizeKeyDown}
+            onDoubleClick={() =>
+              commitInspectorWidth(DEFAULT_GLOBAL_SETTINGS.inspectorWidthPx)
+            }
+          />
+        )}
         <div
           className={`dashboard-inspector__body ${
             publishersSectionCollapsed ? "is-publishers-collapsed " : ""
@@ -465,6 +583,9 @@ export function App() {
                   }
                   focusSubscriberEndpointId={
                     inspector?.kind === "subscriber" ? inspector.endpointId : null
+                  }
+                  focusUnitAddress={
+                    inspector?.kind === "unit" ? inspector.unitAddress : null
                   }
                   focusActionId={profilingFocusActionId}
                   hideFilters={false}
