@@ -71,6 +71,21 @@ class DashboardStaticFiles(StaticFiles):
         return FileResponse(index_path, headers=NO_CACHE_HEADERS)
 
     @staticmethod
+    def cache_headers_for(path: str) -> dict[str, str] | None:
+        """Cache headers for a file StaticFiles resolved, if it wants any.
+
+        ``path`` arrives normalized for the host OS, so it is separated by
+        backslashes on Windows. Rewrite them rather than going through ``Path``,
+        which only reads a backslash as a separator when running on Windows.
+        """
+        relative_path = path.replace("\\", "/")
+        if relative_path in (".", "", "index.html") or relative_path.endswith("/index.html"):
+            return NO_CACHE_HEADERS
+        if relative_path.startswith("assets/"):
+            return IMMUTABLE_ASSET_HEADERS
+        return None
+
+    @staticmethod
     def _wants_shell_fallback(scope: dict[str, Any]) -> bool:
         request_path = scope.get("path", "")
         if request_path == "/api" or request_path.startswith("/api/"):
@@ -94,11 +109,9 @@ class DashboardStaticFiles(StaticFiles):
 
         if response.status_code >= 400:
             return response
-        # "." is what a request for "/" normalizes to, and serves the shell.
-        if path in (".", "", "index.html") or path.endswith("/index.html"):
-            response.headers.update(NO_CACHE_HEADERS)
-        elif path.startswith("assets/"):
-            response.headers.update(IMMUTABLE_ASSET_HEADERS)
+        headers = self.cache_headers_for(path)
+        if headers is not None:
+            response.headers.update(headers)
         return response
 
 

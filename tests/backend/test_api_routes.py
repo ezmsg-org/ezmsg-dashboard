@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ezmsg.dashboard.backend.app import create_app
+from ezmsg.dashboard.backend.app import DashboardStaticFiles, create_app
 
 
 class FakeGraphService:
@@ -483,3 +483,29 @@ def test_missing_asset_is_not_masked_by_the_shell(tmp_path: Path) -> None:
     with TestClient(app) as client:
         assert client.get("/assets/index-missing.js").status_code == 404
         assert client.get("/favicon.ico").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (".", "no-store"),
+        ("", "no-store"),
+        ("index.html", "no-store"),
+        ("assets/index-abc123.js", "public"),
+        # StaticFiles normalizes for the host OS, so Windows sends backslashes.
+        ("assets\\index-abc123.js", "public"),
+        ("sub\\index.html", "no-store"),
+        ("favicon.ico", None),
+    ],
+)
+def test_cache_headers_are_chosen_per_path_separator_agnostically(
+    path: str,
+    expected: str | None,
+) -> None:
+    headers = DashboardStaticFiles.cache_headers_for(path)
+
+    if expected is None:
+        assert headers is None
+    else:
+        assert headers is not None
+        assert headers["Cache-Control"].startswith(expected)
