@@ -14,9 +14,16 @@ from ezmsg.core.graphmeta import (
     TopologyChangedEvent,
 )
 
+from ..json_encoding import encode_float
+
 
 def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    # Non-finite floats have no JSON literal; encode them before they reach
+    # JSONResponse (which raises) or pydantic (which rewrites them to null).
+    if isinstance(value, float):
+        return encode_float(value)
+
+    if value is None or isinstance(value, (str, int, bool)):
         return value
 
     if isinstance(value, UUID):

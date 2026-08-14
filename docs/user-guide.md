@@ -65,6 +65,11 @@ The dashboard has three major areas:
 - **Text**: single-line text input
 - **JSON / structured fallback**: text area or serialized value editor
 
+Float fields may hold values JSON cannot represent. These are displayed as
+`Infinity`, `-Infinity`, and `NaN`, and a float field accepts any of those
+spellings (`inf`, `-inf`, `nan` work too). Integer fields require a finite
+value.
+
 ## Publishers
 
 ![Annotated publishers panel](./screenshots/publishers-panel.png)

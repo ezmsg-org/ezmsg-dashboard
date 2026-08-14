@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import Mapping
 from uuid import UUID
 from typing import Any, AsyncIterator, Callable, Protocol
 
@@ -10,6 +11,7 @@ from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
 from ezmsg.core.netprotocol import Address, GRAPHSERVER_ADDR
 
+from ..json_encoding import decode_float_token
 from ..models.events import (
     EventEnvelopeModel,
     ProfilingTraceEnvelope,
@@ -28,6 +30,19 @@ from .adapters import (
     adapt_settings_snapshot,
     adapt_topology_event,
 )
+
+
+_MISSING = object()
+
+
+def _read_field_path(structured_value: Any, field_path: str) -> Any:
+    """Read a dotted ``field_path`` out of a structured settings value."""
+    current = structured_value
+    for field_name in field_path.split("."):
+        if not isinstance(current, Mapping) or field_name not in current:
+            return _MISSING
+        current = current[field_name]
+    return current
 
 
 class GraphServiceUnavailableError(RuntimeError):
@@ -201,11 +216,17 @@ class GraphContextLifecycleService:
             raise SettingsPatchError(
                 f"Component '{component_address}' does not support dynamic settings patches."
             )
+        patch_value = await self._decoded_patch_value(
+            context=context,
+            component_address=component_address,
+            field_path=field_path,
+            value=value,
+        )
         try:
             updated_value = await context.update_setting(
                 component_address=component_address,
                 field_path=field_path,
-                value=value,
+                value=patch_value,
                 timeout=timeout,
             )
         except Exception as exc:
@@ -216,6 +237,44 @@ class GraphContextLifecycleService:
             "field_path": field_path,
             "updated_value": adapt_settings_value(updated_value),
         }
+
+    async def _decoded_patch_value(
+        self,
+        *,
+        context: GraphContext,
+        component_address: str,
+        field_path: str,
+        value: Any,
+    ) -> Any:
+        """Turn a non-finite token back into the float it stands for.
+
+        The wire encoding is a string (JSON has no ``inf`` literal), so a patch
+        must be decoded before it reaches ezmsg -- which writes the value into
+        the dataclass as-is and would otherwise leave a ``str`` in a ``float``
+        field. Only fields that currently hold a number are decoded; anything
+        else is rejected rather than silently rewritten.
+        """
+        decoded = decode_float_token(value)
+        if decoded is None:
+            return value
+
+        settings_snapshot = await context.settings_snapshot()
+        snapshot_value = settings_snapshot.get(component_address)
+        current = _MISSING
+        if snapshot_value is not None:
+            structured = snapshot_value.structured_value
+            if structured is None and isinstance(snapshot_value.repr_value, Mapping):
+                structured = snapshot_value.repr_value
+            current = _read_field_path(structured, field_path)
+
+        if isinstance(current, (int, float)) and not isinstance(current, bool):
+            return decoded
+
+        raise SettingsPatchError(
+            f"Cannot apply non-finite value '{value}' to "
+            f"'{component_address}.{field_path}': the field does not currently hold a number"
+            + ("." if current is _MISSING else f" (current value: {current!r}).")
+        )
 
     async def set_profiling_trace_control(
         self,

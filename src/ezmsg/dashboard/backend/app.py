@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .json_encoding import sanitize_json_value
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
 from .services.graph_context_service import (
@@ -25,6 +26,23 @@ NO_CACHE_HEADERS = {
 }
 
 PACKAGE_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "_web"
+
+
+class DashboardJSONResponse(JSONResponse):
+    """JSONResponse that encodes non-finite floats instead of failing on them.
+
+    ``JSONResponse.render`` renders with ``allow_nan=False``, so a single ``inf``
+    anywhere in a payload turns the whole request into a 500. Payloads assembled
+    by the adapters are already encoded; this is the backstop for everything
+    else (request echoes, future routes). Re-rendering only on failure keeps the
+    common path free of an extra walk over large snapshot payloads.
+    """
+
+    def render(self, content: Any) -> bytes:
+        try:
+            return super().render(content)
+        except ValueError:
+            return super().render(sanitize_json_value(content))
 
 
 class DashboardStaticFiles(StaticFiles):
@@ -106,7 +124,7 @@ def create_app(
     @app.get("/api/health")
     async def api_health(graph_service: GraphServiceDependency) -> JSONResponse:
         payload = await graph_service.health_payload()
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/snapshot")
     async def api_snapshot(graph_service: GraphServiceDependency) -> JSONResponse:
@@ -114,7 +132,7 @@ def create_app(
             payload = await graph_service.snapshot_payload()
         except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/settings")
     async def api_settings(graph_service: GraphServiceDependency) -> JSONResponse:
@@ -122,7 +140,7 @@ def create_app(
             payload = await graph_service.settings_payload()
         except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.post("/api/settings/{component_address:path}/field")
     async def api_patch_setting_field(
@@ -141,7 +159,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (SettingsPatchError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.post("/api/profiling/trace-control")
     async def api_profiling_trace_control(
@@ -164,7 +182,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (ProfilingTraceControlError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.websocket("/ws/events")
     async def ws_events(
