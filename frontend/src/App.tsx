@@ -139,16 +139,21 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 };
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
 const INSPECTOR_WIDTH_MIN_PX = 360;
-const INSPECTOR_WIDTH_MAX_PX = 900;
+// The topology is the point of the page, so it -- not an arbitrary ceiling --
+// is what bounds how wide the inspector may get. Mirrored in the grid template,
+// which keeps a stale stored width from squeezing the graph after a resize.
+const TOPOLOGY_MIN_WIDTH_PX = 480;
 /** How far one arrow key press moves the inspector divider. */
 const INSPECTOR_WIDTH_KEY_STEP_PX = 16;
 type HealthTone = "ok" | "warn" | "err";
 
+function maxInspectorWidth(): number {
+  const viewportWidth = typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerWidth;
+  return Math.max(INSPECTOR_WIDTH_MIN_PX, viewportWidth - TOPOLOGY_MIN_WIDTH_PX);
+}
+
 function clampInspectorWidth(value: number): number {
-  return Math.min(
-    INSPECTOR_WIDTH_MAX_PX,
-    Math.max(INSPECTOR_WIDTH_MIN_PX, Math.round(value))
-  );
+  return Math.min(maxInspectorWidth(), Math.max(INSPECTOR_WIDTH_MIN_PX, Math.round(value)));
 }
 
 function toEpochMillis(timestamp: number): number | null {
@@ -491,7 +496,7 @@ export function App() {
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
       commitInspectorWidth(
-        event.key === "Home" ? INSPECTOR_WIDTH_MAX_PX : INSPECTOR_WIDTH_MIN_PX
+        event.key === "Home" ? maxInspectorWidth() : INSPECTOR_WIDTH_MIN_PX
       );
     }
   };
@@ -544,7 +549,7 @@ export function App() {
             aria-orientation="vertical"
             aria-label="Resize inspector"
             aria-valuemin={INSPECTOR_WIDTH_MIN_PX}
-            aria-valuemax={INSPECTOR_WIDTH_MAX_PX}
+            aria-valuemax={maxInspectorWidth()}
             aria-valuenow={inspectorWidthPx}
             tabIndex={0}
             onPointerDown={handleInspectorResizeStart}
@@ -905,8 +910,8 @@ export function App() {
                     <span>Inspector Width (px)</span>
                     <input
                       type="number"
-                      min={360}
-                      max={900}
+                      min={INSPECTOR_WIDTH_MIN_PX}
+                      max={maxInspectorWidth()}
                       step={10}
                       value={globalSettings.inspectorWidthPx}
                       onChange={(event) => {
@@ -916,7 +921,7 @@ export function App() {
                         }
                         setGlobalSettings((previous) => ({
                           ...previous,
-                          inspectorWidthPx: Math.max(360, Math.min(900, next)),
+                          inspectorWidthPx: clampInspectorWidth(next),
                         }));
                       }}
                     />

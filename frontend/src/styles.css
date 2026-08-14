@@ -219,7 +219,11 @@ body {
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, var(--inspector-width, 500px));
+  /* The topology keeps at least 480px: a stored inspector width from a wider
+     window must not squeeze it away after a resize. */
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(360px, min(var(--inspector-width, 500px), calc(100vw - 480px)));
   grid-template-rows: minmax(0, 1fr);
   width: 100vw;
   height: 100vh;

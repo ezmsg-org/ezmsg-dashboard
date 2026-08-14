@@ -604,7 +604,8 @@ test("the divider clamps the inspector width and resets on double click", async 
   const handleCenterY = handleBox.y + handleBox.height / 2;
   const handleCenterX = handleBox.x + handleBox.width / 2;
 
-  // Drag far past the maximum; the width stops at the clamp.
+  // Drag far past the limit; the width stops where the topology's 480px
+  // minimum begins, rather than at a fixed ceiling.
   await page.mouse.move(handleCenterX, handleCenterY);
   await page.mouse.down();
   await page.mouse.move(handleCenterX - 900, handleCenterY, { steps: 8 });
@@ -612,7 +613,7 @@ test("the divider clamps the inspector width and resets on double click", async 
 
   await expect
     .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
-    .toBe(900);
+    .toBe(1400 - 480);
 
   await handle.dblclick();
   await expect
@@ -872,4 +873,46 @@ test("settings channels can be shown again from global settings", async ({ page 
   await expect(
     page.locator('.publisher-topic[title="SYSTEM/PING/INPUT_SETTINGS"]')
   ).toBeVisible();
+});
+
+test("a capturing publisher row stays expanded when a unit is selected", async ({
+  page,
+}) => {
+  await page.goto("/?fixture=profiling-trace-rates");
+
+  const traceRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="TRACE_LAB/DENSE_TOPIC"]'),
+  });
+  await traceRow.locator(".publisher-row__toggle").click();
+  await traceRow.locator(".publisher-trace-button").click();
+  await expect(traceRow.locator(".publisher-trace-button.is-stop")).toBeVisible();
+
+  // Selecting a unit refocuses the publishers list; the stop control for a
+  // running capture must not disappear with it.
+  await page.locator('[data-testid^="rf__node-unit:"]').first().click({
+    position: { x: 24, y: 18 },
+  });
+  await page.waitForTimeout(500);
+
+  await expect(traceRow.locator(".publisher-trace-button.is-stop")).toBeVisible();
+});
+
+test("the inspector cannot be dragged over the topology", async ({ page }) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const handle = page.locator(".inspector-resize-handle");
+  const box = await handle.boundingBox();
+  if (!box) {
+    throw new Error("resize handle is not visible");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(10, box.y + 300, { steps: 10 }); // drag to the far left
+  await page.mouse.up();
+
+  const topologyWidth =
+    (await page.locator(".dashboard-main").boundingBox())?.width ?? 0;
+  expect(topologyWidth).toBeGreaterThanOrEqual(480);
 });

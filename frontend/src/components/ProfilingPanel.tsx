@@ -10,6 +10,7 @@ import {
   parseTopicAndEndpoint,
   streamAddressWithoutEndpoint,
 } from "../utils/streamAddress";
+import { metricNumber } from "../utils/nonFiniteNumbers";
 import { isSettingsChannelTopic } from "../utils/settingsChannel";
 import type {
   GraphSnapshotPayload,
@@ -111,7 +112,7 @@ const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set(["lease_time_ns", "user_span_ns"]);
 
 function toNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return metricNumber(value);
 }
 
 function formatRate(hz: number): string {
@@ -611,7 +612,9 @@ export function ProfilingPanel({
       }
       lastHandledFocusActionIdRef.current = focusActionId;
       setSearchText("");
-      setExpandedIds(matchedIds);
+      // A row that is capturing stays expanded: collapsing it would hide the
+      // stop control while the capture kept running.
+      setExpandedIds([...new Set([...matchedIds, ...activeTraceRowIds])]);
       setExpandedContributorEndpointByRowId((previous) => {
         if (contributorEndpointId === null) {
           return {};
@@ -677,6 +680,7 @@ export function ProfilingPanel({
     focusUnitAddress,
     focusActionId,
     publisherRows,
+    activeTraceRowIds,
   ]);
 
   useEffect(() => {
