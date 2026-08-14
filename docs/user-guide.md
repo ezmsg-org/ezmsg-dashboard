@@ -25,7 +25,7 @@ The dashboard has three major areas:
 
 ### What To Do Here
 
-- Click a unit to focus it in **Settings**.
+- Click a unit to focus it in **Settings**, and to expand the topics it publishes in **Publishers**.
 - Click a publisher or subscriber stream to focus it in **Publishers** and fit the topology view.
 - Use the floating viewport shortcuts to toggle layout direction, theme, or open global settings.
 - Use `Open` on a collection to descend into that scope.

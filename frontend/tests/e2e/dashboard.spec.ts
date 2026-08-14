@@ -529,6 +529,23 @@ test("clicking a topology publisher stream expands the publishers row", async ({
   ).toBeVisible();
 });
 
+test("clicking a topology unit also expands its publishers row", async ({ page }) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await page.locator('button[aria-label="Open SYSTEM scope"]').click();
+
+  const publisherRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="SYSTEM/PING_TOPIC"]'),
+  });
+  await expect(publisherRow.locator(".publisher-row__details")).toBeHidden();
+
+  await page
+    .getByTestId("rf__node-unit:SYSTEM/PING")
+    .click({ position: { x: 24, y: 18 } });
+
+  await expect(publisherRow.locator(".publisher-row__details")).toBeVisible();
+});
+
 test("settings edits apply in fixture mode", async ({ page }) => {
   await page.goto("/?fixture=root-scope-navigation");
 

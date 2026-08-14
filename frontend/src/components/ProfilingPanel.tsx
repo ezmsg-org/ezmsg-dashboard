@@ -30,6 +30,8 @@ type ProfilingPanelProps = {
   focusPublisherEndpointId?: string | null;
   focusPublisherTopic?: string | null;
   focusSubscriberEndpointId?: string | null;
+  /** Component address to focus when a whole unit is selected rather than one stream. */
+  focusUnitAddress?: string | null;
   focusActionId?: number;
   hideFilters?: boolean;
   defaultTraceMetrics?: string[];
@@ -422,6 +424,7 @@ export function ProfilingPanel({
   focusPublisherEndpointId = null,
   focusPublisherTopic = null,
   focusSubscriberEndpointId = null,
+  focusUnitAddress = null,
   focusActionId = 0,
   hideFilters = false,
   defaultTraceMetrics = ["publish_delta_ns", "lease_time_ns", "user_span_ns"],
@@ -587,42 +590,13 @@ export function ProfilingPanel({
     if (focusActionId === lastHandledFocusActionIdRef.current) {
       return;
     }
-    if (focusPublisherEndpointId) {
-      const matchedIds = publisherRows
-        .filter((row) => {
-          if (row.endpointId === focusPublisherEndpointId) {
-            return true;
-          }
-          if (!focusPublisherTopic) {
-            return false;
-          }
-          return row.topic === focusPublisherTopic;
-        })
-        .map((row) => row.id);
-      if (matchedIds.length === 0) {
-        return;
-      }
-      lastHandledFocusActionIdRef.current = focusActionId;
-      setSearchText("");
-      setExpandedIds(matchedIds);
-      setExpandedContributorEndpointByRowId({});
-      window.requestAnimationFrame(() => {
-        rowRefs.current[matchedIds[0]]?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      });
-      return;
-    }
-    if (focusSubscriberEndpointId) {
-      const matchedIds = publisherRows
-        .filter((row) =>
-          row.contributors.some(
-            (contributor) =>
-              contributor.endpointId === focusSubscriberEndpointId
-          )
-        )
-        .map((row) => row.id);
+    // Expand the matched rows and scroll the first one into view. Returns
+    // without marking the request handled when nothing matched, so a focus
+    // request can still land once the rows arrive in a later snapshot.
+    const revealRows = (
+      matchedIds: string[],
+      contributorEndpointId: string | null
+    ): void => {
       if (matchedIds.length === 0) {
         return;
       }
@@ -630,9 +604,12 @@ export function ProfilingPanel({
       setSearchText("");
       setExpandedIds(matchedIds);
       setExpandedContributorEndpointByRowId((previous) => {
+        if (contributorEndpointId === null) {
+          return {};
+        }
         const next: Record<string, string | null> = { ...previous };
         for (const rowId of matchedIds) {
-          next[rowId] = focusSubscriberEndpointId;
+          next[rowId] = contributorEndpointId;
         }
         return next;
       });
@@ -642,12 +619,53 @@ export function ProfilingPanel({
           behavior: "smooth",
         });
       });
+    };
+
+    if (focusPublisherEndpointId) {
+      revealRows(
+        publisherRows
+          .filter((row) => {
+            if (row.endpointId === focusPublisherEndpointId) {
+              return true;
+            }
+            if (!focusPublisherTopic) {
+              return false;
+            }
+            return row.topic === focusPublisherTopic;
+          })
+          .map((row) => row.id),
+        null
+      );
       return;
+    }
+    if (focusSubscriberEndpointId) {
+      revealRows(
+        publisherRows
+          .filter((row) =>
+            row.contributors.some(
+              (contributor) =>
+                contributor.endpointId === focusSubscriberEndpointId
+            )
+          )
+          .map((row) => row.id),
+        focusSubscriberEndpointId
+      );
+      return;
+    }
+    if (focusUnitAddress) {
+      // A whole component is selected, so reveal every topic it publishes.
+      revealRows(
+        publisherRows
+          .filter((row) => row.unitAddress === focusUnitAddress)
+          .map((row) => row.id),
+        null
+      );
     }
   }, [
     focusPublisherEndpointId,
     focusPublisherTopic,
     focusSubscriberEndpointId,
+    focusUnitAddress,
     focusActionId,
     publisherRows,
   ]);
