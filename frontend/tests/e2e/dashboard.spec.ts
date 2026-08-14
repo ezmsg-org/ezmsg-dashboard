@@ -547,6 +547,36 @@ test("settings edits apply in fixture mode", async ({ page }) => {
   await expect(rateRow.locator('input[type="number"]')).toHaveValue("42");
 });
 
+test("non-finite settings values are shown and can be patched", async ({ page }) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await page.locator('button[aria-label="Open SYSTEM scope"]').click();
+  await page
+    .getByTestId("rf__node-unit:SYSTEM/PING")
+    .click({ position: { x: 24, y: 18 } });
+
+  const timeoutRow = page.locator(".settings-field-row", {
+    has: page.locator("label", { hasText: "timeout_s" }),
+  });
+  const timeoutInput = timeoutRow.locator('input[type="text"]');
+  await expect(timeoutInput).toHaveValue("Infinity");
+
+  await timeoutInput.fill("-inf");
+  await timeoutRow.getByRole("button", { name: "Apply" }).click();
+  await expect(timeoutRow.locator(".patch-status.ok")).toHaveText("Applied timeout_s");
+
+  // Re-open the component so the editor redraws from the patched value.
+  const componentToggle = page
+    .locator(".settings-component-row", {
+      has: page.locator('.settings-component-address[title="SYSTEM/PING"]'),
+    })
+    .locator(".settings-component-row__toggle");
+  await componentToggle.click();
+  await componentToggle.click();
+
+  await expect(timeoutRow.locator('input[type="text"]')).toHaveValue("-Infinity");
+});
+
 test("inspector widths keep settings and publisher rows from horizontal overflow", async ({
   page,
 }) => {

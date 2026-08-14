@@ -221,6 +221,8 @@ const rootScopeFixture: DashboardFixture = {
       "SYSTEM/PING": settingsEntry("PING", "fixture.MessageGenerator", {
         rate_hz: 10,
         message: "ping",
+        // JSON has no infinity literal; non-finite floats travel as tokens.
+        timeout_s: "Infinity",
       }),
     },
     profiling: {

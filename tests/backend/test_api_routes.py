@@ -114,9 +114,7 @@ class FakeGraphService:
             "unit_address": "SYS/U_TRACE",
             "enabled": enabled,
             "control": {
-                "publisher_endpoint_ids": [publisher_endpoint_id]
-                if publisher_endpoint_id
-                else [],
+                "publisher_endpoint_ids": [publisher_endpoint_id] if publisher_endpoint_id else [],
                 "publisher_topics": [publisher_topic] if publisher_topic else [],
                 "subscriber_topics": [subscriber_topic] if subscriber_topic else [],
                 "metrics": metrics or [],

@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from uuid import UUID
+from collections.abc import Mapping
 from typing import Any, AsyncIterator, Callable, Protocol
+from uuid import UUID
 
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
-from ezmsg.core.netprotocol import Address, GRAPHSERVER_ADDR
+from ezmsg.core.netprotocol import GRAPHSERVER_ADDR, Address
 
+from ..json_encoding import decode_float_token
 from ..models.events import (
     EventEnvelopeModel,
     ProfilingTraceEnvelope,
@@ -23,11 +25,23 @@ from .adapters import (
     adapt_graph_snapshot,
     adapt_profiling_snapshot,
     adapt_profiling_trace_batch,
-    adapt_settings_value,
     adapt_settings_event,
     adapt_settings_snapshot,
+    adapt_settings_value,
     adapt_topology_event,
 )
+
+_MISSING = object()
+
+
+def _read_field_path(structured_value: Any, field_path: str) -> Any:
+    """Read a dotted ``field_path`` out of a structured settings value."""
+    current = structured_value
+    for field_name in field_path.split("."):
+        if not isinstance(current, Mapping) or field_name not in current:
+            return _MISSING
+        current = current[field_name]
+    return current
 
 
 class GraphServiceUnavailableError(RuntimeError):
@@ -198,14 +212,18 @@ class GraphContextLifecycleService:
         context = self._require_context()
         graph_snapshot = await context.snapshot()
         if not self._component_is_patchable(graph_snapshot, component_address):
-            raise SettingsPatchError(
-                f"Component '{component_address}' does not support dynamic settings patches."
-            )
+            raise SettingsPatchError(f"Component '{component_address}' does not support dynamic settings patches.")
+        patch_value = await self._decoded_patch_value(
+            context=context,
+            component_address=component_address,
+            field_path=field_path,
+            value=value,
+        )
         try:
             updated_value = await context.update_setting(
                 component_address=component_address,
                 field_path=field_path,
-                value=value,
+                value=patch_value,
                 timeout=timeout,
             )
         except Exception as exc:
@@ -216,6 +234,44 @@ class GraphContextLifecycleService:
             "field_path": field_path,
             "updated_value": adapt_settings_value(updated_value),
         }
+
+    async def _decoded_patch_value(
+        self,
+        *,
+        context: GraphContext,
+        component_address: str,
+        field_path: str,
+        value: Any,
+    ) -> Any:
+        """Turn a non-finite token back into the float it stands for.
+
+        The wire encoding is a string (JSON has no ``inf`` literal), so a patch
+        must be decoded before it reaches ezmsg -- which writes the value into
+        the dataclass as-is and would otherwise leave a ``str`` in a ``float``
+        field. Only fields that currently hold a number are decoded; anything
+        else is rejected rather than silently rewritten.
+        """
+        decoded = decode_float_token(value)
+        if decoded is None:
+            return value
+
+        settings_snapshot = await context.settings_snapshot()
+        snapshot_value = settings_snapshot.get(component_address)
+        current = _MISSING
+        if snapshot_value is not None:
+            structured = snapshot_value.structured_value
+            if structured is None and isinstance(snapshot_value.repr_value, Mapping):
+                structured = snapshot_value.repr_value
+            current = _read_field_path(structured, field_path)
+
+        if isinstance(current, (int, float)) and not isinstance(current, bool):
+            return decoded
+
+        raise SettingsPatchError(
+            f"Cannot apply non-finite value '{value}' to "
+            f"'{component_address}.{field_path}': the field does not currently hold a number"
+            + ("." if current is _MISSING else f" (current value: {current!r}).")
+        )
 
     async def set_profiling_trace_control(
         self,
@@ -240,13 +296,9 @@ class GraphContextLifecycleService:
 
         process_meta = graph_snapshot.processes.get(process_uuid)
         if process_meta is None:
-            raise ProfilingTraceControlError(
-                f"Process '{process_id}' is not present in the graph snapshot."
-            )
+            raise ProfilingTraceControlError(f"Process '{process_id}' is not present in the graph snapshot.")
         if len(process_meta.units) == 0:
-            raise ProfilingTraceControlError(
-                f"Process '{process_id}' has no routable units for control requests."
-            )
+            raise ProfilingTraceControlError(f"Process '{process_id}' has no routable units for control requests.")
 
         route_unit = process_meta.units[0]
         normalized_sample_mod = max(1, int(sample_mod))
@@ -297,9 +349,7 @@ class GraphContextLifecycleService:
             ttl_seconds=ttl_seconds,
         )
 
-        controls_by_route_unit: dict[str, ProfilingTraceControl] = {
-            route_unit: publisher_control
-        }
+        controls_by_route_unit: dict[str, ProfilingTraceControl] = {route_unit: publisher_control}
 
         subscriber_metrics = self._subscriber_trace_metrics(metrics)
         subscriber_seed_topic = subscriber_topic or publisher_topic
@@ -308,9 +358,7 @@ class GraphContextLifecycleService:
                 graph_snapshot=graph_snapshot,
                 seed_topic=subscriber_seed_topic,
             )
-            profiling_snapshot = await context.profiling_snapshot_all(
-                timeout_per_process=timeout
-            )
+            profiling_snapshot = await context.profiling_snapshot_all(timeout_per_process=timeout)
             route_units_for_subscribers = self._route_units_with_subscribers_for_scope(
                 graph_snapshot=graph_snapshot,
                 profiling_snapshot=profiling_snapshot,
@@ -339,9 +387,7 @@ class GraphContextLifecycleService:
                 raise ProfilingTraceControlError(str(exc)) from exc
 
             if not response.ok:
-                raise ProfilingTraceControlError(
-                    f"Process trace control rejected for '{process_id}': {response.error}"
-                )
+                raise ProfilingTraceControlError(f"Process trace control rejected for '{process_id}': {response.error}")
 
         self._active_trace_route_units = set(controls_by_route_unit.keys())
         return {
@@ -359,9 +405,7 @@ class GraphContextLifecycleService:
             },
             "subscriber_scope": {
                 "seed_topic": subscriber_seed_topic,
-                "route_units": sorted(
-                    unit for unit in controls_by_route_unit.keys() if unit != route_unit
-                ),
+                "route_units": sorted(unit for unit in controls_by_route_unit.keys() if unit != route_unit),
                 "metrics": subscriber_metrics,
             },
         }
@@ -464,11 +508,7 @@ class GraphContextLifecycleService:
             out[component_address] = {
                 **value,
                 "patchable": patchable,
-                "patch_error": (
-                    None
-                    if patchable
-                    else "Read-only: component does not expose dynamic settings."
-                ),
+                "patch_error": (None if patchable else "Read-only: component does not expose dynamic settings."),
                 "component_type": info["component_type"],
                 "component_name": info["component_name"],
             }
@@ -480,8 +520,7 @@ class GraphContextLifecycleService:
         component_address: str,
     ) -> bool:
         return bool(
-            self._component_info_by_component(graph_snapshot)
-            .get(component_address, {"patchable": False})["patchable"]
+            self._component_info_by_component(graph_snapshot).get(component_address, {"patchable": False})["patchable"]
         )
 
     def _component_info_by_component(
@@ -495,10 +534,7 @@ class GraphContextLifecycleService:
                 continue
             for component_address, component in metadata.components.items():
                 dynamic_settings = getattr(component, "dynamic_settings", None)
-                enabled = bool(
-                    dynamic_settings is not None
-                    and getattr(dynamic_settings, "enabled", False)
-                )
+                enabled = bool(dynamic_settings is not None and getattr(dynamic_settings, "enabled", False))
                 existing = component_info.get(
                     component_address,
                     {
@@ -509,10 +545,8 @@ class GraphContextLifecycleService:
                 )
                 component_info[component_address] = {
                     "patchable": bool(existing["patchable"]) or enabled,
-                    "component_type": existing["component_type"]
-                    or getattr(component, "component_type", None),
-                    "component_name": existing["component_name"]
-                    or getattr(component, "name", None),
+                    "component_type": existing["component_type"] or getattr(component, "component_type", None),
+                    "component_name": existing["component_name"] or getattr(component, "name", None),
                 }
         return component_info
 

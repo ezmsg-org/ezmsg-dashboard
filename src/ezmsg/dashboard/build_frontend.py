@@ -19,12 +19,7 @@ def _copy_tree(source: Path, target: Path) -> None:
 
 def _dirs_match(left: Path, right: Path) -> bool:
     comparison = filecmp.dircmp(left, right)
-    if (
-        comparison.left_only
-        or comparison.right_only
-        or comparison.diff_files
-        or comparison.funny_files
-    ):
+    if comparison.left_only or comparison.right_only or comparison.diff_files or comparison.funny_files:
         return False
     return all(_dirs_match(left / name, right / name) for name in comparison.common_dirs)
 

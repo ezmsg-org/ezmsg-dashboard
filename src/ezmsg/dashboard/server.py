@@ -11,10 +11,12 @@ from dataclasses import dataclass
 
 import uvicorn
 from ezmsg.core.netprotocol import (
-    Address,
     DEFAULT_HOST as EZMSG_DEFAULT_HOST,
+)
+from ezmsg.core.netprotocol import (
     GRAPHSERVER_ADDR_ENV,
     GRAPHSERVER_PORT_DEFAULT,
+    Address,
 )
 
 from .backend.app import create_app
@@ -41,9 +43,7 @@ class DashboardGraphServerUnavailableError(RuntimeError):
 
 
 def _default_graph_address() -> Address:
-    address_str = os.environ.get(
-        GRAPHSERVER_ADDR_ENV, f"{EZMSG_DEFAULT_HOST}:{GRAPHSERVER_PORT_DEFAULT}"
-    )
+    address_str = os.environ.get(GRAPHSERVER_ADDR_ENV, f"{EZMSG_DEFAULT_HOST}:{GRAPHSERVER_PORT_DEFAULT}")
     return Address.from_string(address_str)
 
 
@@ -71,9 +71,7 @@ def _ensure_graph_server_available(graph_address: str | Address | None = None) -
         ):
             pass
     except OSError as exc:
-        raise DashboardGraphServerUnavailableError(
-            _graph_server_unavailable_message(resolved_graph_address)
-        ) from exc
+        raise DashboardGraphServerUnavailableError(_graph_server_unavailable_message(resolved_graph_address)) from exc
     return resolved_graph_address
 
 

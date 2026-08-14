@@ -6,6 +6,12 @@ import type {
   SettingsFieldPatchResponse,
   SettingsSnapshotPayload,
 } from "../types/api";
+import {
+  encodeNumericValue,
+  formatNumericValue,
+  isNonFiniteToken,
+  parseNumericInput,
+} from "../utils/nonFiniteNumbers";
 
 type SettingsPanelProps = {
   settings: SettingsSnapshotPayload | null;
@@ -58,7 +64,8 @@ function inferValueEditorMode(value: unknown): EditorMode {
   if (typeof value === "boolean") {
     return "boolean";
   }
-  if (typeof value === "number") {
+  // Non-finite floats arrive as tokens ("Infinity", "NaN"); they are numbers.
+  if (typeof value === "number" || isNonFiniteToken(value)) {
     return "number";
   }
   if (typeof value === "string") {
@@ -126,7 +133,7 @@ function initialDraftValueForRow(row: FieldRow): unknown {
     return String(index);
   }
   if (row.mode === "number") {
-    return typeof row.currentValue === "number" ? String(row.currentValue) : "";
+    return formatNumericValue(row.currentValue);
   }
   if (row.mode === "text") {
     return typeof row.currentValue === "string" ? row.currentValue : "";
@@ -304,9 +311,16 @@ export function SettingsPanel({
       return choices[index];
     }
     if (row.mode === "number") {
-      const numeric = Number.parseFloat(String(draftValue));
-      if (!Number.isFinite(numeric)) {
+      const numeric = parseNumericInput(String(draftValue ?? ""));
+      if (numeric === null) {
         throw new Error("Value must be a valid number.");
+      }
+      if (!Number.isFinite(numeric)) {
+        if (row.isInteger) {
+          throw new Error("Integer fields require a finite value.");
+        }
+        // JSON has no inf/nan literal; the backend decodes these tokens.
+        return encodeNumericValue(numeric);
       }
       return row.isInteger ? Math.trunc(numeric) : numeric;
     }
@@ -499,20 +513,37 @@ export function SettingsPanel({
                                 ) : null}
 
                                 {row.mode === "number" ? (
-                                  <input
-                                    type="number"
-                                    value={String(draft ?? "")}
-                                    min={row.bounds?.[0] ?? undefined}
-                                    max={row.bounds?.[1] ?? undefined}
-                                    step="any"
-                                    onChange={(event) =>
-                                      setFieldDrafts((previous) => ({
-                                        ...previous,
-                                        [row.path]: event.target.value,
-                                      }))
-                                    }
-                                    disabled={rowDisabled || pending}
-                                  />
+                                  // A number input cannot hold "Infinity"/"NaN", so float
+                                  // fields use a text input and parse on apply.
+                                  row.isInteger ? (
+                                    <input
+                                      type="number"
+                                      value={String(draft ?? "")}
+                                      min={row.bounds?.[0] ?? undefined}
+                                      max={row.bounds?.[1] ?? undefined}
+                                      step="any"
+                                      onChange={(event) =>
+                                        setFieldDrafts((previous) => ({
+                                          ...previous,
+                                          [row.path]: event.target.value,
+                                        }))
+                                      }
+                                      disabled={rowDisabled || pending}
+                                    />
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={String(draft ?? "")}
+                                      onChange={(event) =>
+                                        setFieldDrafts((previous) => ({
+                                          ...previous,
+                                          [row.path]: event.target.value,
+                                        }))
+                                      }
+                                      disabled={rowDisabled || pending}
+                                    />
+                                  )
                                 ) : null}
 
                                 {row.mode === "text" ? (
