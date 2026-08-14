@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+# StaticFiles raises Starlette's HTTPException, which FastAPI's subclasses.
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .json_encoding import sanitize_json_value
 from .models.events import SystemErrorEnvelope
@@ -25,6 +28,10 @@ NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+# Vite emits content-hashed filenames under assets/, so a given URL there always
+# names the same bytes and can be cached for as long as the browser likes.
+IMMUTABLE_ASSET_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 PACKAGE_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "_web"
 
@@ -47,23 +54,51 @@ class DashboardJSONResponse(JSONResponse):
 
 
 class DashboardStaticFiles(StaticFiles):
-    async def get_response(self, path: str, scope: dict[str, Any]) -> FileResponse | JSONResponse:
-        response = await super().get_response(path, scope)
-        if response.status_code != 404:
-            return response
+    """Serves the built frontend, and caches it the way Vite builds it.
 
+    The shell names the content-hashed bundles, so a cached copy pins the
+    browser to whichever bundle it was built against: a rebuilt dashboard keeps
+    serving the old app until someone hard-reloads. It is therefore never
+    cached. The hashed assets it names can be cached forever by the same logic.
+
+    Missing paths that look like client-side routes fall back to the shell.
+    """
+
+    def _shell_response(self) -> FileResponse | None:
+        index_path = Path(self.directory or "") / "index.html"
+        if not index_path.is_file():
+            return None
+        return FileResponse(index_path, headers=NO_CACHE_HEADERS)
+
+    @staticmethod
+    def _wants_shell_fallback(scope: dict[str, Any]) -> bool:
         request_path = scope.get("path", "")
         if request_path == "/api" or request_path.startswith("/api/"):
-            return response
+            return False
         if request_path == "/ws" or request_path.startswith("/ws/"):
-            return response
-        if "." in Path(request_path).name:
-            return response
+            return False
+        # A missing file, rather than a client-side route.
+        return "." not in Path(request_path).name
 
-        index_path = Path(self.directory or "") / "index.html"
-        if index_path.is_file():
-            return FileResponse(index_path)
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # StaticFiles signals a miss by raising, not by returning a 404.
+            if exc.status_code != 404 or not self._wants_shell_fallback(scope):
+                raise
+            shell = self._shell_response()
+            if shell is None:
+                raise
+            return shell
 
+        if response.status_code >= 400:
+            return response
+        # "." is what a request for "/" normalizes to, and serves the shell.
+        if path in (".", "", "index.html") or path.endswith("/index.html"):
+            response.headers.update(NO_CACHE_HEADERS)
+        elif path.startswith("assets/"):
+            response.headers.update(IMMUTABLE_ASSET_HEADERS)
         return response
 
 

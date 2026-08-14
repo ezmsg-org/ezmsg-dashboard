@@ -430,3 +430,56 @@ async def test_events_websocket_returns_when_the_client_disconnects() -> None:
     await asyncio.wait_for(handler, timeout=5.0)
 
     assert service.stream_closed is True
+
+
+def _frontend_dir(tmp_path: Path) -> Path:
+    frontend_dir = tmp_path / "frontend"
+    (frontend_dir / "assets").mkdir(parents=True)
+    (frontend_dir / "index.html").write_text(
+        "<!doctype html><html><body><script src='/assets/index-abc123.js'></script></body></html>",
+        encoding="utf-8",
+    )
+    (frontend_dir / "assets" / "index-abc123.js").write_text("console.log('dashboard');", encoding="utf-8")
+    return frontend_dir
+
+
+def test_app_shell_is_never_cached(tmp_path: Path) -> None:
+    """The shell names content-hashed bundles.
+
+    A cached copy pins the browser to the bundle it was built against, so a
+    rebuilt dashboard keeps serving the old app until someone hard-reloads.
+    """
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        for path in ("/", "/index.html"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "index-abc123.js" in response.text
+            assert response.headers["cache-control"] == ("no-store, no-cache, must-revalidate, max-age=0"), path
+
+
+def test_client_side_routes_serve_the_uncached_shell(tmp_path: Path) -> None:
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        for path in ("/topology", "/deep/client/route"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "index-abc123.js" in response.text, path
+            assert response.headers["cache-control"].startswith("no-store"), path
+
+
+def test_hashed_assets_are_cached_immutably(tmp_path: Path) -> None:
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        response = client.get("/assets/index-abc123.js")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_missing_asset_is_not_masked_by_the_shell(tmp_path: Path) -> None:
+    """A typo'd bundle must 404 rather than quietly return HTML."""
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        assert client.get("/assets/index-missing.js").status_code == 404
+        assert client.get("/favicon.ico").status_code == 404
