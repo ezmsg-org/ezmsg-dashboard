@@ -380,6 +380,11 @@ export function App() {
     if (nextInspector.kind === "unit" || nextInspector.kind === "collection") {
       setSettingsSectionCollapsed(false);
       setSettingsFocusActionId((previous) => previous + 1);
+      if (nextInspector.kind === "unit") {
+        // Point the publishers list at the same unit. The section is left as
+        // the user set it; the panel picks the request up when it is expanded.
+        setProfilingFocusActionId((previous) => previous + 1);
+      }
     } else {
       setPublishersSectionCollapsed(false);
       setProfilingFocusActionId((previous) => previous + 1);
@@ -465,6 +470,9 @@ export function App() {
                   }
                   focusSubscriberEndpointId={
                     inspector?.kind === "subscriber" ? inspector.endpointId : null
+                  }
+                  focusUnitAddress={
+                    inspector?.kind === "unit" ? inspector.unitAddress : null
                   }
                   focusActionId={profilingFocusActionId}
                   hideFilters={false}
