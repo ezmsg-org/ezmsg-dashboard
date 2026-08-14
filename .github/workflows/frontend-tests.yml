@@ -32,6 +32,11 @@ jobs:
       - name: Run frontend unit tests
         run: npm test
 
+      # `vitest` and the e2e dev server both strip types without checking them,
+      # so the production build is what catches type errors.
+      - name: Build frontend
+        run: npm run build
+
   e2e-tests:
     # Visual baselines currently live as darwin snapshots in the repo.
     runs-on: macos-latest

@@ -47,6 +47,20 @@ type TopologyButtonActions = {
   goUpFromScope?: (collectionAddress: string) => void;
 };
 
+/** Which node a stream address is drawn inside of. */
+type StreamOwnerKind =
+  | "unit"
+  | "collection"
+  | "scope_collection"
+  | "scope_collection_stream"
+  | "collection_proxy"
+  | "orphan";
+
+type StreamOwner = {
+  ownerId: string;
+  ownerKind: StreamOwnerKind;
+};
+
 function truncate(text: string, max = 40): string {
   if (text.length <= max) {
     return text;
@@ -498,31 +512,8 @@ export function buildFlowData(
     }
   }
 
-  const streamOwnerByAddress = new Map<
-    string,
-    {
-      ownerId: string;
-      ownerKind:
-        | "unit"
-        | "collection"
-        | "scope_collection"
-        | "collection_proxy"
-        | "orphan";
-    }
-  >();
-  const registerStreamOwner = (
-    streamAddress: string,
-    owner: {
-      ownerId: string;
-      ownerKind:
-        | "unit"
-        | "collection"
-        | "scope_collection"
-        | "scope_collection_stream"
-        | "collection_proxy"
-        | "orphan";
-    }
-  ) => {
+  const streamOwnerByAddress = new Map<string, StreamOwner>();
+  const registerStreamOwner = (streamAddress: string, owner: StreamOwner) => {
     streamOwnerByAddress.set(streamAddress, owner);
     streamOwnerByAddress.set(streamAddressWithoutEndpoint(streamAddress), owner);
   };
