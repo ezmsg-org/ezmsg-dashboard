@@ -108,6 +108,7 @@ type GlobalSettings = {
   traceMetricsPreset: "publish+lease+user" | "publish+lease" | "publish";
   autoFitOnLayoutScopeChange: boolean;
   autoFocusOnInspectorSelection: boolean;
+  showSettingsChannels: boolean;
   inspectorWidthPx: number;
 };
 
@@ -133,6 +134,7 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   traceMetricsPreset: "publish+lease+user",
   autoFitOnLayoutScopeChange: true,
   autoFocusOnInspectorSelection: true,
+  showSettingsChannels: false,
   inspectorWidthPx: 500,
 };
 const CANONICAL_GRAPH_ADDRESS = "127.0.0.1:25978";
@@ -255,6 +257,10 @@ function normalizeGlobalSettings(value: unknown): GlobalSettings {
       typeof raw.autoFocusOnInspectorSelection === "boolean"
         ? raw.autoFocusOnInspectorSelection
         : DEFAULT_GLOBAL_SETTINGS.autoFocusOnInspectorSelection,
+    showSettingsChannels:
+      typeof raw.showSettingsChannels === "boolean"
+        ? raw.showSettingsChannels
+        : DEFAULT_GLOBAL_SETTINGS.showSettingsChannels,
     inspectorWidthPx,
   };
 }
@@ -588,6 +594,7 @@ export function App() {
                     inspector?.kind === "unit" ? inspector.unitAddress : null
                   }
                   focusActionId={profilingFocusActionId}
+                  showSettingsChannels={globalSettings.showSettingsChannels}
                   hideFilters={false}
                   defaultTraceMetrics={traceMetrics}
                   traceDockHost={traceDockHost}
@@ -913,6 +920,19 @@ export function App() {
                         }));
                       }}
                     />
+                  </label>
+                  <label className="dashboard-setting-toggle">
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.showSettingsChannels}
+                      onChange={(event) =>
+                        setGlobalSettings((previous) => ({
+                          ...previous,
+                          showSettingsChannels: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Show settings channels in Publishers (debug)</span>
                   </label>
                   <label className="dashboard-setting-toggle">
                     <input

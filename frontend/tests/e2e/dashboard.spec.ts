@@ -850,3 +850,26 @@ test.describe("visual baselines", () => {
     );
   });
 });
+
+test("settings channels are hidden from the publishers pane by default", async ({
+  page,
+}) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const dataRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="SYSTEM/PING_TOPIC"]'),
+  });
+  await expect(dataRow).toHaveCount(1);
+  await expect(
+    page.locator('.publisher-topic[title="SYSTEM/PING/INPUT_SETTINGS"]')
+  ).toHaveCount(0);
+});
+
+test("settings channels can be shown again from global settings", async ({ page }) => {
+  await primeGlobalSettings(page, { showSettingsChannels: true });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await expect(
+    page.locator('.publisher-topic[title="SYSTEM/PING/INPUT_SETTINGS"]')
+  ).toBeVisible();
+});

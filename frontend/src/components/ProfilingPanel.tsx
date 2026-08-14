@@ -10,6 +10,7 @@ import {
   parseTopicAndEndpoint,
   streamAddressWithoutEndpoint,
 } from "../utils/streamAddress";
+import { isSettingsChannelTopic } from "../utils/settingsChannel";
 import type {
   GraphSnapshotPayload,
   ProfilingTraceControlRequest,
@@ -33,6 +34,8 @@ type ProfilingPanelProps = {
   /** Component address to focus when a whole unit is selected rather than one stream. */
   focusUnitAddress?: string | null;
   focusActionId?: number;
+  /** Show control-plane INPUT_SETTINGS publishers (hidden by default). */
+  showSettingsChannels?: boolean;
   hideFilters?: boolean;
   defaultTraceMetrics?: string[];
   traceDockHost?: HTMLElement | null;
@@ -426,6 +429,7 @@ export function ProfilingPanel({
   focusSubscriberEndpointId = null,
   focusUnitAddress = null,
   focusActionId = 0,
+  showSettingsChannels = false,
   hideFilters = false,
   defaultTraceMetrics = ["publish_delta_ns", "lease_time_ns", "user_span_ns"],
   traceDockHost = null,
@@ -548,7 +552,11 @@ export function ProfilingPanel({
       }
     }
 
-    return rows.sort((a, b) => {
+    const visibleRows = showSettingsChannels
+      ? rows
+      : rows.filter((row) => !isSettingsChannelTopic(row.topic));
+
+    return visibleRows.sort((a, b) => {
       const byTopic = a.topic.localeCompare(b.topic);
       if (byTopic !== 0) {
         return byTopic;
@@ -565,6 +573,7 @@ export function ProfilingPanel({
     graphSnapshot,
     processRows,
     relayEndpointByInternalTopic,
+    showSettingsChannels,
   ]);
 
   const filteredRows = useMemo(() => {
@@ -916,6 +925,7 @@ export function ProfilingPanel({
       timeout: 2.0,
     });
   }, [activeTraceRowIds, rowById, setProfilingTraceControl, traceCloseSignal]);
+
 
   useEffect(() => {
     if (!onTraceDockStateChange) {

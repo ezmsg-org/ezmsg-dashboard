@@ -82,6 +82,15 @@ The Publishers pane currently centers on four things:
 3. **Trace control**: starts or stops profiling trace capture for the selected publisher endpoint.
 4. **Subscriber row**: shows the subscriber topic, channel kind, and snapshot message count. Expanding one shows host, pid, process id, and endpoint id.
 
+### What Is Listed Here
+
+Only data publishers. A unit that exposes dynamic settings also gets a
+control-plane publisher on `<unit>/INPUT_SETTINGS`, created the first time one
+of its settings is patched. It publishes only when a setting changes, so it sits
+at `0.0 Hz` and a profiling trace on it can never produce a sample. These are
+hidden by default; enable `Show settings channels in Publishers (debug)` in
+global settings to see them.
+
 ### Typical Workflow
 
 1. Search for a topic or endpoint.
