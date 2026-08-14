@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import socket
@@ -203,7 +204,15 @@ def serve_dashboard(
     )
     server = uvicorn.Server(config=config)
     logger.info("Dashboard listening on %s", url)
-    server.run()
+    try:
+        server.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # uvicorn handles SIGINT itself: it shuts the application down
+        # gracefully and then re-raises the signal so that callers see
+        # conventional interrupt semantics. For an interactive server that
+        # only amounts to a traceback after a clean shutdown, so swallow it.
+        pass
+    logger.info("Dashboard stopped.")
 
 
 def build_parser() -> argparse.ArgumentParser:

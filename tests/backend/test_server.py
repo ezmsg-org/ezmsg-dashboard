@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 
 import pytest
 from ezmsg.core.netprotocol import Address
@@ -11,6 +12,7 @@ from ezmsg.dashboard.server import (
     _ensure_graph_server_available,
     _resolve_dashboard_bind,
     handle_dashboard,
+    serve_dashboard,
 )
 
 
@@ -95,3 +97,48 @@ def test_handle_dashboard_logs_helpful_message_when_graph_server_missing(monkeyp
         handle_dashboard(args)
 
     assert "Could not connect to GraphServer at 127.0.0.1:25978." in caplog.text
+
+
+class _InterruptingServer:
+    """Stand-in for uvicorn.Server that reproduces its Ctrl+C behavior.
+
+    uvicorn shuts the application down gracefully on SIGINT and then re-raises
+    the signal, so `Server.run()` raises out of an already-completed shutdown.
+    """
+
+    instances: list["_InterruptingServer"] = []
+
+    def __init__(self, *, config, error: BaseException) -> None:
+        self.config = config
+        self._error = error
+        self.ran = False
+        _InterruptingServer.instances.append(self)
+
+    def run(self) -> None:
+        self.ran = True
+        raise self._error
+
+
+def _serve_with_interrupt(monkeypatch, error: BaseException) -> None:
+    monkeypatch.setattr("ezmsg.dashboard.server._ensure_graph_server_available", lambda address: None)
+    monkeypatch.setattr(
+        "ezmsg.dashboard.server.uvicorn.Server",
+        lambda *, config: _InterruptingServer(config=config, error=error),
+    )
+    serve_dashboard(graph_address="127.0.0.1:25978", port=0)
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt(), asyncio.CancelledError()])
+def test_serve_dashboard_exits_quietly_on_interrupt(monkeypatch, caplog, error) -> None:
+    _InterruptingServer.instances.clear()
+
+    with caplog.at_level("INFO"):
+        _serve_with_interrupt(monkeypatch, error)  # must not raise
+
+    assert _InterruptingServer.instances[0].ran is True
+    assert "Dashboard stopped." in caplog.text
+
+
+def test_serve_dashboard_still_propagates_real_errors(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="port already in use"):
+        _serve_with_interrupt(monkeypatch, RuntimeError("port already in use"))
