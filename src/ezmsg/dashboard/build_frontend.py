@@ -5,7 +5,7 @@ import filecmp
 import shutil
 from pathlib import Path
 
-from .backend.app import PACKAGE_FRONTEND_DIR
+from ezmsg.dashboard.backend.app import PACKAGE_FRONTEND_DIR
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_DIST_DIR = REPO_ROOT / "frontend" / "dist"
