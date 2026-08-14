@@ -546,6 +546,100 @@ test("clicking a topology unit also expands its publishers row", async ({ page }
   await expect(publisherRow.locator(".publisher-row__details")).toBeVisible();
 });
 
+test("dragging the divider resizes the inspector and persists the width", async ({
+  page,
+}) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  const startWidth = (await inspector.boundingBox())?.width ?? 0;
+  expect(Math.round(startWidth)).toBe(500);
+
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error("resize handle is not visible");
+  }
+  const handleCenterY = handleBox.y + handleBox.height / 2;
+  const handleCenterX = handleBox.x + handleBox.width / 2;
+
+  // Drag left: the inspector is on the right, so it should get wider.
+  await page.mouse.move(handleCenterX, handleCenterY);
+  await page.mouse.down();
+  await page.mouse.move(handleCenterX - 120, handleCenterY, { steps: 8 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(620);
+
+  // The topology keeps the rest of the viewport.
+  const mainWidth = (await page.locator(".dashboard-main").boundingBox())?.width ?? 0;
+  expect(Math.round(mainWidth)).toBe(1400 - 620);
+
+  // Persistence is asserted through storage rather than a reload, because
+  // primeGlobalSettings runs on every navigation and would re-prime the width.
+  const storedWidth = await page.evaluate(() => {
+    const raw = window.localStorage.getItem("ezmsg-dashboard-global-settings");
+    return raw ? (JSON.parse(raw) as { inspectorWidthPx: number }).inspectorWidthPx : null;
+  });
+  expect(storedWidth).toBe(620);
+});
+
+test("the divider clamps the inspector width and resets on double click", async ({
+  page,
+}) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error("resize handle is not visible");
+  }
+  const handleCenterY = handleBox.y + handleBox.height / 2;
+  const handleCenterX = handleBox.x + handleBox.width / 2;
+
+  // Drag far past the maximum; the width stops at the clamp.
+  await page.mouse.move(handleCenterX, handleCenterY);
+  await page.mouse.down();
+  await page.mouse.move(handleCenterX - 900, handleCenterY, { steps: 8 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(900);
+
+  await handle.dblclick();
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(500);
+});
+
+test("the divider resizes with the keyboard", async ({ page }) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  await handle.focus();
+  await expect(handle).toHaveAttribute("aria-valuenow", "500");
+
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(532);
+
+  await page.keyboard.press("ArrowRight");
+  await expect(handle).toHaveAttribute("aria-valuenow", "516");
+});
+
 test("settings edits apply in fixture mode", async ({ page }) => {
   await page.goto("/?fixture=root-scope-navigation");
 
