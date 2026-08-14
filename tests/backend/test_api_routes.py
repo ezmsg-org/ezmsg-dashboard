@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ezmsg.dashboard.backend.app import create_app
@@ -356,3 +358,75 @@ def test_profiling_trace_control_route_error() -> None:
     assert response.status_code == 422
     payload = response.json()
     assert "trace control" in payload["detail"].lower()
+
+
+class SlowStreamService(FakeGraphService):
+    """Graph service whose event stream never ends on its own."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_closed = False
+
+    async def event_envelopes(self, **kwargs: object) -> AsyncIterator[dict[str, object]]:
+        _ = kwargs
+        try:
+            yield {
+                "kind": "system.ready",
+                "data": {"timestamp": 1.0, "message": "Subscriptions active."},
+            }
+            while True:
+                await asyncio.sleep(3600)
+        finally:
+            self.stream_closed = True
+
+
+@pytest.mark.asyncio
+async def test_events_websocket_returns_when_the_client_disconnects() -> None:
+    """The handler must notice a disconnect while the stream is quiet.
+
+    Driven at the ASGI layer because TestClient cancels the application task on
+    teardown, which hides whether the handler noticed anything itself. A handler
+    that only wakes when the stream yields would hold the connection -- and with
+    it, server shutdown -- until the next heartbeat.
+    """
+    service = SlowStreamService()
+    app = create_app(service)
+    app.state.graph_service = service
+
+    incoming: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    sent: list[dict[str, object]] = []
+    await incoming.put({"type": "websocket.connect"})
+
+    async def receive() -> dict[str, object]:
+        return await incoming.get()
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "scheme": "ws",
+        "server": ("127.0.0.1", 8000),
+        "client": ("127.0.0.1", 54321),
+        "root_path": "",
+        "path": "/ws/events",
+        "raw_path": b"/ws/events",
+        "query_string": b"",
+        "headers": [(b"host", b"127.0.0.1:8000")],
+        "subprotocols": [],
+        "state": {},
+    }
+    handler = asyncio.create_task(app(scope, receive, send))
+
+    async def wait_for_first_envelope() -> None:
+        while not any(message.get("type") == "websocket.send" for message in sent):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait_for_first_envelope(), timeout=5.0)
+
+    await incoming.put({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(handler, timeout=5.0)
+
+    assert service.stream_closed is True

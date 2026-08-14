@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -193,7 +195,8 @@ def create_app(
     ) -> None:
         await websocket.accept()
         graph_service = app.state.graph_service
-        try:
+
+        async def pump_envelopes() -> None:
             async for envelope in graph_service.event_envelopes(
                 topology_after_seq=topology_after_seq,
                 settings_after_seq=settings_after_seq,
@@ -201,6 +204,31 @@ def create_app(
                 profiling_max_samples=profiling_max_samples,
             ):
                 await websocket.send_json(envelope)
+
+        async def wait_for_disconnect() -> None:
+            # The client is not expected to send anything, so this returns only
+            # when the socket closes -- including the disconnect the server
+            # delivers while shutting down. Watching for it separately is what
+            # keeps a quiet stream from holding shutdown open until the next
+            # heartbeat, which is long enough that Ctrl+C looks hung.
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+
+        pump_task = asyncio.create_task(pump_envelopes(), name="dashboard-ws-pump")
+        disconnect_task = asyncio.create_task(wait_for_disconnect(), name="dashboard-ws-disconnect")
+        try:
+            done, pending = await asyncio.wait({pump_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if pump_task in done:
+                pump_task.result()
+            else:
+                disconnect_task.result()
         except WebSocketDisconnect:
             return
         except RuntimeError as exc:
