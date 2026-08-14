@@ -212,9 +212,7 @@ class GraphContextLifecycleService:
         context = self._require_context()
         graph_snapshot = await context.snapshot()
         if not self._component_is_patchable(graph_snapshot, component_address):
-            raise SettingsPatchError(
-                f"Component '{component_address}' does not support dynamic settings patches."
-            )
+            raise SettingsPatchError(f"Component '{component_address}' does not support dynamic settings patches.")
         patch_value = await self._decoded_patch_value(
             context=context,
             component_address=component_address,
@@ -298,13 +296,9 @@ class GraphContextLifecycleService:
 
         process_meta = graph_snapshot.processes.get(process_uuid)
         if process_meta is None:
-            raise ProfilingTraceControlError(
-                f"Process '{process_id}' is not present in the graph snapshot."
-            )
+            raise ProfilingTraceControlError(f"Process '{process_id}' is not present in the graph snapshot.")
         if len(process_meta.units) == 0:
-            raise ProfilingTraceControlError(
-                f"Process '{process_id}' has no routable units for control requests."
-            )
+            raise ProfilingTraceControlError(f"Process '{process_id}' has no routable units for control requests.")
 
         route_unit = process_meta.units[0]
         normalized_sample_mod = max(1, int(sample_mod))
@@ -355,9 +349,7 @@ class GraphContextLifecycleService:
             ttl_seconds=ttl_seconds,
         )
 
-        controls_by_route_unit: dict[str, ProfilingTraceControl] = {
-            route_unit: publisher_control
-        }
+        controls_by_route_unit: dict[str, ProfilingTraceControl] = {route_unit: publisher_control}
 
         subscriber_metrics = self._subscriber_trace_metrics(metrics)
         subscriber_seed_topic = subscriber_topic or publisher_topic
@@ -366,9 +358,7 @@ class GraphContextLifecycleService:
                 graph_snapshot=graph_snapshot,
                 seed_topic=subscriber_seed_topic,
             )
-            profiling_snapshot = await context.profiling_snapshot_all(
-                timeout_per_process=timeout
-            )
+            profiling_snapshot = await context.profiling_snapshot_all(timeout_per_process=timeout)
             route_units_for_subscribers = self._route_units_with_subscribers_for_scope(
                 graph_snapshot=graph_snapshot,
                 profiling_snapshot=profiling_snapshot,
@@ -397,9 +387,7 @@ class GraphContextLifecycleService:
                 raise ProfilingTraceControlError(str(exc)) from exc
 
             if not response.ok:
-                raise ProfilingTraceControlError(
-                    f"Process trace control rejected for '{process_id}': {response.error}"
-                )
+                raise ProfilingTraceControlError(f"Process trace control rejected for '{process_id}': {response.error}")
 
         self._active_trace_route_units = set(controls_by_route_unit.keys())
         return {
@@ -417,9 +405,7 @@ class GraphContextLifecycleService:
             },
             "subscriber_scope": {
                 "seed_topic": subscriber_seed_topic,
-                "route_units": sorted(
-                    unit for unit in controls_by_route_unit.keys() if unit != route_unit
-                ),
+                "route_units": sorted(unit for unit in controls_by_route_unit.keys() if unit != route_unit),
                 "metrics": subscriber_metrics,
             },
         }
@@ -522,11 +508,7 @@ class GraphContextLifecycleService:
             out[component_address] = {
                 **value,
                 "patchable": patchable,
-                "patch_error": (
-                    None
-                    if patchable
-                    else "Read-only: component does not expose dynamic settings."
-                ),
+                "patch_error": (None if patchable else "Read-only: component does not expose dynamic settings."),
                 "component_type": info["component_type"],
                 "component_name": info["component_name"],
             }
@@ -538,8 +520,7 @@ class GraphContextLifecycleService:
         component_address: str,
     ) -> bool:
         return bool(
-            self._component_info_by_component(graph_snapshot)
-            .get(component_address, {"patchable": False})["patchable"]
+            self._component_info_by_component(graph_snapshot).get(component_address, {"patchable": False})["patchable"]
         )
 
     def _component_info_by_component(
@@ -553,10 +534,7 @@ class GraphContextLifecycleService:
                 continue
             for component_address, component in metadata.components.items():
                 dynamic_settings = getattr(component, "dynamic_settings", None)
-                enabled = bool(
-                    dynamic_settings is not None
-                    and getattr(dynamic_settings, "enabled", False)
-                )
+                enabled = bool(dynamic_settings is not None and getattr(dynamic_settings, "enabled", False))
                 existing = component_info.get(
                     component_address,
                     {
@@ -567,10 +545,8 @@ class GraphContextLifecycleService:
                 )
                 component_info[component_address] = {
                     "patchable": bool(existing["patchable"]) or enabled,
-                    "component_type": existing["component_type"]
-                    or getattr(component, "component_type", None),
-                    "component_name": existing["component_name"]
-                    or getattr(component, "name", None),
+                    "component_type": existing["component_type"] or getattr(component, "component_type", None),
+                    "component_name": existing["component_name"] or getattr(component, "name", None),
                 }
         return component_info
 

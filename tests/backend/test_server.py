@@ -75,15 +75,11 @@ def test_ensure_graph_server_available_reports_helpful_message(monkeypatch) -> N
     assert "`ezmsg dashboard --graph-address HOST:PORT`" in message
 
 
-def test_handle_dashboard_logs_helpful_message_when_graph_server_missing(
-    monkeypatch, caplog
-) -> None:
+def test_handle_dashboard_logs_helpful_message_when_graph_server_missing(monkeypatch, caplog) -> None:
     monkeypatch.setattr(
         "ezmsg.dashboard.server.serve_dashboard",
         lambda **kwargs: (_ for _ in ()).throw(
-            DashboardGraphServerUnavailableError(
-                "Could not connect to GraphServer at 127.0.0.1:25978."
-            )
+            DashboardGraphServerUnavailableError("Could not connect to GraphServer at 127.0.0.1:25978.")
         ),
     )
 

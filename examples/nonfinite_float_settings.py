@@ -140,9 +140,7 @@ def main() -> None:
         run_system()
         return
 
-    graph_server = subprocess.Popen(
-        [sys.executable, "-m", "ezmsg.core", "serve", "--address", GRAPH_ADDRESS]
-    )
+    graph_server = subprocess.Popen([sys.executable, "-m", "ezmsg.core", "serve", "--address", GRAPH_ADDRESS])
     system: subprocess.Popen | None = None
     try:
         _wait_for_port(GRAPH_HOST, GRAPH_PORT)

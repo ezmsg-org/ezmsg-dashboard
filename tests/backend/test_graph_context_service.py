@@ -22,27 +22,19 @@ class FakeContext:
         self._snapshot = SimpleNamespace(
             graph={},
             processes={
-                UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(
-                    units=["unit.patchable"]
-                ),
-                UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(
-                    units=["unit.remote"]
-                )
+                UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(units=["unit.patchable"]),
+                UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(units=["unit.remote"]),
             },
             sessions={
                 "session-a": SimpleNamespace(
                     metadata=SimpleNamespace(
                         components={
-                            "unit.read_only": SimpleNamespace(
-                                dynamic_settings=SimpleNamespace(enabled=False)
-                            ),
-                            "unit.patchable": SimpleNamespace(
-                                dynamic_settings=SimpleNamespace(enabled=True)
-                            ),
+                            "unit.read_only": SimpleNamespace(dynamic_settings=SimpleNamespace(enabled=False)),
+                            "unit.patchable": SimpleNamespace(dynamic_settings=SimpleNamespace(enabled=True)),
                         }
                     )
                 )
-            }
+            },
         )
 
         self._settings_snapshot = {
@@ -423,9 +415,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
 
     assert payload["process_id"] == "00000000-0000-0000-0000-000000000123"
     assert set(payload["unit_addresses"]) == {"unit.patchable", "unit.remote"}
-    calls_by_unit = {
-        call["unit_address"]: call for call in fake_context.trace_control_calls
-    }
+    calls_by_unit = {call["unit_address"]: call for call in fake_context.trace_control_calls}
     assert set(calls_by_unit.keys()) == {"unit.patchable", "unit.remote"}
     assert calls_by_unit["unit.patchable"] == {
         "unit_address": "unit.patchable",

@@ -37,19 +37,13 @@ def _json_safe(value: Any) -> Any:
         return None
 
     if dataclasses.is_dataclass(value):
-        return {
-            field.name: _json_safe(getattr(value, field.name))
-            for field in dataclasses.fields(value)
-        }
+        return {field.name: _json_safe(getattr(value, field.name)) for field in dataclasses.fields(value)}
 
     if isinstance(value, Mapping):
         return {str(_json_safe(k)): _json_safe(v) for k, v in value.items()}
 
     if isinstance(value, tuple) and hasattr(value, "_fields"):
-        return {
-            field_name: _json_safe(getattr(value, field_name))
-            for field_name in value._fields
-        }
+        return {field_name: _json_safe(getattr(value, field_name)) for field_name in value._fields}
 
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(item) for item in value]
@@ -83,10 +77,7 @@ def adapt_graph_snapshot(snapshot: GraphSnapshot) -> dict[str, Any]:
         for session_id, session in snapshot.sessions.items()
     }
 
-    processes = {
-        str(process_id): _json_safe(process)
-        for process_id, process in snapshot.processes.items()
-    }
+    processes = {str(process_id): _json_safe(process) for process_id, process in snapshot.processes.items()}
 
     return {
         "graph": _json_safe(snapshot.graph),
@@ -108,10 +99,7 @@ def adapt_settings_value(value: SettingsSnapshotValue) -> dict[str, Any]:
 def adapt_settings_snapshot(
     snapshot: Mapping[str, SettingsSnapshotValue],
 ) -> dict[str, dict[str, Any]]:
-    return {
-        component_address: adapt_settings_value(value)
-        for component_address, value in snapshot.items()
-    }
+    return {component_address: adapt_settings_value(value) for component_address, value in snapshot.items()}
 
 
 def adapt_profiling_snapshot(
@@ -127,9 +115,7 @@ def adapt_topology_event(event: TopologyChangedEvent) -> dict[str, Any]:
         "timestamp": event.timestamp,
         "changed_topics": list(event.changed_topics),
         "source_session_id": event.source_session_id,
-        "source_process_id": (
-            str(event.source_process_id) if event.source_process_id is not None else None
-        ),
+        "source_process_id": (str(event.source_process_id) if event.source_process_id is not None else None),
     }
 
 
@@ -140,9 +126,7 @@ def adapt_settings_event(event: SettingsChangedEvent) -> dict[str, Any]:
         "component_address": event.component_address,
         "timestamp": event.timestamp,
         "source_session_id": event.source_session_id,
-        "source_process_id": (
-            str(event.source_process_id) if event.source_process_id is not None else None
-        ),
+        "source_process_id": (str(event.source_process_id) if event.source_process_id is not None else None),
         "value": adapt_settings_value(event.value),
     }
 

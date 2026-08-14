@@ -145,9 +145,7 @@ def test_adapter_encodes_nonfinite_settings_values() -> None:
     }
     assert adapted["repr_value"] == adapted["structured_value"]
 
-    defaults = {
-        field["name"]: field["default"] for field in adapted["settings_schema"]["fields"]
-    }
+    defaults = {field["name"]: field["default"] for field in adapted["settings_schema"]["fields"]}
     assert defaults == {
         "gain": 1.0,
         "clip_max": "Infinity",
