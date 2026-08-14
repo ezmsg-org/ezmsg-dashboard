@@ -11,10 +11,12 @@ from dataclasses import dataclass
 
 import uvicorn
 from ezmsg.core.netprotocol import (
-    Address,
     DEFAULT_HOST as EZMSG_DEFAULT_HOST,
+)
+from ezmsg.core.netprotocol import (
     GRAPHSERVER_ADDR_ENV,
     GRAPHSERVER_PORT_DEFAULT,
+    Address,
 )
 
 from .backend.app import create_app

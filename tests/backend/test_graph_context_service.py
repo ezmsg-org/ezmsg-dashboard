@@ -5,12 +5,12 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from ezmsg.core.netprotocol import Address
 
 from ezmsg.dashboard.backend.services.graph_context_service import (
     GraphContextLifecycleService,
     SettingsPatchError,
 )
-from ezmsg.core.netprotocol import Address
 
 
 class FakeContext:

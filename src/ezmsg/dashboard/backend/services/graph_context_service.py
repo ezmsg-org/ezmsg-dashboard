@@ -4,12 +4,12 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Mapping
-from uuid import UUID
 from typing import Any, AsyncIterator, Callable, Protocol
+from uuid import UUID
 
 from ezmsg.core.graphcontext import GraphContext
 from ezmsg.core.graphmeta import GraphSnapshot, ProfilingStreamControl, ProfilingTraceControl
-from ezmsg.core.netprotocol import Address, GRAPHSERVER_ADDR
+from ezmsg.core.netprotocol import GRAPHSERVER_ADDR, Address
 
 from ..json_encoding import decode_float_token
 from ..models.events import (
@@ -25,12 +25,11 @@ from .adapters import (
     adapt_graph_snapshot,
     adapt_profiling_snapshot,
     adapt_profiling_trace_batch,
-    adapt_settings_value,
     adapt_settings_event,
     adapt_settings_snapshot,
+    adapt_settings_value,
     adapt_topology_event,
 )
-
 
 _MISSING = object()
 

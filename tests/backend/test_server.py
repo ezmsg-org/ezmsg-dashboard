@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 
 import pytest
-
 from ezmsg.core.netprotocol import Address
+
 from ezmsg.dashboard.server import (
     DASHBOARD_ADDR_ENV,
     DashboardGraphServerUnavailableError,
