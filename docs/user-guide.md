@@ -28,6 +28,7 @@ The dashboard has three major areas:
 - Click a unit to focus it in **Settings**, and to expand the topics it publishes in **Publishers**.
 - Click a publisher or subscriber stream to focus it in **Publishers** and fit the topology view.
 - Use the floating viewport shortcuts to toggle layout direction, theme, or open global settings.
+- Drag the divider between the topology and the inspector to change how much width each gets. Double-click it to return to the default, or focus it and use the arrow keys (`Home`/`End` jump to the widest/narrowest inspector). The width is remembered, and also appears as `Inspector Width` in global settings.
 - Use `Open` on a collection to descend into that scope.
 - Use `Up` or breadcrumbs to move back out.
 

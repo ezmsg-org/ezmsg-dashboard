@@ -501,6 +501,39 @@ body {
   transition: none;
 }
 
+/* Sits over the inspector's left border so dragging it does not shift layout. */
+.inspector-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  z-index: 26;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.inspector-resize-handle:hover,
+.inspector-resize-handle:focus-visible,
+.dashboard-layout.is-resizing-inspector .inspector-resize-handle {
+  background: #6ea8fe;
+  outline: none;
+}
+
+.dashboard-layout.is-dark .inspector-resize-handle:hover,
+.dashboard-layout.is-dark .inspector-resize-handle:focus-visible,
+.dashboard-layout.is-dark.is-resizing-inspector .inspector-resize-handle {
+  background: #4f7fd4;
+}
+
+/* Keep the drag smooth: no text selection, and one cursor for the whole page. */
+.dashboard-layout.is-resizing-inspector {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .dashboard-inspector__body {
   flex: 1;
   min-height: 0;
