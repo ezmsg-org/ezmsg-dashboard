@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# StaticFiles raises Starlette's HTTPException, which FastAPI's subclasses.
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from .json_encoding import sanitize_json_value
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
 from .services.graph_context_service import (
@@ -24,27 +29,89 @@ NO_CACHE_HEADERS = {
     "Expires": "0",
 }
 
+# Vite emits content-hashed filenames under assets/, so a given URL there always
+# names the same bytes and can be cached for as long as the browser likes.
+IMMUTABLE_ASSET_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+
 PACKAGE_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "_web"
 
 
-class DashboardStaticFiles(StaticFiles):
-    async def get_response(self, path: str, scope: dict[str, Any]) -> FileResponse | JSONResponse:
-        response = await super().get_response(path, scope)
-        if response.status_code != 404:
-            return response
+class DashboardJSONResponse(JSONResponse):
+    """JSONResponse that encodes non-finite floats instead of failing on them.
 
+    ``JSONResponse.render`` renders with ``allow_nan=False``, so a single ``inf``
+    anywhere in a payload turns the whole request into a 500. Payloads assembled
+    by the adapters are already encoded; this is the backstop for everything
+    else (request echoes, future routes). Re-rendering only on failure keeps the
+    common path free of an extra walk over large snapshot payloads.
+    """
+
+    def render(self, content: Any) -> bytes:
+        try:
+            return super().render(content)
+        except ValueError:
+            return super().render(sanitize_json_value(content))
+
+
+class DashboardStaticFiles(StaticFiles):
+    """Serves the built frontend, and caches it the way Vite builds it.
+
+    The shell names the content-hashed bundles, so a cached copy pins the
+    browser to whichever bundle it was built against: a rebuilt dashboard keeps
+    serving the old app until someone hard-reloads. It is therefore never
+    cached. The hashed assets it names can be cached forever by the same logic.
+
+    Missing paths that look like client-side routes fall back to the shell.
+    """
+
+    def _shell_response(self) -> FileResponse | None:
+        index_path = Path(self.directory or "") / "index.html"
+        if not index_path.is_file():
+            return None
+        return FileResponse(index_path, headers=NO_CACHE_HEADERS)
+
+    @staticmethod
+    def cache_headers_for(path: str) -> dict[str, str] | None:
+        """Cache headers for a file StaticFiles resolved, if it wants any.
+
+        ``path`` arrives normalized for the host OS, so it is separated by
+        backslashes on Windows. Rewrite them rather than going through ``Path``,
+        which only reads a backslash as a separator when running on Windows.
+        """
+        relative_path = path.replace("\\", "/")
+        if relative_path in (".", "", "index.html") or relative_path.endswith("/index.html"):
+            return NO_CACHE_HEADERS
+        if relative_path.startswith("assets/"):
+            return IMMUTABLE_ASSET_HEADERS
+        return None
+
+    @staticmethod
+    def _wants_shell_fallback(scope: dict[str, Any]) -> bool:
         request_path = scope.get("path", "")
         if request_path == "/api" or request_path.startswith("/api/"):
-            return response
+            return False
         if request_path == "/ws" or request_path.startswith("/ws/"):
-            return response
-        if "." in Path(request_path).name:
-            return response
+            return False
+        # A missing file, rather than a client-side route.
+        return "." not in Path(request_path).name
 
-        index_path = Path(self.directory or "") / "index.html"
-        if index_path.is_file():
-            return FileResponse(index_path)
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # StaticFiles signals a miss by raising, not by returning a 404.
+            if exc.status_code != 404 or not self._wants_shell_fallback(scope):
+                raise
+            shell = self._shell_response()
+            if shell is None:
+                raise
+            return shell
 
+        if response.status_code >= 400:
+            return response
+        headers = self.cache_headers_for(path)
+        if headers is not None:
+            response.headers.update(headers)
         return response
 
 
@@ -106,7 +173,7 @@ def create_app(
     @app.get("/api/health")
     async def api_health(graph_service: GraphServiceDependency) -> JSONResponse:
         payload = await graph_service.health_payload()
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/snapshot")
     async def api_snapshot(graph_service: GraphServiceDependency) -> JSONResponse:
@@ -114,7 +181,7 @@ def create_app(
             payload = await graph_service.snapshot_payload()
         except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/settings")
     async def api_settings(graph_service: GraphServiceDependency) -> JSONResponse:
@@ -122,7 +189,7 @@ def create_app(
             payload = await graph_service.settings_payload()
         except GraphServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.post("/api/settings/{component_address:path}/field")
     async def api_patch_setting_field(
@@ -141,7 +208,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (SettingsPatchError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.post("/api/profiling/trace-control")
     async def api_profiling_trace_control(
@@ -164,7 +231,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (ProfilingTraceControlError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return JSONResponse(content=payload, headers=NO_CACHE_HEADERS)
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.websocket("/ws/events")
     async def ws_events(
@@ -176,7 +243,8 @@ def create_app(
     ) -> None:
         await websocket.accept()
         graph_service = app.state.graph_service
-        try:
+
+        async def pump_envelopes() -> None:
             async for envelope in graph_service.event_envelopes(
                 topology_after_seq=topology_after_seq,
                 settings_after_seq=settings_after_seq,
@@ -184,6 +252,31 @@ def create_app(
                 profiling_max_samples=profiling_max_samples,
             ):
                 await websocket.send_json(envelope)
+
+        async def wait_for_disconnect() -> None:
+            # The client is not expected to send anything, so this returns only
+            # when the socket closes -- including the disconnect the server
+            # delivers while shutting down. Watching for it separately is what
+            # keeps a quiet stream from holding shutdown open until the next
+            # heartbeat, which is long enough that Ctrl+C looks hung.
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+
+        pump_task = asyncio.create_task(pump_envelopes(), name="dashboard-ws-pump")
+        disconnect_task = asyncio.create_task(wait_for_disconnect(), name="dashboard-ws-disconnect")
+        try:
+            done, pending = await asyncio.wait({pump_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if pump_task in done:
+                pump_task.result()
+            else:
+                disconnect_task.result()
         except WebSocketDisconnect:
             return
         except RuntimeError as exc:

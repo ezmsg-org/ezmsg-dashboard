@@ -221,6 +221,8 @@ const rootScopeFixture: DashboardFixture = {
       "SYSTEM/PING": settingsEntry("PING", "fixture.MessageGenerator", {
         rate_hz: 10,
         message: "ping",
+        // JSON has no infinity literal; non-finite floats travel as tokens.
+        timeout_s: "Infinity",
       }),
     },
     profiling: {
@@ -232,6 +234,18 @@ const rootScopeFixture: DashboardFixture = {
           messages_published_window: 20,
           publish_rate_hz_window: 10,
           inflight_messages_current: 1,
+          num_buffers: 8,
+          timestamp: 1_711_111_111,
+        },
+        // Control-plane publisher, created the first time a setting is patched.
+        // Idle forever after that; hidden from the pane unless debug is on.
+        "SYSTEM/PING/INPUT_SETTINGS:ping-settings-endpoint": {
+          endpoint_id: "ping-settings-endpoint",
+          topic: "SYSTEM/PING/INPUT_SETTINGS",
+          messages_published_total: 1,
+          messages_published_window: 0,
+          publish_rate_hz_window: 0,
+          inflight_messages_current: 0,
           num_buffers: 8,
           timestamp: 1_711_111_111,
         },

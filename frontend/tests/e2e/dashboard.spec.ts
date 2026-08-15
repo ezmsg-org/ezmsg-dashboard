@@ -529,6 +529,118 @@ test("clicking a topology publisher stream expands the publishers row", async ({
   ).toBeVisible();
 });
 
+test("clicking a topology unit also expands its publishers row", async ({ page }) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await page.locator('button[aria-label="Open SYSTEM scope"]').click();
+
+  const publisherRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="SYSTEM/PING_TOPIC"]'),
+  });
+  await expect(publisherRow.locator(".publisher-row__details")).toBeHidden();
+
+  await page
+    .getByTestId("rf__node-unit:SYSTEM/PING")
+    .click({ position: { x: 24, y: 18 } });
+
+  await expect(publisherRow.locator(".publisher-row__details")).toBeVisible();
+});
+
+test("dragging the divider resizes the inspector and persists the width", async ({
+  page,
+}) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  const startWidth = (await inspector.boundingBox())?.width ?? 0;
+  expect(Math.round(startWidth)).toBe(500);
+
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error("resize handle is not visible");
+  }
+  const handleCenterY = handleBox.y + handleBox.height / 2;
+  const handleCenterX = handleBox.x + handleBox.width / 2;
+
+  // Drag left: the inspector is on the right, so it should get wider.
+  await page.mouse.move(handleCenterX, handleCenterY);
+  await page.mouse.down();
+  await page.mouse.move(handleCenterX - 120, handleCenterY, { steps: 8 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(620);
+
+  // The topology keeps the rest of the viewport.
+  const mainWidth = (await page.locator(".dashboard-main").boundingBox())?.width ?? 0;
+  expect(Math.round(mainWidth)).toBe(1400 - 620);
+
+  // Persistence is asserted through storage rather than a reload, because
+  // primeGlobalSettings runs on every navigation and would re-prime the width.
+  const storedWidth = await page.evaluate(() => {
+    const raw = window.localStorage.getItem("ezmsg-dashboard-global-settings");
+    return raw ? (JSON.parse(raw) as { inspectorWidthPx: number }).inspectorWidthPx : null;
+  });
+  expect(storedWidth).toBe(620);
+});
+
+test("the divider clamps the inspector width and resets on double click", async ({
+  page,
+}) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  const handleBox = await handle.boundingBox();
+  if (!handleBox) {
+    throw new Error("resize handle is not visible");
+  }
+  const handleCenterY = handleBox.y + handleBox.height / 2;
+  const handleCenterX = handleBox.x + handleBox.width / 2;
+
+  // Drag far past the limit; the width stops where the topology's 480px
+  // minimum begins, rather than at a fixed ceiling.
+  await page.mouse.move(handleCenterX, handleCenterY);
+  await page.mouse.down();
+  await page.mouse.move(handleCenterX - 900, handleCenterY, { steps: 8 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(1400 - 480);
+
+  await handle.dblclick();
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(500);
+});
+
+test("the divider resizes with the keyboard", async ({ page }) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const inspector = page.locator(".dashboard-inspector--pinned");
+  const handle = page.locator(".inspector-resize-handle");
+  await handle.focus();
+  await expect(handle).toHaveAttribute("aria-valuenow", "500");
+
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect
+    .poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0))
+    .toBe(532);
+
+  await page.keyboard.press("ArrowRight");
+  await expect(handle).toHaveAttribute("aria-valuenow", "516");
+});
+
 test("settings edits apply in fixture mode", async ({ page }) => {
   await page.goto("/?fixture=root-scope-navigation");
 
@@ -545,6 +657,36 @@ test("settings edits apply in fixture mode", async ({ page }) => {
 
   await expect(rateRow.locator(".patch-status.ok")).toHaveText("Applied rate_hz");
   await expect(rateRow.locator('input[type="number"]')).toHaveValue("42");
+});
+
+test("non-finite settings values are shown and can be patched", async ({ page }) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await page.locator('button[aria-label="Open SYSTEM scope"]').click();
+  await page
+    .getByTestId("rf__node-unit:SYSTEM/PING")
+    .click({ position: { x: 24, y: 18 } });
+
+  const timeoutRow = page.locator(".settings-field-row", {
+    has: page.locator("label", { hasText: "timeout_s" }),
+  });
+  const timeoutInput = timeoutRow.locator('input[type="text"]');
+  await expect(timeoutInput).toHaveValue("Infinity");
+
+  await timeoutInput.fill("-inf");
+  await timeoutRow.getByRole("button", { name: "Apply" }).click();
+  await expect(timeoutRow.locator(".patch-status.ok")).toHaveText("Applied timeout_s");
+
+  // Re-open the component so the editor redraws from the patched value.
+  const componentToggle = page
+    .locator(".settings-component-row", {
+      has: page.locator('.settings-component-address[title="SYSTEM/PING"]'),
+    })
+    .locator(".settings-component-row__toggle");
+  await componentToggle.click();
+  await componentToggle.click();
+
+  await expect(timeoutRow.locator('input[type="text"]')).toHaveValue("-Infinity");
 });
 
 test("inspector widths keep settings and publisher rows from horizontal overflow", async ({
@@ -708,4 +850,69 @@ test.describe("visual baselines", () => {
       "dense subscriber overflow"
     );
   });
+});
+
+test("settings channels are hidden from the publishers pane by default", async ({
+  page,
+}) => {
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const dataRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="SYSTEM/PING_TOPIC"]'),
+  });
+  await expect(dataRow).toHaveCount(1);
+  await expect(
+    page.locator('.publisher-topic[title="SYSTEM/PING/INPUT_SETTINGS"]')
+  ).toHaveCount(0);
+});
+
+test("settings channels can be shown again from global settings", async ({ page }) => {
+  await primeGlobalSettings(page, { showSettingsChannels: true });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  await expect(
+    page.locator('.publisher-topic[title="SYSTEM/PING/INPUT_SETTINGS"]')
+  ).toBeVisible();
+});
+
+test("a capturing publisher row stays expanded when a unit is selected", async ({
+  page,
+}) => {
+  await page.goto("/?fixture=profiling-trace-rates");
+
+  const traceRow = page.locator(".publisher-row", {
+    has: page.locator('.publisher-topic[title="TRACE_LAB/DENSE_TOPIC"]'),
+  });
+  await traceRow.locator(".publisher-row__toggle").click();
+  await traceRow.locator(".publisher-trace-button").click();
+  await expect(traceRow.locator(".publisher-trace-button.is-stop")).toBeVisible();
+
+  // Selecting a unit refocuses the publishers list; the stop control for a
+  // running capture must not disappear with it.
+  await page.locator('[data-testid^="rf__node-unit:"]').first().click({
+    position: { x: 24, y: 18 },
+  });
+  await page.waitForTimeout(500);
+
+  await expect(traceRow.locator(".publisher-trace-button.is-stop")).toBeVisible();
+});
+
+test("the inspector cannot be dragged over the topology", async ({ page }) => {
+  await primeGlobalSettings(page, { inspectorWidthPx: 500 });
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.goto("/?fixture=root-scope-navigation");
+
+  const handle = page.locator(".inspector-resize-handle");
+  const box = await handle.boundingBox();
+  if (!box) {
+    throw new Error("resize handle is not visible");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(10, box.y + 300, { steps: 10 }); // drag to the far left
+  await page.mouse.up();
+
+  const topologyWidth =
+    (await page.locator(".dashboard-main").boundingBox())?.width ?? 0;
+  expect(topologyWidth).toBeGreaterThanOrEqual(480);
 });

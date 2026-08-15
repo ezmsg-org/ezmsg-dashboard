@@ -150,10 +150,11 @@ Two smaller files matter:
 
 - [`src/ezmsg/dashboard/backend/services/adapters.py`](../src/ezmsg/dashboard/backend/services/adapters.py)
 - [`src/ezmsg/dashboard/backend/models/events.py`](../src/ezmsg/dashboard/backend/models/events.py)
+- [`src/ezmsg/dashboard/backend/json_encoding.py`](../src/ezmsg/dashboard/backend/json_encoding.py)
 
 These files define the browser protocol boundary.
 
-`adapters.py` converts `ezmsg` dataclasses, enums, UUIDs, and snapshots into JSON-safe dictionaries. `events.py` defines the event envelope shapes shared by the backend WebSocket path and the frontend TypeScript types.
+`adapters.py` converts `ezmsg` dataclasses, enums, UUIDs, and snapshots into JSON-safe dictionaries. `events.py` defines the event envelope shapes shared by the backend WebSocket path and the frontend TypeScript types. `json_encoding.py` covers the values JSON has no literal for: non-finite floats travel as the tokens `"Infinity"`, `"-Infinity"`, and `"NaN"`, and settings patches carrying those tokens are decoded back to floats.
 
 This separation is good practice: the backend can evolve internal types while keeping the browser contract explicit.
 

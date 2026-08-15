@@ -32,6 +32,24 @@ jobs:
       - name: Run frontend unit tests
         run: npm test
 
+      # `vitest` and the e2e dev server both strip types without checking them,
+      # so the production build is what catches type errors.
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v6
+
+      # The server serves src/ezmsg/dashboard/_web, a committed copy of
+      # frontend/dist. Without this check the two drift apart silently and the
+      # packaged dashboard keeps serving a stale bundle.
+      - name: Check packaged frontend assets match the build
+        working-directory: .
+        run: |
+          uv sync
+          uv run python -m ezmsg.dashboard.build_frontend --check \
+            || { echo "::error::src/ezmsg/dashboard/_web is stale. Run: cd frontend && npm run build && cd .. && uv run python -m ezmsg.dashboard.build_frontend"; exit 1; }
+
   e2e-tests:
     # Visual baselines currently live as darwin snapshots in the repo.
     runs-on: macos-latest

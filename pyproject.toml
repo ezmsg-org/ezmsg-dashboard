@@ -24,7 +24,7 @@ dev = [
   {include-group = "test"},
 ]
 lint = [
-  "ruff"
+  "ruff==0.16.2"
 ]
 test = [
   "frozendict>=2.4.4",
@@ -54,7 +54,20 @@ artifacts = [
 
 [tool.pytest.ini_options]
 norecursedirs = "tests/helpers"
-addopts = "-p no:warnings"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# Exclude auto-generated files
+exclude = ["*/__version__.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ezmsg.dashboard"]
+known-third-party = ["ezmsg"]
 
 [tool.uv.sources]
-ezmsg = { git = "https://github.com/ezmsg-org/ezmsg", branch = "feature/dashboard-integration" }
+# ezmsg = { path = "../ezmsg", editable = true }
+

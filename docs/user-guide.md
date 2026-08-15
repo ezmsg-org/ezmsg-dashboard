@@ -25,9 +25,10 @@ The dashboard has three major areas:
 
 ### What To Do Here
 
-- Click a unit to focus it in **Settings**.
+- Click a unit to focus it in **Settings**, and to expand the topics it publishes in **Publishers**.
 - Click a publisher or subscriber stream to focus it in **Publishers** and fit the topology view.
 - Use the floating viewport shortcuts to toggle layout direction, theme, or open global settings.
+- Drag the divider between the topology and the inspector to change how much width each gets. Double-click it to return to the default, or focus it and use the arrow keys (`Home`/`End` jump to the widest/narrowest inspector). The width is remembered, and also appears as `Inspector Width` in global settings.
 - Use `Open` on a collection to descend into that scope.
 - Use `Up` or breadcrumbs to move back out.
 
@@ -65,6 +66,11 @@ The dashboard has three major areas:
 - **Text**: single-line text input
 - **JSON / structured fallback**: text area or serialized value editor
 
+Float fields may hold values JSON cannot represent. These are displayed as
+`Infinity`, `-Infinity`, and `NaN`, and a float field accepts any of those
+spellings (`inf`, `-inf`, `nan` work too). Integer fields require a finite
+value.
+
 ## Publishers
 
 ![Annotated publishers panel](./screenshots/publishers-panel.png)
@@ -75,6 +81,15 @@ The Publishers pane currently centers on four things:
 2. **Publisher row**: surfaces always-on snapshot metrics for a publisher topic.
 3. **Trace control**: starts or stops profiling trace capture for the selected publisher endpoint.
 4. **Subscriber row**: shows the subscriber topic, channel kind, and snapshot message count. Expanding one shows host, pid, process id, and endpoint id.
+
+### What Is Listed Here
+
+Only data publishers. A unit that exposes dynamic settings also gets a
+control-plane publisher on `<unit>/INPUT_SETTINGS`, created the first time one
+of its settings is patched. It publishes only when a setting changes, so it sits
+at `0.0 Hz` and a profiling trace on it can never produce a sample. These are
+hidden by default; enable `Show settings channels in Publishers (debug)` in
+global settings to see them.
 
 ### Typical Workflow
 
@@ -110,7 +125,7 @@ The top-right dock in the topology viewport contains:
 
 - **Layout toggle**: left-to-right vs top-to-bottom
 - **Theme toggle**: light vs dark
-- **Global settings**: snapshot poll frequency, theme, default layout, edge connector type, default trace metrics, inspector width, legend/minimap visibility, and auto-fit/auto-focus behaviors
+- **Global settings**: snapshot poll frequency, theme, default layout, edge connector type, default trace metrics, inspector width, legend/minimap visibility, auto-fit/auto-focus behaviors, and whether the Publishers pane shows settings channels
 
 ## Good Troubleshooting Patterns
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from ezmsg.dashboard.backend.app import create_app
+from ezmsg.dashboard.backend.app import DashboardStaticFiles, create_app
 
 
 class FakeGraphService:
@@ -114,9 +116,7 @@ class FakeGraphService:
             "unit_address": "SYS/U_TRACE",
             "enabled": enabled,
             "control": {
-                "publisher_endpoint_ids": [publisher_endpoint_id]
-                if publisher_endpoint_id
-                else [],
+                "publisher_endpoint_ids": [publisher_endpoint_id] if publisher_endpoint_id else [],
                 "publisher_topics": [publisher_topic] if publisher_topic else [],
                 "subscriber_topics": [subscriber_topic] if subscriber_topic else [],
                 "metrics": metrics or [],
@@ -358,3 +358,154 @@ def test_profiling_trace_control_route_error() -> None:
     assert response.status_code == 422
     payload = response.json()
     assert "trace control" in payload["detail"].lower()
+
+
+class SlowStreamService(FakeGraphService):
+    """Graph service whose event stream never ends on its own."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_closed = False
+
+    async def event_envelopes(self, **kwargs: object) -> AsyncIterator[dict[str, object]]:
+        _ = kwargs
+        try:
+            yield {
+                "kind": "system.ready",
+                "data": {"timestamp": 1.0, "message": "Subscriptions active."},
+            }
+            while True:
+                await asyncio.sleep(3600)
+        finally:
+            self.stream_closed = True
+
+
+@pytest.mark.asyncio
+async def test_events_websocket_returns_when_the_client_disconnects() -> None:
+    """The handler must notice a disconnect while the stream is quiet.
+
+    Driven at the ASGI layer because TestClient cancels the application task on
+    teardown, which hides whether the handler noticed anything itself. A handler
+    that only wakes when the stream yields would hold the connection -- and with
+    it, server shutdown -- until the next heartbeat.
+    """
+    service = SlowStreamService()
+    app = create_app(service)
+    app.state.graph_service = service
+
+    incoming: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    sent: list[dict[str, object]] = []
+    await incoming.put({"type": "websocket.connect"})
+
+    async def receive() -> dict[str, object]:
+        return await incoming.get()
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "scheme": "ws",
+        "server": ("127.0.0.1", 8000),
+        "client": ("127.0.0.1", 54321),
+        "root_path": "",
+        "path": "/ws/events",
+        "raw_path": b"/ws/events",
+        "query_string": b"",
+        "headers": [(b"host", b"127.0.0.1:8000")],
+        "subprotocols": [],
+        "state": {},
+    }
+    handler = asyncio.create_task(app(scope, receive, send))
+
+    async def wait_for_first_envelope() -> None:
+        while not any(message.get("type") == "websocket.send" for message in sent):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait_for_first_envelope(), timeout=5.0)
+
+    await incoming.put({"type": "websocket.disconnect", "code": 1000})
+    await asyncio.wait_for(handler, timeout=5.0)
+
+    assert service.stream_closed is True
+
+
+def _frontend_dir(tmp_path: Path) -> Path:
+    frontend_dir = tmp_path / "frontend"
+    (frontend_dir / "assets").mkdir(parents=True)
+    (frontend_dir / "index.html").write_text(
+        "<!doctype html><html><body><script src='/assets/index-abc123.js'></script></body></html>",
+        encoding="utf-8",
+    )
+    (frontend_dir / "assets" / "index-abc123.js").write_text("console.log('dashboard');", encoding="utf-8")
+    return frontend_dir
+
+
+def test_app_shell_is_never_cached(tmp_path: Path) -> None:
+    """The shell names content-hashed bundles.
+
+    A cached copy pins the browser to the bundle it was built against, so a
+    rebuilt dashboard keeps serving the old app until someone hard-reloads.
+    """
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        for path in ("/", "/index.html"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "index-abc123.js" in response.text
+            assert response.headers["cache-control"] == ("no-store, no-cache, must-revalidate, max-age=0"), path
+
+
+def test_client_side_routes_serve_the_uncached_shell(tmp_path: Path) -> None:
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        for path in ("/topology", "/deep/client/route"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "index-abc123.js" in response.text, path
+            assert response.headers["cache-control"].startswith("no-store"), path
+
+
+def test_hashed_assets_are_cached_immutably(tmp_path: Path) -> None:
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        response = client.get("/assets/index-abc123.js")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_missing_asset_is_not_masked_by_the_shell(tmp_path: Path) -> None:
+    """A typo'd bundle must 404 rather than quietly return HTML."""
+    app = create_app(FakeGraphService(), frontend_dir=_frontend_dir(tmp_path))
+    with TestClient(app) as client:
+        assert client.get("/assets/index-missing.js").status_code == 404
+        assert client.get("/favicon.ico").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (".", "no-store"),
+        ("", "no-store"),
+        ("index.html", "no-store"),
+        ("assets/index-abc123.js", "public"),
+        # StaticFiles normalizes for the host OS, so Windows sends backslashes.
+        ("assets\\index-abc123.js", "public"),
+        ("sub\\index.html", "no-store"),
+        ("favicon.ico", None),
+    ],
+)
+def test_cache_headers_are_chosen_per_path_separator_agnostically(
+    path: str,
+    expected: str | None,
+) -> None:
+    headers = DashboardStaticFiles.cache_headers_for(path)
+
+    if expected is None:
+        assert headers is None
+    else:
+        assert headers is not None
+        assert headers["Cache-Control"].startswith(expected)

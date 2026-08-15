@@ -3,8 +3,15 @@ import { createPortal } from "react-dom";
 
 import { Panel } from "./Panel";
 import { TraceTimingPanel, type TimingTraceSample } from "./TraceTimingPanel";
+import { buildRelayAliasIndex, classifyComponents } from "./topologyGraph";
 import { buildLeaseColorMap, leaseColorForEndpoint } from "../utils/traceColors";
-import { endpointIdFromStreamAddress } from "../utils/streamAddress";
+import {
+  endpointIdFromStreamAddress,
+  parseTopicAndEndpoint,
+  streamAddressWithoutEndpoint,
+} from "../utils/streamAddress";
+import { metricNumber } from "../utils/nonFiniteNumbers";
+import { isSettingsChannelTopic } from "../utils/settingsChannel";
 import type {
   GraphSnapshotPayload,
   ProfilingTraceControlRequest,
@@ -25,7 +32,11 @@ type ProfilingPanelProps = {
   focusPublisherEndpointId?: string | null;
   focusPublisherTopic?: string | null;
   focusSubscriberEndpointId?: string | null;
+  /** Component address to focus when a whole unit is selected rather than one stream. */
+  focusUnitAddress?: string | null;
   focusActionId?: number;
+  /** Show control-plane INPUT_SETTINGS publishers (hidden by default). */
+  showSettingsChannels?: boolean;
   hideFilters?: boolean;
   defaultTraceMetrics?: string[];
   traceDockHost?: HTMLElement | null;
@@ -54,6 +65,7 @@ type PublisherActivityTone = "idle" | "active" | "backpressure";
 type SubscriberContributor = {
   id: string;
   endpointId: string;
+  displayEndpointId: string;
   topic: string;
   processId: string;
   pid: number;
@@ -66,6 +78,7 @@ type SubscriberContributor = {
 type PublisherRow = {
   id: string;
   endpointId: string;
+  displayEndpointId: string;
   topic: string;
   processId: string;
   pid: number;
@@ -99,7 +112,7 @@ const TRACE_PUBLISHER_METRICS = new Set(["publish_delta_ns"]);
 const TRACE_SUBSCRIBER_METRICS = new Set(["lease_time_ns", "user_span_ns"]);
 
 function toNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return metricNumber(value);
 }
 
 function formatRate(hz: number): string {
@@ -169,8 +182,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function canonicalizeProfilingTopic(
+  topic: string,
+  relayEndpointByInternalTopic: Map<string, string>
+): string {
+  return (
+    relayEndpointByInternalTopic.get(topic)
+    ?? relayEndpointByInternalTopic.get(streamAddressWithoutEndpoint(topic))
+    ?? topic
+  );
+}
+
+function canonicalizeProfilingEndpointId(
+  endpointId: string,
+  relayEndpointByInternalTopic: Map<string, string>
+): string {
+  const { topic, endpointToken } = parseTopicAndEndpoint(endpointId);
+  if (topic.length === 0 || endpointToken.length === 0) {
+    return endpointId;
+  }
+  return `${canonicalizeProfilingTopic(topic, relayEndpointByInternalTopic)}:${endpointToken}`;
+}
+
 function extractTraceSamples(
-  event: ProfilingTraceEnvelope | null
+  event: ProfilingTraceEnvelope | null,
+  relayEndpointByInternalTopic: Map<string, string>
 ): PublisherTraceSample[] {
   if (!event) {
     return [];
@@ -203,11 +239,16 @@ function extractTraceSamples(
       ) {
         continue;
       }
-      out.push({
-        rowId: `${processId}:${endpointId}`,
-        processId,
+      const canonicalEndpointId = canonicalizeProfilingEndpointId(
         endpointId,
-        topic,
+        relayEndpointByInternalTopic
+      );
+      const canonicalTopic = canonicalizeProfilingTopic(topic, relayEndpointByInternalTopic);
+      out.push({
+        rowId: `${processId}:${canonicalEndpointId}`,
+        processId,
+        endpointId: canonicalEndpointId,
+        topic: canonicalTopic,
         timestamp:
           typeof timestamp === "number" && Number.isFinite(timestamp)
             ? timestamp
@@ -229,12 +270,22 @@ function extractTraceSamples(
 function toContributor(
   process: ProcessProfilingSnapshotPayload,
   subscriber: SubscriberProfilingSnapshot,
-  endpointOwnerById: Map<string, string>
+  endpointOwnerById: Map<string, string>,
+  endpointOwnerByTopic: Map<string, string>,
+  relayEndpointByInternalTopic: Map<string, string>
 ): SubscriberContributor {
+  const topic = canonicalizeProfilingTopic(
+    subscriber.topic,
+    relayEndpointByInternalTopic
+  );
   return {
     id: `${process.process_id}:${subscriber.endpoint_id}`,
     endpointId: subscriber.endpoint_id,
-    topic: subscriber.topic,
+    displayEndpointId: canonicalizeProfilingEndpointId(
+      subscriber.endpoint_id,
+      relayEndpointByInternalTopic
+    ),
+    topic,
     processId: process.process_id,
     pid: process.pid,
     host: process.host,
@@ -243,20 +294,34 @@ function toContributor(
       typeof subscriber.channel_kind_last === "string"
         ? subscriber.channel_kind_last
         : "unknown",
-    unitAddress: endpointOwnerById.get(subscriber.endpoint_id) ?? null,
+    unitAddress:
+      endpointOwnerById.get(subscriber.endpoint_id)
+      ?? endpointOwnerByTopic.get(topic)
+      ?? null,
   };
 }
 
 function topicScopeForPublisher(
   topic: string,
-  graphSnapshot: GraphSnapshotPayload | null
+  graphSnapshot: GraphSnapshotPayload | null,
+  relayEndpointByInternalTopic: Map<string, string>
 ): Set<string> {
-  const candidateTopics = new Set<string>([topic]);
-  const routedTopics = graphSnapshot?.graph[topic];
-  if (Array.isArray(routedTopics)) {
+  const normalizedTopic = canonicalizeProfilingTopic(
+    topic,
+    relayEndpointByInternalTopic
+  );
+  const candidateTopics = new Set<string>([normalizedTopic]);
+  const rawTopics = new Set<string>([topic, normalizedTopic]);
+  for (const rawTopic of rawTopics) {
+    const routedTopics = graphSnapshot?.graph[rawTopic];
+    if (!Array.isArray(routedTopics)) {
+      continue;
+    }
     for (const routedTopic of routedTopics) {
       if (typeof routedTopic === "string") {
-        candidateTopics.add(routedTopic);
+        candidateTopics.add(
+          canonicalizeProfilingTopic(routedTopic, relayEndpointByInternalTopic)
+        );
       }
     }
   }
@@ -278,9 +343,14 @@ function sampleTopicMatchesScope(sampleTopic: string, topicScope: Set<string>): 
 function contributorListForPublisher(
   topic: string,
   subscribers: SubscriberContributor[],
-  graphSnapshot: GraphSnapshotPayload | null
+  graphSnapshot: GraphSnapshotPayload | null,
+  relayEndpointByInternalTopic: Map<string, string>
 ): SubscriberContributor[] {
-  const candidateTopics = topicScopeForPublisher(topic, graphSnapshot);
+  const candidateTopics = topicScopeForPublisher(
+    topic,
+    graphSnapshot,
+    relayEndpointByInternalTopic
+  );
 
   return subscribers
     .filter((subscriber) => candidateTopics.has(subscriber.topic))
@@ -302,7 +372,9 @@ function toPublisherRow(
   publisher: PublisherProfilingSnapshot,
   allSubscribers: SubscriberContributor[],
   graphSnapshot: GraphSnapshotPayload | null,
-  endpointOwnerById: Map<string, string>
+  endpointOwnerById: Map<string, string>,
+  endpointOwnerByTopic: Map<string, string>,
+  relayEndpointByInternalTopic: Map<string, string>
 ): PublisherRow {
   const rowId = `${process.process_id}:${publisher.endpoint_id}`;
   const rawNumBuffers = publisher["num_buffers"];
@@ -310,10 +382,18 @@ function toPublisherRow(
     typeof rawNumBuffers === "number" && Number.isFinite(rawNumBuffers)
       ? Math.max(0, Math.trunc(rawNumBuffers))
       : null;
+  const topic = canonicalizeProfilingTopic(
+    publisher.topic,
+    relayEndpointByInternalTopic
+  );
   return {
     id: rowId,
     endpointId: publisher.endpoint_id,
-    topic: publisher.topic,
+    displayEndpointId: canonicalizeProfilingEndpointId(
+      publisher.endpoint_id,
+      relayEndpointByInternalTopic
+    ),
+    topic,
     processId: process.process_id,
     pid: process.pid,
     host: process.host,
@@ -328,11 +408,15 @@ function toPublisherRow(
       numBuffers
     ),
     contributors: contributorListForPublisher(
-      publisher.topic,
+      topic,
       allSubscribers,
-      graphSnapshot
+      graphSnapshot,
+      relayEndpointByInternalTopic
     ),
-    unitAddress: endpointOwnerById.get(publisher.endpoint_id) ?? null,
+    unitAddress:
+      endpointOwnerById.get(publisher.endpoint_id)
+      ?? endpointOwnerByTopic.get(topic)
+      ?? null,
   };
 }
 
@@ -344,7 +428,9 @@ export function ProfilingPanel({
   focusPublisherEndpointId = null,
   focusPublisherTopic = null,
   focusSubscriberEndpointId = null,
+  focusUnitAddress = null,
   focusActionId = 0,
+  showSettingsChannels = false,
   hideFilters = false,
   defaultTraceMetrics = ["publish_delta_ns", "lease_time_ns", "user_span_ns"],
   traceDockHost = null,
@@ -379,41 +465,74 @@ export function ProfilingPanel({
     () => (profilingSnapshot ? Object.values(profilingSnapshot) : []),
     [profilingSnapshot]
   );
+  const topologyComponents = useMemo(
+    () => (graphSnapshot ? classifyComponents(graphSnapshot) : null),
+    [graphSnapshot]
+  );
+  const relayEndpointByInternalTopic = useMemo(() => {
+    if (!topologyComponents) {
+      return new Map<string, string>();
+    }
+    return buildRelayAliasIndex(topologyComponents.collections).endpointByInternalTopic;
+  }, [topologyComponents]);
   const endpointOwnerById = useMemo(() => {
     const index = new Map<string, string>();
-    if (!graphSnapshot) {
+    if (!topologyComponents) {
       return index;
     }
-    for (const session of Object.values(graphSnapshot.sessions)) {
-      const metadata = isRecord(session.metadata) ? session.metadata : null;
-      const components =
-        metadata && isRecord(metadata.components) ? metadata.components : null;
-      if (!components) {
-        continue;
+    const registerOwner = (componentAddress: string, streamAddress: string) => {
+      const endpointId = endpointIdFromStreamAddress(streamAddress);
+      if (endpointId && !index.has(endpointId)) {
+        index.set(endpointId, componentAddress);
       }
-      for (const [componentAddress, rawComponent] of Object.entries(components)) {
-        if (!isRecord(rawComponent) || !isRecord(rawComponent.streams)) {
-          continue;
-        }
-        for (const stream of Object.values(rawComponent.streams)) {
-          if (!isRecord(stream) || typeof stream.address !== "string") {
-            continue;
-          }
-          const endpointId = endpointIdFromStreamAddress(stream.address);
-          if (endpointId && !index.has(endpointId)) {
-            index.set(endpointId, componentAddress);
-          }
-        }
+    };
+    for (const unit of topologyComponents.units.values()) {
+      for (const stream of unit.streams) {
+        registerOwner(unit.address, stream.address);
+      }
+    }
+    for (const collection of topologyComponents.collections.values()) {
+      for (const stream of collection.streams) {
+        registerOwner(collection.address, stream.address);
       }
     }
     return index;
-  }, [graphSnapshot]);
+  }, [topologyComponents]);
+  const endpointOwnerByTopic = useMemo(() => {
+    const index = new Map<string, string>();
+    if (!topologyComponents) {
+      return index;
+    }
+    const registerOwner = (componentAddress: string, streamAddress: string) => {
+      index.set(streamAddress, componentAddress);
+      index.set(streamAddressWithoutEndpoint(streamAddress), componentAddress);
+    };
+    for (const unit of topologyComponents.units.values()) {
+      for (const stream of unit.streams) {
+        registerOwner(unit.address, stream.address);
+      }
+    }
+    for (const collection of topologyComponents.collections.values()) {
+      for (const stream of collection.streams) {
+        registerOwner(collection.address, stream.address);
+      }
+    }
+    return index;
+  }, [topologyComponents]);
 
   const publisherRows = useMemo(() => {
     const allSubscribers: SubscriberContributor[] = [];
     for (const process of processRows) {
       for (const subscriber of Object.values(process.subscribers)) {
-        allSubscribers.push(toContributor(process, subscriber, endpointOwnerById));
+        allSubscribers.push(
+          toContributor(
+            process,
+            subscriber,
+            endpointOwnerById,
+            endpointOwnerByTopic,
+            relayEndpointByInternalTopic
+          )
+        );
       }
     }
 
@@ -426,13 +545,19 @@ export function ProfilingPanel({
             publisher,
             allSubscribers,
             graphSnapshot,
-            endpointOwnerById
+            endpointOwnerById,
+            endpointOwnerByTopic,
+            relayEndpointByInternalTopic
           )
         );
       }
     }
 
-    return rows.sort((a, b) => {
+    const visibleRows = showSettingsChannels
+      ? rows
+      : rows.filter((row) => !isSettingsChannelTopic(row.topic));
+
+    return visibleRows.sort((a, b) => {
       const byTopic = a.topic.localeCompare(b.topic);
       if (byTopic !== 0) {
         return byTopic;
@@ -443,7 +568,14 @@ export function ProfilingPanel({
       }
       return a.endpointId.localeCompare(b.endpointId);
     });
-  }, [endpointOwnerById, graphSnapshot, processRows]);
+  }, [
+    endpointOwnerById,
+    endpointOwnerByTopic,
+    graphSnapshot,
+    processRows,
+    relayEndpointByInternalTopic,
+    showSettingsChannels,
+  ]);
 
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -468,52 +600,28 @@ export function ProfilingPanel({
     if (focusActionId === lastHandledFocusActionIdRef.current) {
       return;
     }
-    if (focusPublisherEndpointId) {
-      const matchedIds = publisherRows
-        .filter((row) => {
-          if (row.endpointId === focusPublisherEndpointId) {
-            return true;
-          }
-          if (!focusPublisherTopic) {
-            return false;
-          }
-          return row.topic === focusPublisherTopic;
-        })
-        .map((row) => row.id);
+    // Expand the matched rows and scroll the first one into view. Returns
+    // without marking the request handled when nothing matched, so a focus
+    // request can still land once the rows arrive in a later snapshot.
+    const revealRows = (
+      matchedIds: string[],
+      contributorEndpointId: string | null
+    ): void => {
       if (matchedIds.length === 0) {
         return;
       }
       lastHandledFocusActionIdRef.current = focusActionId;
       setSearchText("");
-      setExpandedIds(matchedIds);
-      setExpandedContributorEndpointByRowId({});
-      window.requestAnimationFrame(() => {
-        rowRefs.current[matchedIds[0]]?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
-      });
-      return;
-    }
-    if (focusSubscriberEndpointId) {
-      const matchedIds = publisherRows
-        .filter((row) =>
-          row.contributors.some(
-            (contributor) =>
-              contributor.endpointId === focusSubscriberEndpointId
-          )
-        )
-        .map((row) => row.id);
-      if (matchedIds.length === 0) {
-        return;
-      }
-      lastHandledFocusActionIdRef.current = focusActionId;
-      setSearchText("");
-      setExpandedIds(matchedIds);
+      // A row that is capturing stays expanded: collapsing it would hide the
+      // stop control while the capture kept running.
+      setExpandedIds([...new Set([...matchedIds, ...activeTraceRowIds])]);
       setExpandedContributorEndpointByRowId((previous) => {
+        if (contributorEndpointId === null) {
+          return {};
+        }
         const next: Record<string, string | null> = { ...previous };
         for (const rowId of matchedIds) {
-          next[rowId] = focusSubscriberEndpointId;
+          next[rowId] = contributorEndpointId;
         }
         return next;
       });
@@ -523,21 +631,66 @@ export function ProfilingPanel({
           behavior: "smooth",
         });
       });
+    };
+
+    if (focusPublisherEndpointId) {
+      revealRows(
+        publisherRows
+          .filter((row) => {
+            if (row.endpointId === focusPublisherEndpointId) {
+              return true;
+            }
+            if (!focusPublisherTopic) {
+              return false;
+            }
+            return row.topic === focusPublisherTopic;
+          })
+          .map((row) => row.id),
+        null
+      );
       return;
+    }
+    if (focusSubscriberEndpointId) {
+      revealRows(
+        publisherRows
+          .filter((row) =>
+            row.contributors.some(
+              (contributor) =>
+                contributor.endpointId === focusSubscriberEndpointId
+            )
+          )
+          .map((row) => row.id),
+        focusSubscriberEndpointId
+      );
+      return;
+    }
+    if (focusUnitAddress) {
+      // A whole component is selected, so reveal every topic it publishes.
+      revealRows(
+        publisherRows
+          .filter((row) => row.unitAddress === focusUnitAddress)
+          .map((row) => row.id),
+        null
+      );
     }
   }, [
     focusPublisherEndpointId,
     focusPublisherTopic,
     focusSubscriberEndpointId,
+    focusUnitAddress,
     focusActionId,
     publisherRows,
+    activeTraceRowIds,
   ]);
 
   useEffect(() => {
     if (!latestTraceEvent || activeTraceRowIds.length === 0) {
       return;
     }
-    const extracted = extractTraceSamples(latestTraceEvent);
+    const extracted = extractTraceSamples(
+      latestTraceEvent,
+      relayEndpointByInternalTopic
+    );
     if (extracted.length === 0) {
       return;
     }
@@ -547,7 +700,11 @@ export function ProfilingPanel({
       .filter((row): row is PublisherRow => row !== undefined)
       .map((row) => ({
         row,
-        topicScope: topicScopeForPublisher(row.topic, graphSnapshot),
+        topicScope: topicScopeForPublisher(
+          row.topic,
+          graphSnapshot,
+          relayEndpointByInternalTopic
+        ),
       }));
     const topicScopeByRowId = new Map(
       activeRowsWithTopicScope.map((entry) => [entry.row.id, entry.topicScope])
@@ -594,7 +751,13 @@ export function ProfilingPanel({
       }
       return changed ? next : previous;
     });
-  }, [activeTraceRowIds, graphSnapshot, latestTraceEvent, rowById]);
+  }, [
+    activeTraceRowIds,
+    graphSnapshot,
+    latestTraceEvent,
+    relayEndpointByInternalTopic,
+    rowById,
+  ]);
 
   const applyTraceControl = async (
     row: PublisherRow,
@@ -649,8 +812,8 @@ export function ProfilingPanel({
         process_id: row.processId,
         enabled: nextOpen,
         publisher_endpoint_id: nextOpen ? row.endpointId : null,
-        publisher_topic: nextOpen ? row.topic : null,
-        subscriber_topic: null,
+        publisher_topic: null,
+        subscriber_topic: nextOpen ? row.topic : null,
         metrics: nextOpen ? defaultTraceMetrics : null,
         sample_mod: 1,
         ttl_seconds: null,
@@ -717,7 +880,13 @@ export function ProfilingPanel({
       : TRACE_DEFAULT_WINDOW_SECONDS
   );
   const activeTraceTopicScope = activeTraceRow
-    ? Array.from(topicScopeForPublisher(activeTraceRow.topic, graphSnapshot))
+    ? Array.from(
+      topicScopeForPublisher(
+        activeTraceRow.topic,
+        graphSnapshot,
+        relayEndpointByInternalTopic
+      )
+    )
     : [];
   const activeTraceSubscriberEndpointIds = activeTraceSamples
     .filter(
@@ -760,6 +929,7 @@ export function ProfilingPanel({
       timeout: 2.0,
     });
   }, [activeTraceRowIds, rowById, setProfilingTraceControl, traceCloseSignal]);
+
 
   useEffect(() => {
     if (!onTraceDockStateChange) {
@@ -923,8 +1093,8 @@ export function ProfilingPanel({
                     <div className="publisher-detail-line">
                       <div className="publisher-endpoint">
                         <span>Endpoint</span>
-                        <code className="mono" title={row.endpointId}>
-                          {row.endpointId}
+                        <code className="mono" title={row.displayEndpointId}>
+                          {row.displayEndpointId}
                         </code>
                       </div>
                     </div>
@@ -1044,8 +1214,11 @@ export function ProfilingPanel({
                                       <div className="publisher-detail-line">
                                         <div className="publisher-endpoint">
                                           <span>Endpoint</span>
-                                          <code className="mono" title={contributor.endpointId}>
-                                            {contributor.endpointId}
+                                          <code
+                                            className="mono"
+                                            title={contributor.displayEndpointId}
+                                          >
+                                            {contributor.displayEndpointId}
                                           </code>
                                         </div>
                                       </div>

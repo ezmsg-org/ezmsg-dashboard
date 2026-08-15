@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from ezmsg.core.netprotocol import Address
 
 from ezmsg.dashboard.backend.services.graph_context_service import (
     GraphContextLifecycleService,
     SettingsPatchError,
 )
-from ezmsg.core.netprotocol import Address
 
 
 class FakeContext:
@@ -21,31 +22,35 @@ class FakeContext:
         self._snapshot = SimpleNamespace(
             graph={},
             processes={
-                UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(
-                    units=["unit.patchable"]
-                ),
-                UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(
-                    units=["unit.remote"]
-                )
+                UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(units=["unit.patchable"]),
+                UUID("00000000-0000-0000-0000-000000000456"): SimpleNamespace(units=["unit.remote"]),
             },
             sessions={
                 "session-a": SimpleNamespace(
                     metadata=SimpleNamespace(
                         components={
-                            "unit.read_only": SimpleNamespace(
-                                dynamic_settings=SimpleNamespace(enabled=False)
-                            ),
-                            "unit.patchable": SimpleNamespace(
-                                dynamic_settings=SimpleNamespace(enabled=True)
-                            ),
+                            "unit.read_only": SimpleNamespace(dynamic_settings=SimpleNamespace(enabled=False)),
+                            "unit.patchable": SimpleNamespace(dynamic_settings=SimpleNamespace(enabled=True)),
                         }
                     )
                 )
-            }
+            },
         )
+
+        self._settings_snapshot = {
+            "unit.patchable": SimpleNamespace(
+                serialized=None,
+                repr_value={"gain": 1.0, "label": "alpha", "filter": {"cutoff": 30.0}},
+                structured_value={"gain": 1.0, "label": "alpha", "filter": {"cutoff": 30.0}},
+                settings_schema=None,
+            )
+        }
 
     async def snapshot(self):
         return self._snapshot
+
+    async def settings_snapshot(self):
+        return self._settings_snapshot
 
     async def profiling_snapshot_all(self, *, timeout_per_process: float):
         _ = timeout_per_process
@@ -201,6 +206,114 @@ async def test_update_setting_field_calls_graphcontext_for_patchable_component()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [("Infinity", math.inf), ("-Infinity", -math.inf)],
+)
+async def test_update_setting_field_decodes_non_finite_token_for_numeric_field(
+    token: str,
+    expected: float,
+) -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    await service.update_setting_field(
+        component_address="unit.patchable",
+        field_path="gain",
+        value=token,
+        timeout=1.0,
+    )
+
+    assert fake_context.update_calls[0]["value"] == expected
+
+
+@pytest.mark.asyncio
+async def test_update_setting_field_decodes_nan_token_for_numeric_field() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    await service.update_setting_field(
+        component_address="unit.patchable",
+        field_path="gain",
+        value="NaN",
+        timeout=1.0,
+    )
+
+    assert math.isnan(fake_context.update_calls[0]["value"])
+
+
+@pytest.mark.asyncio
+async def test_update_setting_field_decodes_non_finite_token_for_nested_field() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    await service.update_setting_field(
+        component_address="unit.patchable",
+        field_path="filter.cutoff",
+        value="Infinity",
+        timeout=1.0,
+    )
+
+    assert fake_context.update_calls[0]["value"] == math.inf
+
+
+@pytest.mark.asyncio
+async def test_update_setting_field_keeps_token_shaped_string_for_text_field() -> None:
+    """A str field set to the literal text "Infinity" must stay a string."""
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    with pytest.raises(SettingsPatchError, match="does not currently hold a number"):
+        await service.update_setting_field(
+            component_address="unit.patchable",
+            field_path="label",
+            value="Infinity",
+            timeout=1.0,
+        )
+
+    assert fake_context.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_setting_field_rejects_non_finite_token_for_unknown_field() -> None:
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    service._context = fake_context  # controlled test context
+
+    with pytest.raises(SettingsPatchError, match="does not currently hold a number"):
+        await service.update_setting_field(
+            component_address="unit.patchable",
+            field_path="not_a_field",
+            value="NaN",
+            timeout=1.0,
+        )
+
+    assert fake_context.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_setting_field_skips_settings_lookup_for_ordinary_values() -> None:
+    """The extra snapshot round-trip is only paid when a token is being applied."""
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    fake_context.settings_snapshot = None  # would raise if called
+    service._context = fake_context  # controlled test context
+
+    await service.update_setting_field(
+        component_address="unit.patchable",
+        field_path="gain",
+        value=2.5,
+        timeout=1.0,
+    )
+
+    assert fake_context.update_calls[0]["value"] == 2.5
+
+
+@pytest.mark.asyncio
 async def test_set_profiling_trace_control_routes_to_process_unit() -> None:
     service = GraphContextLifecycleService()
     fake_context = FakeContext()
@@ -302,9 +415,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
 
     assert payload["process_id"] == "00000000-0000-0000-0000-000000000123"
     assert set(payload["unit_addresses"]) == {"unit.patchable", "unit.remote"}
-    calls_by_unit = {
-        call["unit_address"]: call for call in fake_context.trace_control_calls
-    }
+    calls_by_unit = {call["unit_address"]: call for call in fake_context.trace_control_calls}
     assert set(calls_by_unit.keys()) == {"unit.patchable", "unit.remote"}
     assert calls_by_unit["unit.patchable"] == {
         "unit_address": "unit.patchable",
