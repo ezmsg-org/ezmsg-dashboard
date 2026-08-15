@@ -5,6 +5,7 @@ import {
   encodeNumericValue,
   formatNumericValue,
   isNonFiniteToken,
+  metricNumber,
   parseNumericInput,
 } from "./nonFiniteNumbers";
 
@@ -73,5 +74,28 @@ describe("non-finite number tokens", () => {
     expect(parseNumericInput("   ")).toBeNull();
     expect(parseNumericInput("12abc")).toBeNull();
     expect(parseNumericInput("alpha")).toBeNull();
+  });
+});
+
+describe("snapshot metrics", () => {
+  it("keeps non-finite metrics distinguishable from zero", () => {
+    expect(metricNumber(12.5)).toBe(12.5);
+    expect(metricNumber(0)).toBe(0);
+    expect(metricNumber("Infinity")).toBe(Number.POSITIVE_INFINITY);
+    expect(metricNumber("-Infinity")).toBe(Number.NEGATIVE_INFINITY);
+    expect(metricNumber("NaN")).toBeNaN();
+  });
+
+  it("falls back to zero for values that are not numbers at all", () => {
+    expect(metricNumber("alpha")).toBe(0);
+    expect(metricNumber(null)).toBe(0);
+    expect(metricNumber(undefined)).toBe(0);
+    expect(metricNumber({})).toBe(0);
+  });
+
+  it("formats a non-finite rate readably", () => {
+    // What ProfilingPanel's formatRate does with the decoded value.
+    expect(`${metricNumber("Infinity").toFixed(1)} Hz`).toBe("Infinity Hz");
+    expect(`${metricNumber("NaN").toFixed(1)} Hz`).toBe("NaN Hz");
   });
 });

@@ -69,3 +69,14 @@ export function parseNumericInput(raw: string): number | null {
   const numeric = Number(trimmed);
   return Number.isNaN(numeric) ? null : numeric;
 }
+
+/**
+ * Read a snapshot metric that may have arrived as a token.
+ *
+ * Non-finite values stay non-finite rather than flattening to zero: a rate of
+ * `NaN` shown as `0.0 Hz` is indistinguishable from an idle publisher, which is
+ * exactly the confusion that makes an empty profiling trace look broken.
+ */
+export function metricNumber(value: unknown): number {
+  return decodeNumericValue(value) ?? 0;
+}

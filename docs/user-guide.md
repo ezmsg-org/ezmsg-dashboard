@@ -125,7 +125,7 @@ The top-right dock in the topology viewport contains:
 
 - **Layout toggle**: left-to-right vs top-to-bottom
 - **Theme toggle**: light vs dark
-- **Global settings**: snapshot poll frequency, theme, default layout, edge connector type, default trace metrics, inspector width, legend/minimap visibility, and auto-fit/auto-focus behaviors
+- **Global settings**: snapshot poll frequency, theme, default layout, edge connector type, default trace metrics, inspector width, legend/minimap visibility, auto-fit/auto-focus behaviors, and whether the Publishers pane shows settings channels
 
 ## Good Troubleshooting Patterns
 
