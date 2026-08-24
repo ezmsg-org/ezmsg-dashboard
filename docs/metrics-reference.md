@@ -46,7 +46,10 @@ The host associated with the process that owns the publisher.
 
 ## Subscriber Snapshot Metrics
 
-Subscriber rows are grouped under a publisher by topic scope.
+Subscriber rows are grouped under a publisher by topic scope. The scope follows
+the publisher's topic through every forward in the graph, so a subscriber
+several collection boundaries away still appears under the publisher that feeds
+it.
 
 ### Msgs
 
