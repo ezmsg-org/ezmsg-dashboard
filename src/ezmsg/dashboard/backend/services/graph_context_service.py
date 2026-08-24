@@ -339,11 +339,26 @@ class GraphContextLifecycleService:
             )
             self._active_trace_route_units.clear()
 
+        subscriber_metrics = self._subscriber_trace_metrics(metrics)
+        subscriber_seed_topic = subscriber_topic or publisher_topic
+        candidate_topic_scope: set[str] = set()
+        if subscriber_seed_topic and len(subscriber_metrics) > 0:
+            candidate_topic_scope = self._topic_scope_for_seed(
+                graph_snapshot=graph_snapshot,
+                seed_topic=subscriber_seed_topic,
+            )
+
         publisher_control = ProfilingTraceControl(
             enabled=True,
             sample_mod=normalized_sample_mod,
             publisher_topics=[publisher_topic] if publisher_topic else None,
-            subscriber_topics=[subscriber_topic] if subscriber_topic else None,
+            # The publisher's own process owns subscribers too -- in a
+            # single-process graph it owns all of them -- so it needs the same
+            # downstream scope the remote route units get. Scoping it to the
+            # seed topic alone matched no subscriber at all, because a
+            # subscriber registers under its own input topic, never under the
+            # topic of the publisher feeding it.
+            subscriber_topics=sorted(candidate_topic_scope) if candidate_topic_scope else None,
             publisher_endpoint_ids=[publisher_endpoint_id] if publisher_endpoint_id else None,
             metrics=metrics if metrics else None,
             ttl_seconds=ttl_seconds,
@@ -351,13 +366,7 @@ class GraphContextLifecycleService:
 
         controls_by_route_unit: dict[str, ProfilingTraceControl] = {route_unit: publisher_control}
 
-        subscriber_metrics = self._subscriber_trace_metrics(metrics)
-        subscriber_seed_topic = subscriber_topic or publisher_topic
-        if subscriber_seed_topic and len(subscriber_metrics) > 0:
-            candidate_topic_scope = self._topic_scope_for_seed(
-                graph_snapshot=graph_snapshot,
-                seed_topic=subscriber_seed_topic,
-            )
+        if len(candidate_topic_scope) > 0:
             profiling_snapshot = await context.profiling_snapshot_all(timeout_per_process=timeout)
             route_units_for_subscribers = self._route_units_with_subscribers_for_scope(
                 graph_snapshot=graph_snapshot,
@@ -405,6 +414,10 @@ class GraphContextLifecycleService:
             },
             "subscriber_scope": {
                 "seed_topic": subscriber_seed_topic,
+                # The resolved forward chain. Without it a caller cannot tell an
+                # empty `route_units` (every subscriber lives in the publisher's
+                # own process) apart from a scope that resolved to nothing.
+                "topic_scope": sorted(candidate_topic_scope),
                 "route_units": sorted(unit for unit in controls_by_route_unit.keys() if unit != route_unit),
                 "metrics": subscriber_metrics,
             },
@@ -449,11 +462,27 @@ class GraphContextLifecycleService:
         graph_snapshot: GraphSnapshot,
         seed_topic: str,
     ) -> set[str]:
-        out: set[str] = {seed_topic}
-        routed_topics = graph_snapshot.graph.get(seed_topic, [])
-        for routed_topic in routed_topics:
-            if isinstance(routed_topic, str):
-                out.add(routed_topic)
+        """Every topic reachable from ``seed_topic`` by following routes.
+
+        A publisher nested in collections rarely feeds a subscriber directly:
+        each collection boundary forwards the topic to an alias, and only the
+        topic at the end of that chain is one a subscriber is registered under.
+        Walking a single hop finds the first alias and stops, which is why a
+        publisher two or more boundaries away from its subscriber reported no
+        subscriber profiling data at all. Forwards terminate at subscriber
+        input topics, so the closure stays confined to this publisher's
+        downstream; the visited set keeps a cyclic graph from spinning.
+        """
+        out: set[str] = set()
+        pending: list[str] = [seed_topic]
+        while pending:
+            topic = pending.pop()
+            if topic in out:
+                continue
+            out.add(topic)
+            for routed_topic in graph_snapshot.graph.get(topic, []):
+                if isinstance(routed_topic, str) and routed_topic not in out:
+                    pending.append(routed_topic)
         return out
 
     def _route_units_with_subscribers_for_scope(

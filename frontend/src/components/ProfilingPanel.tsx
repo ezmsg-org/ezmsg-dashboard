@@ -301,7 +301,7 @@ function toContributor(
   };
 }
 
-function topicScopeForPublisher(
+export function topicScopeForPublisher(
   topic: string,
   graphSnapshot: GraphSnapshotPayload | null,
   relayEndpointByInternalTopic: Map<string, string>
@@ -310,18 +310,31 @@ function topicScopeForPublisher(
     topic,
     relayEndpointByInternalTopic
   );
+  // Each collection boundary forwards the topic to an alias, and a subscriber
+  // is registered only under the topic at the end of that chain. Following one
+  // hop finds the first alias and stops, so a publisher two or more boundaries
+  // away from its subscriber looked like it had none. Forwards terminate at
+  // subscriber input topics, which keeps the walk inside this publisher's
+  // downstream; `visited` keeps a cyclic graph from spinning.
   const candidateTopics = new Set<string>([normalizedTopic]);
-  const rawTopics = new Set<string>([topic, normalizedTopic]);
-  for (const rawTopic of rawTopics) {
+  const visited = new Set<string>();
+  const pending: string[] = [topic, normalizedTopic];
+  while (pending.length > 0) {
+    const rawTopic = pending.pop() as string;
+    if (visited.has(rawTopic)) {
+      continue;
+    }
+    visited.add(rawTopic);
+    candidateTopics.add(
+      canonicalizeProfilingTopic(rawTopic, relayEndpointByInternalTopic)
+    );
     const routedTopics = graphSnapshot?.graph[rawTopic];
     if (!Array.isArray(routedTopics)) {
       continue;
     }
     for (const routedTopic of routedTopics) {
-      if (typeof routedTopic === "string") {
-        candidateTopics.add(
-          canonicalizeProfilingTopic(routedTopic, relayEndpointByInternalTopic)
-        );
+      if (typeof routedTopic === "string" && !visited.has(routedTopic)) {
+        pending.push(routedTopic);
       }
     }
   }
