@@ -350,7 +350,8 @@ async def test_set_profiling_trace_control_routes_to_process_unit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filter() -> None:
+async def test_set_profiling_trace_control_without_seed_topic_has_no_filter() -> None:
+    """No topic to seed the walk from means every subscriber stays in scope."""
     service = GraphContextLifecycleService()
     fake_context = FakeContext()
     service._context = fake_context  # controlled test context
@@ -359,7 +360,7 @@ async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filte
         process_id="00000000-0000-0000-0000-000000000123",
         enabled=True,
         publisher_endpoint_id="TOPIC:pub",
-        publisher_topic="TOPIC",
+        publisher_topic=None,
         subscriber_topic=None,
         metrics=["publish_delta_ns", "lease_time_ns"],
         sample_mod=1,
@@ -373,7 +374,7 @@ async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filte
             "unit_address": "unit.patchable",
             "enabled": True,
             "publisher_endpoint_ids": ["TOPIC:pub"],
-            "publisher_topics": ["TOPIC"],
+            "publisher_topics": [],
             "subscriber_topics": [],
             "metrics": ["publish_delta_ns", "lease_time_ns"],
             "sample_mod": 1,
@@ -381,6 +382,59 @@ async def test_set_profiling_trace_control_without_subscriber_topic_has_no_filte
             "timeout": 1.25,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_set_profiling_trace_control_scopes_publisher_process_to_forwarded_topics() -> None:
+    """The publisher's own process is scoped to the whole forward chain.
+
+    Nested collections forward a topic once per boundary, and the subscriber is
+    registered only under the topic at the end of the chain. Scoping the
+    publisher's own process to the seed topic left every in-process subscriber
+    untraced, which is every subscriber at all in a single-process graph.
+    """
+    service = GraphContextLifecycleService()
+    fake_context = FakeContext()
+    fake_context._snapshot.graph = {
+        "HUB/SDA/OUTPUT_SIGNAL": ["HUB/UCDF/INPUT_SIGNAL"],
+        "HUB/UCDF/INPUT_SIGNAL": ["HUB/UCDF/BUTTER0/INPUT_SIGNAL"],
+        "HUB/UCDF/BUTTER0/INPUT_SIGNAL": [],
+    }
+    fake_context._profiling_snapshot = {
+        UUID("00000000-0000-0000-0000-000000000123"): SimpleNamespace(
+            subscribers={
+                "sub.local": SimpleNamespace(topic="HUB/UCDF/BUTTER0/INPUT_SIGNAL"),
+            }
+        ),
+    }
+    service._context = fake_context  # controlled test context
+
+    payload = await service.set_profiling_trace_control(
+        process_id="00000000-0000-0000-0000-000000000123",
+        enabled=True,
+        publisher_endpoint_id="HUB/SDA/OUTPUT_SIGNAL:pub",
+        publisher_topic=None,
+        subscriber_topic="HUB/SDA/OUTPUT_SIGNAL",
+        metrics=["publish_delta_ns", "lease_time_ns", "user_span_ns"],
+        sample_mod=1,
+        ttl_seconds=None,
+        timeout=1.25,
+    )
+
+    forwarded_topics = [
+        "HUB/SDA/OUTPUT_SIGNAL",
+        "HUB/UCDF/BUTTER0/INPUT_SIGNAL",
+        "HUB/UCDF/INPUT_SIGNAL",
+    ]
+    assert payload["subscriber_scope"]["topic_scope"] == forwarded_topics
+    # The subscriber shares the publisher's process, so no extra route unit is
+    # needed -- the publisher's own control has to carry the scope.
+    assert payload["subscriber_scope"]["route_units"] == []
+    assert len(fake_context.trace_control_calls) == 1
+    call = fake_context.trace_control_calls[0]
+    assert call["unit_address"] == "unit.patchable"
+    assert call["subscriber_topics"] == forwarded_topics
+    assert call["metrics"] == ["publish_delta_ns", "lease_time_ns", "user_span_ns"]
 
 
 @pytest.mark.asyncio
@@ -422,7 +476,7 @@ async def test_set_profiling_trace_control_fans_out_subscriber_metrics_across_pr
         "enabled": True,
         "publisher_endpoint_ids": ["TOPIC:pub"],
         "publisher_topics": ["TOPIC"],
-        "subscriber_topics": [],
+        "subscriber_topics": ["TOPIC"],
         "metrics": [
             "publish_delta_ns",
             "lease_time_ns",
