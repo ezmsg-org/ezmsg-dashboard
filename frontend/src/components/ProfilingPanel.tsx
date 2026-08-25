@@ -57,6 +57,21 @@ type ProfilingPanelProps = {
     endpointId: string;
     topic: string;
   }) => void;
+  /** Opens the live data viewer for a publisher's topic. */
+  onVisualizeStream?: (selection: {
+    unitAddress: string | null;
+    endpointId: string;
+    topic: string;
+  }) => void;
+  /** Topic currently open in the stream viewer, if any. */
+  visualizedTopic?: string | null;
+  /**
+   * Why the data viewer is unavailable, or null when it works. Rendered as the
+   * button's tooltip rather than hiding the control: a missing optional extra
+   * is worth telling someone about, and a control that silently vanishes is
+   * indistinguishable from one that was never there.
+   */
+  streamTapDisabledReason?: string | null;
   darkMode?: boolean;
 };
 
@@ -451,6 +466,9 @@ export function ProfilingPanel({
   traceCloseSignal = 0,
   onPublisherSelect,
   onSubscriberSelect,
+  onVisualizeStream,
+  visualizedTopic = null,
+  streamTapDisabledReason = null,
   darkMode = false,
 }: ProfilingPanelProps) {
   const [searchText, setSearchText] = useState("");
@@ -1113,22 +1131,49 @@ export function ProfilingPanel({
                     </div>
 
                     <div className="panel-section">
-                      <button
-                        type="button"
-                        className={`publisher-trace-button ${
-                          traceOpen ? "is-stop" : "is-start"
-                        }`}
-                        onClick={() => toggleTraceCapture(row, !traceOpen)}
-                        disabled={traceBusy}
-                        aria-pressed={traceOpen}
-                      >
-                        <span aria-hidden="true" className="publisher-trace-button__icon">
-                          {traceOpen ? "■" : "▶"}
-                        </span>
-                        <span>
-                          {traceBusy ? "Applying..." : traceOpen ? "Stop Profiling Trace" : "Start Profiling Trace"}
-                        </span>
-                      </button>
+                      <div className="publisher-action-row">
+                        <button
+                          type="button"
+                          className={`publisher-trace-button ${
+                            traceOpen ? "is-stop" : "is-start"
+                          }`}
+                          onClick={() => toggleTraceCapture(row, !traceOpen)}
+                          disabled={traceBusy}
+                          aria-pressed={traceOpen}
+                        >
+                          <span aria-hidden="true" className="publisher-trace-button__icon">
+                            {traceOpen ? "■" : "▶"}
+                          </span>
+                          <span>
+                            {traceBusy ? "Applying..." : traceOpen ? "Stop Profiling Trace" : "Start Profiling Trace"}
+                          </span>
+                        </button>
+                        {onVisualizeStream ? (
+                          <button
+                            type="button"
+                            className={`publisher-data-button ${
+                              visualizedTopic === row.topic ? "is-active" : ""
+                            }`.trim()}
+                            onClick={() =>
+                              onVisualizeStream({
+                                unitAddress: row.unitAddress,
+                                endpointId: row.endpointId,
+                                topic: row.topic,
+                              })
+                            }
+                            disabled={Boolean(streamTapDisabledReason)}
+                            aria-pressed={visualizedTopic === row.topic}
+                            title={streamTapDisabledReason ?? "Watch this publisher's data live"}
+                          >
+                            <span aria-hidden="true" className="publisher-data-button__icon">
+                              ∿
+                            </span>
+                            <span>
+                              {visualizedTopic === row.topic ? "Close Data Viewer" : "View Data"}
+                            </span>
+                          </button>
+                        ) : null}
+                      </div>
                       <div className="subscriber-section-header">
                         <h3>Subscribers</h3>
                       </div>

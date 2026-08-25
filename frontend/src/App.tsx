@@ -10,6 +10,7 @@ import {
 
 import { ProfilingPanel } from "./components/ProfilingPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { StreamPanel } from "./components/StreamPanel";
 import {
   TopologyPanel,
   type TopologyEntitySelection,
@@ -117,6 +118,18 @@ type TraceDockState = {
   topic: string;
   endpointId: string;
   status: "capturing" | "stopped" | "applying";
+} | null;
+
+/**
+ * The publisher whose data is being watched.
+ *
+ * One at a time, deliberately: each viewer holds an open socket and a decimator
+ * on the backend, and stacking several into the dock leaves none of them tall
+ * enough to read.
+ */
+type StreamDockState = {
+  topic: string;
+  unitAddress: string | null;
 } | null;
 type ActiveInspectorState = Exclude<InspectorState, null>;
 type ComponentInspectorState =
@@ -311,6 +324,7 @@ export function App() {
   const [settingsSectionCollapsed, setSettingsSectionCollapsed] = useState(true);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [traceDockState, setTraceDockState] = useState<TraceDockState>(null);
+  const [streamDockState, setStreamDockState] = useState<StreamDockState>(null);
   const [traceCloseSignal, setTraceCloseSignal] = useState(0);
   const [traceDockHost, setTraceDockHost] = useState<HTMLDivElement | null>(null);
   const [topologyFocusSelection, setTopologyFocusSelection] =
@@ -506,6 +520,45 @@ export function App() {
     setTraceDockState(null);
   };
 
+  const streamTapAvailability = health?.stream_tap ?? null;
+  const streamTapDisabledReason = !streamTapAvailability
+    ? "This dashboard backend does not support live data streaming."
+    : streamTapAvailability.plotting
+      ? null
+      : (streamTapAvailability.reason
+        ?? "Live data plotting is unavailable on this backend.");
+
+  // What profiling says the streamed publisher is sending. The stream panel
+  // uses it to tell a quiet topic apart from one whose messages the dashboard
+  // cannot decode — the two are otherwise indistinguishable from the tap alone.
+  const streamPublisherRateHz = useMemo(() => {
+    const streamedTopic = streamDockState?.topic;
+    if (!streamedTopic) {
+      return null;
+    }
+    for (const processSnapshot of Object.values(snapshot?.profiling ?? {})) {
+      for (const publisher of Object.values(processSnapshot.publishers ?? {})) {
+        if (publisher.topic === streamedTopic) {
+          return publisher.publish_rate_hz_window;
+        }
+      }
+    }
+    return null;
+  }, [snapshot?.profiling, streamDockState?.topic]);
+
+  const handleVisualizeStream = (selection: {
+    unitAddress: string | null;
+    topic: string;
+  }) => {
+    // The same button closes the viewer it opened, so the control reads as a
+    // toggle rather than as an action with no visible inverse.
+    setStreamDockState((previous) =>
+      previous?.topic === selection.topic
+        ? null
+        : { topic: selection.topic, unitAddress: selection.unitAddress }
+    );
+  };
+
   const togglePublishersSection = () => {
     if (publishersSectionCollapsed) {
       setPublishersSectionCollapsed(false);
@@ -605,6 +658,9 @@ export function App() {
                   traceDockHost={traceDockHost}
                   onTraceDockStateChange={setTraceDockState}
                   traceCloseSignal={traceCloseSignal}
+                  onVisualizeStream={handleVisualizeStream}
+                  visualizedTopic={streamDockState?.topic ?? null}
+                  streamTapDisabledReason={streamTapDisabledReason}
                   onPublisherSelect={(selection) => {
                     setInspector({
                       kind: "publisher",
@@ -996,6 +1052,21 @@ export function App() {
             </div>
           ) : null}
         </div>
+
+        {streamDockState ? (
+          <StreamPanel
+            // Keyed by topic so switching publishers rebuilds the renderer and
+            // its socket instead of feeding a new stream into the old plot's
+            // geometry.
+            key={streamDockState.topic}
+            topic={streamDockState.topic}
+            unitAddress={streamDockState.unitAddress}
+            darkMode={globalSettings.themeMode === "dark"}
+            availability={streamTapAvailability}
+            publisherRateHz={streamPublisherRateHz}
+            onClose={() => setStreamDockState(null)}
+          />
+        ) : null}
 
         {traceDockState?.active ? (
           <section className="trace-dock">

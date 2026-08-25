@@ -263,7 +263,9 @@ body {
 
 .dashboard-main {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* Viewport, then the stream dock and the trace dock. Both docks size to their
+     content so an unused one costs no height at all. */
+  grid-template-rows: minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
 }
@@ -1477,7 +1479,8 @@ body {
   font-size: 0.92rem;
 }
 
-.publisher-trace-button {
+.publisher-trace-button,
+.publisher-data-button {
   width: 100%;
   border: 1px solid #15803d;
   border-radius: 9px;
@@ -1501,13 +1504,15 @@ body {
   background: linear-gradient(180deg, #ef4444, #dc2626);
 }
 
-.publisher-trace-button:disabled {
+.publisher-trace-button:disabled,
+.publisher-data-button:disabled {
   border-color: #94a3b8;
   background: #94a3b8;
   cursor: default;
 }
 
-.publisher-trace-button__icon {
+.publisher-trace-button__icon,
+.publisher-data-button__icon {
   font-size: 0.72rem;
   line-height: 1;
 }
@@ -2288,7 +2293,8 @@ body {
 }
 
 .dashboard-layout.is-dark .settings-field-row__control button:disabled,
-.dashboard-layout.is-dark .publisher-trace-button:disabled {
+.dashboard-layout.is-dark .publisher-trace-button:disabled,
+.publisher-data-button:disabled {
   background: #4b5f7a;
   border-color: #4b5f7a;
   color: #d8e2f1;
@@ -2558,4 +2564,397 @@ body {
   .subscriber-item__detail dl {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- Live stream viewer ------------------------------------------------- */
+
+.stream-dock {
+  position: relative;
+  border-top: 1px solid #cbd5e1;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  /* A definite height, not min/max around content. The plot canvas is out of
+     flow so it contributes no height of its own, and a content-sized dock would
+     collapse onto its floor -- which is nowhere near enough room for a plot with
+     a few hundred channels in it. Drag the top edge to change it. */
+  height: var(--stream-dock-height, clamp(240px, 42vh, 560px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* Sits on the dock's top border. */
+.stream-dock__resize-handle {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+  z-index: 3;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.stream-dock__resize-handle:hover,
+.stream-dock__resize-handle:focus-visible {
+  background: rgba(37, 99, 235, 0.35);
+}
+
+.stream-dock__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.4rem 0.6rem;
+  background: #f8fafc;
+}
+
+.stream-dock__title-wrap {
+  min-width: 0;
+}
+
+.stream-dock__title-wrap h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stream-dock__meta {
+  margin: 0.14rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  color: #475569;
+}
+
+.stream-dock__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: none;
+}
+
+.stream-badge {
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid transparent;
+}
+
+.stream-badge.is-overflow {
+  color: #7c2d12;
+  border-color: #fdba74;
+  background: #ffedd5;
+}
+
+.trace-status.is-ok {
+  color: #065f46;
+  border-color: #86efac;
+  background: #dcfce7;
+}
+
+.trace-status.is-warn {
+  color: #78350f;
+  border-color: #fcd34d;
+  background: #fef3c7;
+}
+
+.trace-status.is-err {
+  color: #7f1d1d;
+  border-color: #fca5a5;
+  background: #fee2e2;
+}
+
+.stream-dock__body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem 0.6rem;
+}
+
+.stream-dock__plot-column {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.25rem;
+}
+
+.stream-plot {
+  min-height: 0;
+  display: grid;
+  /* One column by default. The label gutter is only rendered when there is room
+     to read it, and a two-column template without it would put the plot in the
+     `auto` column -- which measures an out-of-flow canvas as zero and collapses
+     the plot to nothing. */
+  grid-template-columns: minmax(0, 1fr);
+  /* An explicit row, so the host below gets a definite height to fill rather
+     than one derived from its own contents. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0.3rem;
+}
+
+.stream-plot.is-labelled {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+/* The gutter is position:relative so labels can be placed by percentage,
+   which is what keeps them aligned with the shader's channel bands. */
+.stream-plot__labels {
+  position: relative;
+  width: 4.6rem;
+  min-width: 0;
+}
+
+.stream-plot__label {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  font-size: 0.66rem;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.stream-plot__host {
+  position: relative;
+  min-width: 0;
+  /* Floor rather than 0: the canvas is out of flow, so without this the host
+     has no height of its own to give back to the grid. */
+  min-height: 120px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+/* Absolutely positioned so the canvas never contributes to layout. A canvas has
+   an intrinsic size from its width/height attributes, and sizing those from the
+   measured height of an ancestor it is also stretching makes the dock grow a
+   little on every resize observation until it hits its max-height. */
+.stream-plot__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stream-plot__canvas[hidden] {
+  display: none;
+}
+
+.stream-plot__axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+/* Indent to clear the label gutter, but only when there is one. */
+.stream-plot__axis.is-labelled {
+  padding-left: 4.9rem;
+}
+
+.stream-dock__side {
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stream-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.stream-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.72rem;
+  color: #475569;
+}
+
+.stream-control--toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stream-control select,
+.stream-control input[type="range"] {
+  width: 100%;
+}
+
+.stream-controls__stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.5rem;
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+}
+
+.stream-controls__stats dt {
+  color: #64748b;
+}
+
+.stream-controls__stats dd {
+  margin: 0;
+  text-align: right;
+  color: #334155;
+}
+
+.stream-panel__notice {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stream-panel__empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.stream-panel__error {
+  margin: 0;
+  font-size: 0.76rem;
+  color: #b91c1c;
+}
+
+.stream-inspect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+}
+
+.stream-inspect__grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+}
+
+.stream-inspect__grid dt {
+  color: #64748b;
+}
+
+.stream-inspect__grid dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.stream-inspect__module {
+  margin-left: 0.4rem;
+  color: #94a3b8;
+  font-size: 0.7rem;
+}
+
+.stream-inspect__section h4 {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.stream-inspect__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.stream-inspect__list li {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.stream-inspect__list li span {
+  color: #475569;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.stream-inspect__repr {
+  margin: 0;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #475569;
+}
+
+.publisher-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.publisher-action-row > .publisher-trace-button,
+.publisher-action-row > .publisher-data-button {
+  flex: 1 1 auto;
+}
+
+/* Blue rather than the trace button's green/red: this opens a view, it does not
+   start or stop a capture, and colour is the fastest way to say so. */
+.publisher-data-button {
+  border-color: #1d4ed8;
+  background: linear-gradient(180deg, #3b82f6, #2563eb);
+}
+
+.publisher-data-button.is-active {
+  border-color: #475569;
+  background: linear-gradient(180deg, #64748b, #475569);
+}
+
+.dashboard-layout.is-dark .stream-dock {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: #334155;
+  color: #dbe7f5;
+}
+
+.dashboard-layout.is-dark .stream-dock__header {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: #334155;
+}
+
+.dashboard-layout.is-dark .stream-dock__title-wrap h3,
+.dashboard-layout.is-dark .stream-controls__stats dd {
+  color: #dbe7f5;
+}
+
+.dashboard-layout.is-dark .stream-dock__meta,
+.dashboard-layout.is-dark .stream-plot__axis,
+.dashboard-layout.is-dark .stream-control,
+.dashboard-layout.is-dark .stream-panel__empty,
+.dashboard-layout.is-dark .stream-inspect__list li span,
+.dashboard-layout.is-dark .stream-inspect__repr {
+  color: #94a3b8;
+}
+
+.dashboard-layout.is-dark .stream-plot__host {
+  background: #17191d;
+  border-color: #334155;
 }

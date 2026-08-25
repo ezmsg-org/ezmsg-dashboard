@@ -1,3 +1,5 @@
+import type { StreamTapAvailability } from "./stream";
+
 export type SettingsSchemaField = {
   name: string;
   field_type: string;
@@ -104,6 +106,11 @@ export type HealthResponse = {
   status: string;
   graph_session_active: boolean;
   graph_address: string | null;
+  /**
+   * Absent when talking to a backend that predates stream taps, which is why
+   * the UI treats "missing" and "unavailable" the same way.
+   */
+  stream_tap?: StreamTapAvailability;
 };
 
 export type SettingsFieldPatchRequest = {
