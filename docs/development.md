@@ -113,6 +113,25 @@ cd frontend
 npm run test:e2e:update-snapshots
 ```
 
+Data viewer check against a live graph. Unlike the tests above this needs real
+processes and a real GPU path, because shader compilation and the vertex layout
+cannot fail in jsdom:
+
+```bash
+ezmsg serve &
+uv run python examples/stream_demo_graph.py &
+uv run ezmsg dashboard --port 8077 &
+
+cd frontend && npm run build
+uv run python -m ezmsg.dashboard.build_frontend
+node frontend/scripts/check-stream-panel.mjs http://127.0.0.1:8077
+```
+
+It opens each demo publisher in turn and asserts the expected view renders,
+leaving screenshots in `frontend/test-results/stream/`. The demo graph also
+publishes a topic the dashboard deliberately cannot decode, to check that the
+panel explains itself rather than looking idle.
+
 Verify the vendored frontend bundle matches `frontend/dist`:
 
 ```bash
