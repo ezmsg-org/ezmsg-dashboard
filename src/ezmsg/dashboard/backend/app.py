@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -22,6 +24,22 @@ from .services.graph_context_service import (
     ProfilingTraceControlError,
     SettingsPatchError,
 )
+from .services.stream_tap import (
+    AUTO,
+    CLIENT_MODES,
+    DEFAULT_WINDOW_SECONDS,
+    MAX_COLUMNS,
+    MAX_WINDOW_SECONDS,
+    MIN_WINDOW_SECONDS,
+    StreamTapError,
+)
+from .stream_frames import encode_binary_frame
+
+#: How often a stream socket reports tap health and message-inspector state,
+#: independently of the data frame rate. Slow enough to be free on a busy
+#: stream, quick enough that "nothing is arriving" shows up as a fact rather
+#: than as a plot that simply is not moving.
+STREAM_STATUS_INTERVAL_SECONDS = 0.5
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -143,6 +161,36 @@ class ProfilingTraceControlRequest(BaseModel):
     timeout: float = Field(default=2.0, gt=0.0)
 
 
+async def run_until_first_completed(*tasks: asyncio.Task[None]) -> None:
+    """Await the first task to finish, cancel the rest, re-raise what it raised.
+
+    Every websocket route here is the same shape: a task that produces messages
+    and a task that watches for the client going away. Whichever finishes first
+    decides the socket's fate, and the loser must be cancelled *and awaited* --
+    leaving it pending would keep the tap it holds alive past the socket that
+    opened it.
+    """
+    done, pending = await asyncio.wait(set(tasks), return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    for task in pending:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    for task in tasks:
+        if task in done:
+            # Surfaces the winner's exception, if it had one.
+            task.result()
+            return
+
+
+async def wait_for_websocket_disconnect(websocket: WebSocket) -> None:
+    """Return once the peer goes away, ignoring anything it says first."""
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+
+
 def get_packaged_frontend_dir() -> Path | None:
     index_path = PACKAGE_FRONTEND_DIR / "index.html"
     if index_path.is_file():
@@ -253,30 +301,14 @@ def create_app(
             ):
                 await websocket.send_json(envelope)
 
-        async def wait_for_disconnect() -> None:
-            # The client is not expected to send anything, so this returns only
-            # when the socket closes -- including the disconnect the server
-            # delivers while shutting down. Watching for it separately is what
-            # keeps a quiet stream from holding shutdown open until the next
-            # heartbeat, which is long enough that Ctrl+C looks hung.
-            while True:
-                message = await websocket.receive()
-                if message["type"] == "websocket.disconnect":
-                    return
-
+        # The client is not expected to send anything, so watching for the
+        # disconnect separately is what keeps a quiet stream from holding
+        # shutdown open until the next heartbeat, which is long enough that
+        # Ctrl+C looks hung.
         pump_task = asyncio.create_task(pump_envelopes(), name="dashboard-ws-pump")
-        disconnect_task = asyncio.create_task(wait_for_disconnect(), name="dashboard-ws-disconnect")
+        disconnect_task = asyncio.create_task(wait_for_websocket_disconnect(websocket), name="dashboard-ws-disconnect")
         try:
-            done, pending = await asyncio.wait({pump_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            for task in pending:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            if pump_task in done:
-                pump_task.result()
-            else:
-                disconnect_task.result()
+            await run_until_first_completed(pump_task, disconnect_task)
         except WebSocketDisconnect:
             return
         except RuntimeError as exc:
@@ -288,6 +320,106 @@ def create_app(
             await websocket.close(code=1011)
         except Exception:
             await websocket.close(code=1011)
+
+    @app.websocket("/ws/stream")
+    async def ws_stream(
+        websocket: WebSocket,
+        topic: Annotated[str, Query(min_length=1)],
+        mode: Annotated[str, Query()] = AUTO,
+        columns: Annotated[int, Query(ge=1, le=MAX_COLUMNS)] = 1200,
+        hz: Annotated[float, Query(gt=0.0, le=120.0)] = 30.0,
+        window: Annotated[float, Query(ge=MIN_WINDOW_SECONDS, le=MAX_WINDOW_SECONDS)] = DEFAULT_WINDOW_SECONDS,
+    ) -> None:
+        """Live sample data from one topic, as binary frames.
+
+        Data goes out as ``[u32 header_len][JSON header][float32 payload]``
+        rather than JSON, because the payload is nearly all of the traffic and
+        the browser can wrap it in a ``Float32Array`` without touching a single
+        number. Metadata, tap health and the message inspector travel as text
+        frames on the same socket, so the client needs one connection per panel
+        and never has to correlate two.
+
+        ``columns`` is the client's pixel budget and ``window`` is how many
+        seconds that budget spans. Together they set how many samples a column
+        stands for, which is what keeps a 30 kHz stream affordable: the wire
+        cost follows the plot's width and time base, not the publisher's rate.
+        """
+        await websocket.accept()
+        graph_service = app.state.graph_service
+
+        try:
+            tap_context = graph_service.stream_tap(topic=topic, mode=mode, max_columns=columns, window_seconds=window)
+        except (StreamTapError, GraphServiceUnavailableError, RuntimeError) as exc:
+            await websocket.send_json({"kind": "stream.error", "data": {"message": str(exc)}})
+            await websocket.close(code=1011)
+            return
+
+        async def pump_frames(client: Any) -> None:
+            interval = 1.0 / hz
+            # Report once up front so a topic that is connected but silent says
+            # so immediately, instead of looking identical to a broken socket
+            # for the first status period.
+            await websocket.send_json({"kind": "stream.status", "data": client.tap.status_payload()})
+            last_status = time.monotonic()
+            while True:
+                await asyncio.sleep(interval)
+
+                # Description first, always: a data frame names the generation
+                # it belongs to, and one that arrived before its description
+                # would be drawn on the previous stream's axes.
+                description = client.take_description()
+                if description is not None:
+                    await websocket.send_json({"kind": "stream.meta", "data": description})
+
+                frame = client.take_frame()
+                if frame is not None:
+                    header, payload = frame
+                    await websocket.send_bytes(encode_binary_frame(header, payload))
+
+                now = time.monotonic()
+                if now - last_status >= STREAM_STATUS_INTERVAL_SECONDS:
+                    last_status = now
+                    await websocket.send_json({"kind": "stream.status", "data": client.tap.status_payload()})
+                    await websocket.send_json({"kind": "stream.inspect", "data": client.tap.inspect_payload()})
+
+        async def receive_config(client: Any) -> None:
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                text = message.get("text")
+                if not text:
+                    continue
+                try:
+                    payload = json.loads(text)
+                except ValueError:
+                    continue
+                if not isinstance(payload, dict) or payload.get("kind") != "stream.config":
+                    continue
+                requested_columns = payload.get("columns")
+                if isinstance(requested_columns, (int, float)) and not isinstance(requested_columns, bool):
+                    client.set_max_columns(int(requested_columns))
+                requested_window = payload.get("window_seconds")
+                if isinstance(requested_window, (int, float)) and not isinstance(requested_window, bool):
+                    client.set_window_seconds(float(requested_window))
+                requested_mode = payload.get("mode")
+                if requested_mode in CLIENT_MODES:
+                    client.mode = requested_mode
+
+        try:
+            async with tap_context as client:
+                pump_task = asyncio.create_task(pump_frames(client), name=f"dashboard-stream-pump:{topic}")
+                config_task = asyncio.create_task(receive_config(client), name=f"dashboard-stream-config:{topic}")
+                await run_until_first_completed(pump_task, config_task)
+        except WebSocketDisconnect:
+            return
+        except StreamTapError as exc:
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"kind": "stream.error", "data": {"message": str(exc)}})
+                await websocket.close(code=1011)
+        except Exception:
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1011)
 
     if resolved_frontend_dir is not None:
         app.mount(
