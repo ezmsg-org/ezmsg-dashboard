@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Mapping
+from contextlib import AbstractAsyncContextManager
 from typing import Any, AsyncIterator, Callable, Protocol
 from uuid import UUID
 
@@ -29,6 +30,13 @@ from .adapters import (
     adapt_settings_snapshot,
     adapt_settings_value,
     adapt_topology_event,
+)
+from .stream_tap import (
+    DEFAULT_WINDOW_SECONDS,
+    StreamTapClient,
+    StreamTapManager,
+    StreamTapUnavailableError,
+    availability_payload,
 )
 
 _MISSING = object()
@@ -99,6 +107,15 @@ class GraphServiceProtocol(Protocol):
         profiling_max_samples: int,
     ) -> AsyncIterator[dict[str, Any]]: ...
 
+    def stream_tap(
+        self,
+        *,
+        topic: str,
+        mode: str,
+        max_columns: int,
+        window_seconds: float,
+    ) -> AbstractAsyncContextManager[StreamTapClient]: ...
+
 
 class GraphContextLifecycleService:
     def __init__(
@@ -119,6 +136,7 @@ class GraphContextLifecycleService:
         self._shutdown_lock = asyncio.Lock()
         self._context: GraphContext | None = None
         self._active_trace_route_units: set[str] = set()
+        self._tap_manager: StreamTapManager | None = None
 
     def _graph_context_address(self) -> Address | None:
         if self._graph_address is None:
@@ -141,6 +159,10 @@ class GraphContextLifecycleService:
             )
             await context.__aenter__()
             self._context = context
+            self._tap_manager = StreamTapManager(
+                self._create_tap_subscriber,
+                subscriber_release=self._release_tap_subscriber,
+            )
 
     async def shutdown(self) -> None:
         async with self._shutdown_lock:
@@ -149,7 +171,32 @@ class GraphContextLifecycleService:
                 return
             self._context = None
             self._active_trace_route_units.clear()
+            tap_manager, self._tap_manager = self._tap_manager, None
+            if tap_manager is not None:
+                # Before the context: a tap still holding a live subscriber
+                # would otherwise be closed twice, once here and once by
+                # GraphContext.revert().
+                await tap_manager.shutdown()
             await context.__aexit__(None, None, None)
+
+    async def _create_tap_subscriber(self, topic: str, **kwargs: Any) -> Any:
+        context = self._require_context()
+        return await context.subscriber(topic, **kwargs)
+
+    def _release_tap_subscriber(self, subscriber: Any) -> None:
+        """Drop a closed tap subscriber from GraphContext's client set.
+
+        Reaches for a private attribute because there is no public way to
+        un-register a client: ``GraphContext`` only clears the set wholesale on
+        session teardown, which is the wrong lifetime for something a user opens
+        and closes from a panel. Guarded so that an ezmsg release which renames
+        or removes the attribute costs nothing worse than the small leak this
+        exists to avoid.
+        """
+        context = self._context
+        clients = getattr(context, "_clients", None)
+        if isinstance(clients, set):
+            clients.discard(subscriber)
 
     def _require_context(self) -> GraphContext:
         if self._context is None:
@@ -166,11 +213,35 @@ class GraphContextLifecycleService:
 
     async def health_payload(self) -> dict[str, Any]:
         context = self._context
+        tap_manager = self._tap_manager
         return {
             "status": "ok",
             "graph_session_active": context is not None,
             "graph_address": self._effective_graph_address(),
+            "stream_tap": {
+                **availability_payload(),
+                "active_topics": [] if tap_manager is None else tap_manager.active_topics,
+            },
         }
+
+    def stream_tap(
+        self,
+        *,
+        topic: str,
+        mode: str,
+        max_columns: int,
+        window_seconds: float = DEFAULT_WINDOW_SECONDS,
+    ) -> AbstractAsyncContextManager[StreamTapClient]:
+        """Open (or join) a tap on ``topic`` for the duration of the context.
+
+        Not ``async def``: callers use it as ``async with``, and returning the
+        context manager directly means a caller that never enters it has not
+        already taken a reference on the tap.
+        """
+        tap_manager = self._tap_manager
+        if tap_manager is None:
+            raise StreamTapUnavailableError("GraphContext is not active; cannot tap a stream.")
+        return tap_manager.client(topic, mode=mode, max_columns=max_columns, window_seconds=window_seconds)
 
     async def snapshot_payload(self) -> dict[str, Any]:
         context = self._require_context()

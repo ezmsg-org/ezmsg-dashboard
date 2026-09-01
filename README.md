@@ -17,6 +17,13 @@ The release artifact is intended to be installed as a normal Python package:
 pip install ezmsg ezmsg-dashboard
 ```
 
+To enable the live data viewer, install the `viz` extra, which adds `ezmsg-tools`
+for its AxisArray-to-plottable reduction:
+
+```bash
+pip install "ezmsg-dashboard[viz]"
+```
+
 Runtime installs do not require `npm`. The published wheel/sdist includes a prebuilt frontend bundle that the Python backend serves directly.
 
 Documentation lives in [docs/README.md](docs/README.md).
@@ -30,6 +37,8 @@ __NOTE:__ This software was written in heavy collaboration (vibe coded) with Cha
 - Settings inspection and patching
 - Publisher and subscriber profiling views
 - Profiling trace capture and timing visualization
+- Live data visualization: GPU-rendered sweep, spectrum, and channel-map views of
+  any publisher's messages, plus a message inspector that works on any topic
 - Frontend fixture mode for deterministic graph and profiling scenarios
 - Unit, Playwright, and screenshot-based regression tests
 

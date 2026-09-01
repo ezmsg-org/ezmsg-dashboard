@@ -15,6 +15,12 @@ dependencies = [
   "uvicorn[standard]>=0.42.0",
 ]
 
+[project.optional-dependencies]
+# Live data visualization.
+viz = [
+  "ezmsg-tools>=0.6.0",
+]
+
 [dependency-groups]
 dev = [
   "typer>=0.12.5",
@@ -32,6 +38,8 @@ test = [
   "pytest-asyncio>=0.24.0",
   "pytest-cov>=5.0.0",
   "pytest>=8.3.3",
+  # Exercises the 'viz' extra; the tap tests skip themselves without it.
+  "ezmsg-tools>=0.6.0",
 ]
 
 [build-system]

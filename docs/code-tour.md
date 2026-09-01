@@ -57,6 +57,10 @@ Interpretation:
 - [`src/ezmsg/dashboard/server.py`](../src/ezmsg/dashboard/server.py): CLI entrypoint and embeddable server helpers.
 - [`src/ezmsg/dashboard/backend/app.py`](../src/ezmsg/dashboard/backend/app.py): FastAPI app factory, routes, WebSocket, static frontend mount.
 - [`src/ezmsg/dashboard/backend/services/`](../src/ezmsg/dashboard/backend/services): `GraphContext` lifecycle, protocol, and payload adapters.
+- [`src/ezmsg/dashboard/backend/services/stream_tap.py`](../src/ezmsg/dashboard/backend/services/stream_tap.py): live subscribers on graph topics, and the message inspector.
+- [`src/ezmsg/dashboard/backend/stream_frames.py`](../src/ezmsg/dashboard/backend/stream_frames.py): sample ring, envelope decimation, binary frame codec (pure numpy).
+- [`frontend/src/render/`](../frontend/src/render): WebGL2 trace renderer and Canvas 2D channel map.
+- [`examples/stream_demo_graph.py`](../examples/stream_demo_graph.py): a graph that exercises every data view.
 - [`frontend/src/App.tsx`](../frontend/src/App.tsx): app shell and inspector/topology coordination.
 - [`frontend/src/hooks/useDashboardData.ts`](../frontend/src/hooks/useDashboardData.ts): HTTP/WebSocket client state.
 - [`frontend/src/components/`](../frontend/src/components): topology, settings, profiling, and trace UI.
@@ -144,7 +148,75 @@ Key ideas:
 - `set_profiling_trace_control()` is more than a thin pass-through. It can fan subscriber-side trace controls out to additional processes if subscriber timing metrics are requested.
 - `event_envelopes()` starts three async workers and merges them into one queue feeding the WebSocket client.
 
-### 4. Adapters and event models
+### 4. Stream taps
+
+[`stream_tap.py`](../src/ezmsg/dashboard/backend/services/stream_tap.py) is how the
+dashboard sees message *data* rather than message *counts*.
+
+The mechanism is one sentence long: the backend already holds a `GraphContext`,
+so it calls `context.subscriber(topic, leaky=True, max_queue=8)` and reads
+messages in its own event loop. No unit is injected into the graph, no edge is
+added to the topology, and the tap does not show up in profiling — it is not a
+registered graph process.
+
+Two properties of `ezmsg`'s `Subscriber` carry the design:
+
+- `leaky=True` releases publisher backpressure for every notification it drops,
+  so a wedged browser cannot stall the graph it is watching. This is the first
+  thing to check in any "tap a live pipeline" scheme, and `ezmsg` already
+  provides it.
+- `recv_zero_copy()` lends the message without pickling or deep-copying it. The
+  tap reduces inside the context manager and lets go. Anything kept past that
+  point must be copied — see `_store`, where forgetting to would leave the plot
+  reading a buffer the publisher is free to overwrite.
+
+Leakiness costs contiguity, so each tap owns a small ring
+([`stream_frames.py`](../src/ezmsg/dashboard/backend/stream_frames.py)) written
+at message rate and read at frame rate, which reports gaps instead of drawing
+across them.
+
+There is no ceiling on how wide a stream may be. There was one — anything past
+512 channels became an inspector entry — resting on a bandwidth estimate that
+stopped being true when the sweep gained a time base: a frame carries only the
+columns that elapsed, so traffic follows columns per second and the channel count
+multiplies a few hundred, not a few thousand. 2048 channels measures at 5.8 MB/s.
+What remains is a *view* cap of 512 drawn lanes, and one genuine hard limit — a
+channel is a texture column, so `MAX_TEXTURE_SIZE` bounds it. The renderer throws
+on that rather than clamping, and the panel catches it: an exception escaping
+that effect would unmount the panel and take the header and inspector with it.
+
+A stream reports `available_modes`, not just the view it opens as. Positions are
+extracted whatever the inferred mode, so a `(time, ch)` stream with real
+electrode coordinates advertises both `sweep` and `scatter`, and the browser
+switches between them without re-subscribing — the map is read out of the sweep
+frames already in flight (newest column, midpoint of its min/max). The map is
+advertised only when there is one position per drawn channel, which is why a
+folded stream has to be pinned first.
+
+Channel names come from `_channel_axes` and `_composite_channel_labels`, not from
+the `ch` axis alone. A stream can fold several dimensions into "channels", and
+naming them from one axis is wrong in two different ways: for `(time, ch, feat)`
+flat channel 1 is `(ch0, feat1)` but takes `ch1`'s name — a different electrode,
+silently — and for `(time, feat, ch)` the first block is right and the rest get
+invented `chN`. Walking the same axis order the reshape uses makes the names
+correct by construction, and reporting that order is also what lets the browser
+pin one axis (see `utils/channelSelection.ts`, where the index arithmetic lives
+with its tests).
+
+`as_numpy` is worth reading before touching the ingest path. An `AxisArray`'s
+`data` need not be numpy — an MLX, torch or jax pipeline hands over its own array
+type — and the conversion has two traps. Foreign dtype objects have no `.str`
+(numpy-only), and `bfloat16` cannot cross the buffer protocol at all. The obvious
+fix for the second, `array.astype(float32)`, is *wrong*: it runs a kernel on the
+framework's default device, and an array that arrived over ezmsg's transport is
+backed by a buffer that device cannot address, so MLX returns values near 2.5e38
+and NaN rather than raising. The bits are moved in numpy instead.
+
+`ezmsg-tools` supplies the AxisArray-to-plottable reduction and is an *optional*
+dependency: without it the message inspector still works on every topic and only
+the plotting views are unavailable.
+
+### 5. Adapters and event models
 
 Two smaller files matter:
 
@@ -259,6 +331,62 @@ Two files own the profiling UX:
 
 This is the second-biggest complexity hotspot after topology layout.
 
+### 6. Stream panel and renderers
+
+[`StreamPanel.tsx`](../frontend/src/components/StreamPanel.tsx) owns one
+`/ws/stream` socket and one renderer.
+
+The load-bearing decision is that data frames never enter React state. They
+arrive tens of times a second and go straight from
+[`useStreamTap`](../frontend/src/hooks/useStreamTap.ts) into the renderer via a
+callback ref; only metadata, tap health, and the inspector are `useState`.
+Routing frames through React would re-render the topology page at frame rate.
+
+[`traceRenderer.ts`](../frontend/src/render/traceRenderer.ts) is a purpose-built
+WebGL2 line renderer rather than a charting library. The ring is an `RG32F`
+**texture** — one row per column, one texel per channel — sampled in the vertex
+shader, and every channel is drawn by one instanced call.
+
+Both choices are worth understanding before changing them. The obvious design
+puts y values in a vertex buffer with channels interleaved and reads each channel
+out with a strided attribute; it works up to 63 channels and then stops, because
+`vertexAttribPointer` rejects a stride above 252 bytes. The failure is silent —
+uploads succeed, draws issue, nothing appears. A texture has no such limit, and
+the backend's `(n_out, n_channels, 2)` payload is already exactly the texture's
+memory layout, so a frame uploads with one `texSubImage2D` and no transpose.
+
+The decimation ratio comes from a *time* window, not from the frame rate. Without
+that a 30 kHz stream read at 30 Hz spreads ~1000 samples across the whole plot:
+the window covers 33 ms, the plot repaints entirely every frame, and the socket
+carries tens of MB/s. See `DEFAULT_WINDOW_SECONDS` in `stream_tap.py`.
+
+The column count follows from the window too, via
+`StreamTapClient.effective_columns`. The plot's pixel width is a ceiling, not a
+target: a column cannot stand for less than one sample, so a stream too slow to
+fill the budget must get *fewer* columns rather than a stretched window. Clamping
+the ratio instead — which is what the first version did — silently showed 20 s of
+a 100 Hz stream while the caption said 2, and made the window control look inert
+because every window short enough to matter produced the same one-sample column.
+The frame header therefore carries `columns`, `window_seconds` and
+`samples_per_column`, and the browser sizes its ring and writes its caption from
+those rather than from what it asked for.
+
+[`autoRange.ts`](../frontend/src/render/autoRange.ts) holds the vertical scale,
+split out so it can be tested without a WebGL context. Two things there are easy
+to get wrong and were both wrong once. It must measure only the lanes *on
+screen*: a `(time, ch, feature)` stream interleaves spike rate with band power
+two orders of magnitude apart, so scanning every channel flattens the quiet
+feature against a rail — and pinning a feature does not rescue that, because a
+pin changes which lanes are drawn, not which are measured. And it must measure
+the whole *window* rather than the incoming frame: a frame covers a thirtieth of
+a second, so on a slow signal its extent is a sliver of what the plot is showing,
+and a tracker fed per-frame figures settled at 6% of what was needed and clipped.
+Hence one min/max per column, reduced over the ring.
+
+[`scatterRenderer.ts`](../frontend/src/render/scatterRenderer.ts) is Canvas 2D,
+deliberately: a channel map is a few hundred filled circles and text, and text
+is the part that matters.
+
 ## Fixture Mode
 
 [`frontend/src/fixtures/dashboardFixtures.ts`](../frontend/src/fixtures/dashboardFixtures.ts) is a major development asset.
@@ -281,6 +409,17 @@ Why it matters:
 This file is long, but conceptually simple: it is synthetic data, not runtime logic.
 
 ## Tests And What They Protect
+
+### Live-graph check
+
+[`frontend/scripts/check-stream-panel.mjs`](../frontend/scripts/check-stream-panel.mjs)
+drives the data viewer in a real browser against
+[`examples/stream_demo_graph.py`](../examples/stream_demo_graph.py). Shader
+compilation, the vertex layout, and "is anything actually drawn" cannot fail in
+a jsdom test, and they are the parts most likely to be wrong. It judges from a
+screenshot rather than `readPixels`, because reading the canvas back requires
+`preserveDrawingBuffer`, and forcing that on perturbs compositing badly enough
+to blank the canvas — a false failure indistinguishable from the real one.
 
 ### Backend tests
 
