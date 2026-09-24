@@ -317,3 +317,28 @@ test("running drafts use runtime monitoring and Collection outputs can be wired"
   await handle.dragTo(page.locator('.managed-node [data-handleid="INPUT"]'));
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("ezmsg-draft-v1")!).external_inputs[0]?.topic)).toBe("Pipeline/OUTPUT");
 });
+
+test("catalog browses extensions and nested modules and search reveals matches", async ({ page }) => {
+  const components = Array.from({ length: 15 }, (_, index) => ({ id: `item${index}`, name: `sigproc.Item${index}`,
+    value: `ezmsg.sigproc.math.group${index}:Item${index}`, distribution: "ezmsg-sigproc", version: "1" }));
+  await page.route("**/api/components", route => route.fulfill({ json: { components } }));
+  await page.route("**/api/components/item3", route => route.fulfill({ json: { ...components[3], available: true, settings_fields: [], ports: [] } }));
+  await page.goto("/?fixture=long-labels");
+  await page.getByRole("button", { name: "Build", exact: true }).click();
+  const browser = page.getByRole("navigation", { name: "Component catalog" });
+  const extension = browser.getByRole("button", { name: /ezmsg-sigproc/ });
+  await expect(extension).toHaveAttribute("aria-expanded", "false");
+  await extension.click();
+  await browser.getByRole("button", { name: /math/ }).click();
+  await browser.getByRole("button", { name: /group3 / }).click();
+  await browser.getByRole("button", { name: "sigproc.Item3", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Add to draft" })).toBeEnabled();
+  await extension.click();
+  await page.getByLabel("Search components").fill("sigproc math.group3");
+  await expect(browser.getByRole("button", { name: "sigproc.Item3", exact: true })).toBeVisible();
+  await expect(browser.locator(".component-entry")).toHaveCount(1);
+  await page.getByLabel("Search components").fill("");
+  await expect(extension).toHaveAttribute("aria-expanded", "false");
+  await page.getByLabel("Search components").fill("not-installed");
+  await expect(browser).toContainText("No matching components.");
+});

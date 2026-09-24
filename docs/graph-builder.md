@@ -274,3 +274,11 @@ dashboard, publish a core beta containing the PR stack, raise this package's cor
 minimum to that beta, and remove the temporary CI Git pin. Publish the extension
 registrations as well for package-only component discovery. No core release is
 required just to review this PR.
+
+
+The component browser groups registrations by installed distribution, then by
+nested Python module path (for example, `ezmsg-sigproc → math → scale → Scale`).
+Large catalogs start collapsed. Search matches registration names, extensions,
+and full Python paths; matching branches open automatically without changing the
+user's expansion choices. Grouping uses entry-point metadata only, so browsing
+never imports every package or requires optional hardware/ML dependencies.

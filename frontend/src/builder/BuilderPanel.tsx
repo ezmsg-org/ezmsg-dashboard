@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { executionSignature, type ExecutionControl } from "./useExecution";
 import { emptyDraft, parseDraft, nextNodeName, nameError, type Details, type Draft, type Registration } from "./document";
 
+import { ComponentBrowser } from "./ComponentBrowser";
 import { DraftSettings } from "./DraftSettings";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 
@@ -109,8 +110,8 @@ export function BuilderPanel({ draft, setDraft, selectedId, select, control }: {
     {tab === "components" && <>
     {!draft.nodes.length && <div className="builder-empty"><h3>Start your graph</h3><p>Add any registered Unit or Collection. For example, add lsl.LSLInletUnit and processing components to build a complete pipeline here.</p></div>}
     <h3>Components</h3><small title={interpreter}>{interpreter || "Loading environment…"}</small>
-    <input aria-label="Search components" placeholder="Search components or packages" value={query} onChange={e => setQuery(e.target.value)} />
-    <div className="component-list">{catalog.filter(c => `${c.name} ${c.distribution}`.toLowerCase().includes(query.toLowerCase())).map(c => <button key={c.id} onClick={() => void inspectComponent(c)}>{c.name}<small>{c.distribution} · {c.version}</small></button>)}</div>
+    <input aria-label="Search components" placeholder="Search components, extensions or modules" value={query} onChange={e => setQuery(e.target.value)} />
+    <ComponentBrowser catalog={catalog} query={query} selectedId={details?.id} inspect={component => void inspectComponent(component)} />
     {busy && <p role="status">Inspecting component…</p>}
     {details && <section><h3>{details.name}</h3>{!details.available ? <p role="alert">Unavailable: {details.error}</p> : <>
       <p className="component-description">{details.description}</p>

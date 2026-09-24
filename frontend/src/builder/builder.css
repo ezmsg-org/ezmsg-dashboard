@@ -67,3 +67,11 @@
 .managed-port .managed-topic { width: 100px; height: 30px; padding: 0 6px; }
 .managed-port .react-flow__handle-top { top: 0; }
 .managed-port .react-flow__handle-bottom { top: auto; bottom: 0; }
+
+.component-browser { max-height: 420px; overflow: auto; margin: 10px 0; }
+.component-browser ul { list-style: none; margin: 0; padding: 0 0 0 14px; }
+.component-browser > ul { padding-left: 0; }
+.component-browser button { width: 100%; text-align: left; margin: 2px 0; overflow-wrap: anywhere; }
+.component-browser .component-group { border-color: transparent; background: transparent; font-weight: 600; }
+.component-count { float: right; opacity: .65; font-weight: normal; }
+.component-entry[aria-pressed=true] { border-color: #6366f1; box-shadow: inset 3px 0 #6366f1; }
