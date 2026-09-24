@@ -38,7 +38,7 @@ function absoluteNodeBoxes(flow: FlowData): Map<string, Box> {
     }
     const width = numericStyleValue(node.style?.width);
     const height = numericStyleValue(node.style?.height);
-    const parentBox = typeof node.parentNode === "string" ? resolve(node.parentNode) : null;
+    const parentBox = typeof node.parentId === "string" ? resolve(node.parentId) : null;
     const left = (parentBox?.left ?? 0) + node.position.x;
     const top = (parentBox?.top ?? 0) + node.position.y;
     const box = {

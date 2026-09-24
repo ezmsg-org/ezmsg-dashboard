@@ -4,6 +4,7 @@
 - [Metrics Reference](./metrics-reference.md)
 - [Development Guide](./development.md)
 - [Code Tour](./code-tour.md)
+- [Graph Builder Implementation Plan](./graph-builder.md)
 
 This initial docs set is fixture-backed and written against the current MVP dashboard behavior.
 

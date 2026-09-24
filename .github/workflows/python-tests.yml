@@ -29,9 +29,14 @@ jobs:
       - name: Install the project
         run: uv sync --python ${{ matrix.python-version }}
 
+      # Temporary until the core PR stack is published as a new beta.
+      # Pin a commit so PR results do not change when the branch moves.
+      - name: Install core integration prerequisite
+        run: uv pip install "ezmsg @ git+https://github.com/ezmsg-org/ezmsg.git@8442e35bd1b9cb703f1b4506b4563821cae28d2c"
+
       - name: Lint
         run:
           uv tool run ruff check --output-format=github src
 
       - name: Run tests
-        run: uv run pytest tests
+        run: uv run --no-sync pytest tests

@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   ControlButton,
   Controls,
   MiniMap,
   type ReactFlowInstance,
-} from "reactflow";
-import "reactflow/dist/style.css";
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+
+import type { Execution } from "../builder/useExecution";
+import { builderNodeTypes, managedSize } from "../builder/ManagedNode";
+import { validConnection, type Draft } from "../builder/document";
 
 import { Panel } from "./Panel";
 import {
@@ -62,6 +67,12 @@ export type TopologyEntitySelection =
 
 type TopologyPanelProps = {
   graphSnapshot: GraphSnapshotPayload | null;
+  draft?: Draft;
+  execution?: Execution | null;
+  editing?: boolean;
+  onDraftChange?: (draft: Draft) => void;
+  onDraftSelect?: (id: string | null) => void;
+  selectedDraftId?: string | null;
   profilingSnapshot?: ProfilingSnapshotPayload | null;
   recentEvents: TopologyChangedEnvelope[];
   immersive?: boolean;
@@ -82,6 +93,7 @@ function graphEdgeCount(graph: Record<string, string[]>): number {
 }
 export function TopologyPanel({
   graphSnapshot,
+  draft, execution, editing = false, onDraftChange, onDraftSelect, selectedDraftId,
   profilingSnapshot = null,
   recentEvents,
   immersive = false,
@@ -97,6 +109,27 @@ export function TopologyPanel({
   onEntitySelect,
 }: TopologyPanelProps) {
   const flowShellRef = useRef<HTMLDivElement | null>(null);
+  const [selectedDraftEdge, setSelectedDraftEdge] = useState<string | null>(null);
+  useEffect(() => {
+    if (!editing || !draft) return;
+    const removeSelection = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest("input, textarea, select, [contenteditable], [role=textbox]")) return;
+      if (!["Delete", "Backspace"].includes(event.key) || event.ctrlKey || event.metaKey || event.altKey) return;
+      const nodeId = draft.nodes.some(n => n.id === selectedDraftId) ? selectedDraftId : null;
+      const edgeId = [...draft.edges, ...(draft.external_inputs ?? [])].some(e => e.id === selectedDraftEdge) ? selectedDraftEdge : null;
+      if (!nodeId && !edgeId) return;
+      event.preventDefault();
+      onDraftChange?.({ ...draft,
+        nodes: draft.nodes.filter(n => n.id !== nodeId),
+        edges: draft.edges.filter(e => e.id !== edgeId && e.source !== nodeId && e.target !== nodeId),
+        external_inputs: draft.external_inputs?.filter(e => e.id !== edgeId && e.target !== nodeId),
+      });
+      onDraftSelect?.(null); setSelectedDraftEdge(null);
+    };
+    window.addEventListener("keydown", removeSelection);
+    return () => window.removeEventListener("keydown", removeSelection);
+  }, [editing, draft, selectedDraftId, selectedDraftEdge, onDraftChange, onDraftSelect]);
   const flowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const flowCacheByScopeRef = useRef<Map<string, FlowData>>(new Map());
   const lastActiveAliasesSignatureRef = useRef<string>("");
@@ -244,6 +277,67 @@ export function TopologyPanel({
     () => applyActiveFlowHighlights(flowData, activeReachableSourceStreams),
     [activeReachableSourceStreams, flowData]
   );
+  const [dragPosition, setDragPosition] = useState<{ id: string; x: number; y: number } | null>(null);
+  const liveOutputTopic = (id: string): string | null => {
+    if (!id.startsWith("stream:")) return null;
+    const address = id.slice("stream:".length);
+    const meta = unitStreamByAddress.get(address);
+    if (meta?.direction !== "output" || address.startsWith(`${execution?.root_name}/`)) return null;
+    return streamAddressWithoutEndpoint(address);
+  };
+  const liveNodeForTopic = new Map(renderedFlowData.nodes.flatMap(n => {
+    const topic = liveOutputTopic(n.id);
+    return topic ? [[topic, n.id] as const] : [];
+  }));
+  const visibleDraftNodes = (draft?.nodes ?? []).filter(n => editing || !execution?.runtime_addresses[n.id]
+    || execution.state !== "running");
+  const visibleDraftIds = new Set(visibleDraftNodes.map(n => n.id));
+  const visibleBindings = (draft?.external_inputs ?? []).filter(b => visibleDraftIds.has(b.target));
+  const hiddenRuntimeIds = new Set(editing ? renderedFlowData.nodes.filter(n => {
+    const address = n.id.slice(n.id.indexOf(":") + 1);
+    return execution && (address === execution.root_name || address.startsWith(`${execution.root_name}/`));
+  }).map(n => n.id) : []);
+  const externalTopics = [...new Set(visibleBindings.map(b => b.topic))].filter(topic => !liveNodeForTopic.has(topic));
+  const draftOffset = renderedFlowData.nodes.length ? Math.max(0, ...renderedFlowData.nodes.filter(n => !n.parentId).map(n => n.position.x + Number(n.style?.width ?? 300))) + 120 + (externalTopics.length ? 380 : 0) : (externalTopics.length ? 380 : 0);
+  const canvasNodes: FlowData["nodes"] = [
+    ...renderedFlowData.nodes.filter(n => !hiddenRuntimeIds.has(n.id)).map(n => {
+      const owned = execution?.state === "running" && [`unit:${execution.root_name}/`, `collection:${execution.root_name}/`].some(prefix => n.id.startsWith(prefix));
+      return { ...n,
+        measured: n.measured ?? (typeof n.style?.width === "number" && typeof n.style?.height === "number" ? { width: n.style.width, height: n.style.height } : undefined),
+        connectable: editing && Boolean(liveOutputTopic(n.id)), className: `${n.className ?? ""}${owned && editing ? " managed-runtime-editing" : ""}${editing && liveOutputTopic(n.id) ? " builder-live-output" : ""}`,
+        data: owned && editing ? { ...n.data, label: <><small className="managed-runtime-label">Dashboard-managed · restarts on Apply</small>{n.data.label as React.ReactNode}</> } : n.data };
+    }),
+    ...externalTopics.map((topic, index) => ({
+      id: `external:${topic}`, type: "external", width: 244, height: 90, measured: { width: 244, height: 90 },
+      position: { x: draftOffset - 380, y: index * 130 },
+      data: { label: <><strong>{topic.slice(0, topic.lastIndexOf("/")) || topic}</strong><div style={{ overflowWrap: "anywhere" }}>{topic.slice(topic.lastIndexOf("/") + 1)}</div><small>Running elsewhere · not restarted by Apply</small></> },
+      draggable: false, connectable: false,
+    })),
+    ...visibleDraftNodes.map(n => ({
+      // These nodes have fixed dimensions. Retain measured dimensions so React
+      // Flow preserves handle bounds when a controlled node object is replaced.
+      id: n.id, type: "managed", ...managedSize(n.name ?? n.component.name, n.component.name, n.ports, layoutMode),
+      measured: managedSize(n.name ?? n.component.name, n.component.name, n.ports, layoutMode), position: dragPosition?.id === n.id ? { x: dragPosition.x, y: dragPosition.y } : { x: n.position.x + draftOffset, y: n.position.y },
+      data: { label: n.name ?? n.component.name, componentType: n.component.name, ports: n.ports, editing, layout: layoutMode, status: execution?.state === "running" && execution.runtime_addresses[n.id] ? "Managed · running applied version" : "Managed draft · not running" },
+      draggable: editing, connectable: editing, selected: selectedDraftId === n.id,
+    })),
+  ];
+  const activeAppliedEdge = (source: string, sourceHandle: string, target: string, targetHandle: string) => {
+    const address = execution?.runtime_addresses[source];
+    return execution?.state === "running" && address
+      && execution.document?.edges.some(e => e.source === source && e.sourceHandle === sourceHandle && e.target === target && e.targetHandle === targetHandle)
+      && activeReachableSourceStreams.has(`${address}/${sourceHandle}`);
+  };
+  const canvasEdges: FlowData["edges"] = [...renderedFlowData.edges.filter(e => !hiddenRuntimeIds.has(e.source) && !hiddenRuntimeIds.has(e.target)), ...(draft?.edges ?? []).filter(e => visibleDraftIds.has(e.source) && visibleDraftIds.has(e.target)).map(e => ({ ...e, animated: Boolean(activeAppliedEdge(e.source, e.sourceHandle, e.target, e.targetHandle)), selected: e.id === selectedDraftEdge })), ...visibleBindings.map(b => ({ id: b.id, animated: execution?.state === "running" && Boolean(execution.document?.external_inputs?.some(applied => applied.topic === b.topic && applied.target === b.target && applied.targetHandle === b.targetHandle)) && activeReachableSourceStreams.has(b.topic), selected: b.id === selectedDraftEdge, source: liveNodeForTopic.get(b.topic) ?? `external:${b.topic}`, sourceHandle: liveNodeForTopic.has(b.topic) ? undefined : "OUTPUT", target: b.target, targetHandle: b.targetHandle, label: "across processes", style: { strokeDasharray: "5 4" } }))];
+  const draftNodeCount = draft?.nodes.length ?? 0;
+  useEffect(() => {
+    if (!draftNodeCount) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => { void flowInstanceRef.current?.fitView({ padding: 0.18, maxZoom: 1.2 }); });
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [draftNodeCount, externalTopics.length]);
   const openCollectionScope = (nodeId: string) => {
     if (!nodeId.startsWith("collection:")) {
       return;
@@ -392,7 +486,7 @@ export function TopologyPanel({
     };
   }, []);
 
-  if (!graphSnapshot) {
+  if (!graphSnapshot && !draftNodeCount && !editing) {
     if (immersive) {
       return (
         <section className="topology-immersive">
@@ -414,10 +508,10 @@ export function TopologyPanel({
     );
   }
 
-  const topicCount = Object.keys(graphSnapshot.graph).length;
-  const edgeCount = graphEdgeCount(graphSnapshot.graph);
-  const sessionCount = Object.keys(graphSnapshot.sessions).length;
-  const processRows = Object.values(graphSnapshot.processes);
+  const topicCount = Object.keys(graphSnapshot?.graph ?? {}).length;
+  const edgeCount = graphEdgeCount(graphSnapshot?.graph ?? {});
+  const sessionCount = Object.keys(graphSnapshot?.sessions ?? {}).length;
+  const processRows = Object.values(graphSnapshot?.processes ?? {});
   const fullscreenHost =
     (flowShellRef.current?.closest(".dashboard-layout") as HTMLElement | null)
     ?? flowShellRef.current
@@ -504,11 +598,11 @@ export function TopologyPanel({
       </span>
       <span className="topology-viewport-legend__item">
         <i className="topology-viewport-legend__swatch is-input" />
-        Subscriber
+        {editing ? "Input" : "Subscriber"}
       </span>
       <span className="topology-viewport-legend__item">
         <i className="topology-viewport-legend__swatch is-output" />
-        Publisher
+        {editing ? "Output" : "Publisher"}
       </span>
       <span className="topology-viewport-legend__item">
         <i className="topology-viewport-legend__swatch is-topic" />
@@ -548,21 +642,55 @@ export function TopologyPanel({
               ? `topology-flow-${layoutMode}-${activeScope ?? "root"}`
               : "topology-flow-stable"
           }
-          nodes={renderedFlowData.nodes}
-          edges={renderedFlowData.edges}
+          nodes={canvasNodes}
+          edges={canvasEdges}
+          nodeTypes={builderNodeTypes}
           fitView
           fitViewOptions={{ padding: 0.18, minZoom: 0.4 }}
           minZoom={0.2}
           maxZoom={2.4}
           nodesDraggable={false}
-          nodesConnectable={false}
+          nodesConnectable={editing}
+          deleteKeyCode={null}
+          onNodeDrag={(_, node) => { if (node.id.startsWith("draft:")) setDragPosition({ id: node.id, ...node.position }); }}
+          onNodeDragStop={(_, node) => {
+            setDragPosition(null);
+            if (draft && node.id.startsWith("draft:")) onDraftChange?.({ ...draft, nodes: draft.nodes.map(n => n.id === node.id ? { ...n, position: { x: node.position.x - draftOffset, y: node.position.y } } : n) });
+          }}
+          isValidConnection={connection => {
+            if (!draft || !editing || !connection.targetHandle) return false;
+            const topic = liveOutputTopic(connection.source);
+            if (topic) {
+              const port = draft.nodes.find(n => n.id === connection.target)?.ports.find(p => p.name === connection.targetHandle);
+              return Boolean(port?.direction === "input" && !port.settings && !(draft.external_inputs ?? []).some(b => b.topic === topic && b.target === connection.target && b.targetHandle === connection.targetHandle));
+            }
+            return Boolean(connection.sourceHandle && validConnection(draft, { source: connection.source, target: connection.target, sourceHandle: connection.sourceHandle, targetHandle: connection.targetHandle }));
+          }}
+          onConnect={connection => {
+            if (!draft || !editing || !connection.targetHandle) return;
+            const topic = liveOutputTopic(connection.source);
+            if (topic) {
+              onDraftChange?.({ ...draft, external_inputs: [...(draft.external_inputs ?? []), { id: `binding:${crypto.randomUUID()}`, topic, target: connection.target, targetHandle: connection.targetHandle }] });
+              return;
+            }
+            if (!connection.sourceHandle) return;
+            const edge = { ...connection, sourceHandle: connection.sourceHandle, targetHandle: connection.targetHandle, id: crypto.randomUUID() };
+            if (validConnection(draft, edge)) onDraftChange?.({ ...draft, edges: [...draft.edges, edge] });
+          }}
           elementsSelectable
           onInit={(instance) => {
             flowInstanceRef.current = instance;
             setFlowInitTick((previous) => previous + 1);
           }}
-          onPaneClick={() => onEntitySelect?.(null)}
+          onPaneClick={() => { setSelectedDraftEdge(null); onEntitySelect?.(null); onDraftSelect?.(null); }}
+          onEdgeClick={(_, edge) => {
+            onDraftSelect?.(null);
+            setSelectedDraftEdge([...draft?.edges ?? [], ...draft?.external_inputs ?? []].some(e => e.id === edge.id) ? edge.id : null);
+          }}
           onNodeClick={(event, node) => {
+            setSelectedDraftEdge(null);
+            if (!node.id.startsWith("draft:")) onDraftSelect?.(null);
+            if (node.id.startsWith("draft:")) { onDraftSelect?.(node.id); return; }
             if (node.id.startsWith("scope:")) {
               const target = event.target as HTMLElement | null;
               const upButton = target?.closest('[data-scope-up="true"]') as HTMLButtonElement | null;
@@ -586,7 +714,7 @@ export function TopologyPanel({
               });
               return;
             }
-            selectEntityForNode(node.id);
+            selectEntityForNode(node.id.startsWith("task:") && node.parentId ? node.parentId : node.id);
           }}
           proOptions={{ hideAttribution: true }}
         >

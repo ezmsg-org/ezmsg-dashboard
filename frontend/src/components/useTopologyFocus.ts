@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
-import type { ReactFlowInstance } from "reactflow";
+import type { ReactFlowInstance } from "@xyflow/react";
 
 import {
   FOCUS_VIEW_DURATION_MS,

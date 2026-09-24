@@ -32,6 +32,8 @@ __NOTE:__ This software was written in heavy collaboration (vibe coded) with Cha
 
 ## Features
 
+- Interactive Build mode: discover registered components, configure settings, wire ports,
+  save/load graphs, and run or replace a dashboard-managed processing group
 - Live topology rendering with left-to-right and top-to-bottom layouts
 - Scoped collection navigation with breadcrumb and in-graph open/up controls
 - Settings inspection and patching

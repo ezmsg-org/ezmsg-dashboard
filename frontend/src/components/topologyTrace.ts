@@ -1,4 +1,4 @@
-import { MarkerType } from "reactflow";
+import { MarkerType } from "@xyflow/react";
 
 import type { GraphSnapshotPayload } from "../types/api";
 import { streamAddressWithoutEndpoint } from "../utils/streamAddress";
