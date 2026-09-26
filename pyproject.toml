@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = [
-  "ezmsg>=3.10.0b3",
+  "ezmsg>=3.10.0b4",
   "fastapi>=0.116.0",
   "pydantic>=2.7",
   "numpy>=1.26.0",
