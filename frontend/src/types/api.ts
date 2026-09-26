@@ -1,6 +1,7 @@
 import type { StreamTapAvailability } from "./stream";
 
 export type SettingsSchemaField = {
+  nullable?: boolean;
   name: string;
   field_type: string;
   required: boolean;

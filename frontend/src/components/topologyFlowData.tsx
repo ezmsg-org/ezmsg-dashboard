@@ -1,4 +1,4 @@
-import { MarkerType, Position, type Edge, type Node } from "reactflow";
+import { MarkerType, Position, type Edge, type Node } from "@xyflow/react";
 
 import {
   belongsToCollection,
@@ -31,11 +31,10 @@ import {
   TASK_NODE_WIDTH,
   TASK_ROW_GAP,
   TASK_ROW_HORIZONTAL_PADDING,
-  UNIT_LR_MIN_WIDTH,
   UNIT_NODE_HEADER_HEIGHT,
   UNIT_WIDTH,
   estimateCollectionHeaderMinWidth,
-  estimateUnitHeaderMinWidth,
+  unitCardSize,
 } from "./topologyLayout";
 import type { GraphSnapshotPayload } from "../types/api";
 import { streamAddressWithoutEndpoint } from "../utils/streamAddress";
@@ -88,7 +87,7 @@ function streamDisplayName(name: string, address: string): string {
   return parts.length > 0 ? parts[parts.length - 1] ?? compact : compact;
 }
 
-function compactMsgType(msgType: string | null): string | null {
+export function compactMsgType(msgType: string | null): string | null {
   if (!msgType) {
     return null;
   }
@@ -392,7 +391,7 @@ export function validateFlowData(flow: FlowData): boolean {
     }
   }
   for (const node of flow.nodes) {
-    if (typeof node.parentNode === "string" && !nodeIds.has(node.parentNode)) {
+    if (typeof node.parentId === "string" && !nodeIds.has(node.parentId)) {
       return false;
     }
   }
@@ -684,60 +683,11 @@ export function buildFlowData(
     const outputs = unit.streams.filter((stream) => stream.direction === "output").length;
     const unknown = unit.streams.filter((stream) => stream.direction === "unknown").length;
     const tasks = unit.tasks.length;
-    const maxRows = Math.max(1, inputs, outputs, tasks, unknown);
-    const headerMinWidth = estimateUnitHeaderMinWidth(
-      unit.name,
-      unit.componentType,
-      shortType
-    );
-    const streamRowMinWidth = requiredRowWidth(
-      maxRows,
-      STREAM_NODE_WIDTH,
-      STREAM_ROW_GAP,
-      22
-    );
-    const taskRowMinWidthTb = requiredRowWidth(
-      tasks,
-      TASK_NODE_WIDTH,
-      TASK_ROW_GAP,
-      TASK_ROW_HORIZONTAL_PADDING
-    );
-    const width =
-      layoutMode === "lr"
-        ? Math.max(UNIT_LR_MIN_WIDTH, headerMinWidth)
-        : Math.max(220, headerMinWidth, streamRowMinWidth, taskRowMinWidthTb);
-
-    if (layoutMode === "lr") {
-      const maxMainRows = Math.max(1, inputs, outputs, tasks);
-      const height = Math.max(
-        126,
-        UNIT_NODE_HEADER_HEIGHT
-          + 16
-          + maxMainRows * 30
-          + (unknown > 0 ? STREAM_NODE_HEIGHT + 12 : 0)
-          + 12
-      );
-      ownerSizeById.set(`unit:${unit.address}`, { width, height });
-      continue;
-    }
-
-    const verticalRows = Math.max(
-      1,
-      (inputs > 0 ? 1 : 0)
-      + (tasks > 0 ? 1 : 0)
-      + (unknown > 0 ? 1 : 0)
-      + (outputs > 0 ? 1 : 0)
-    );
-    const height = Math.max(
-      216,
-      UNIT_NODE_HEADER_HEIGHT
-        + 18
-        + verticalRows * STREAM_NODE_HEIGHT
-        + Math.max(0, verticalRows - 1) * 12
-        + 16
-    );
-    ownerSizeById.set(`unit:${unit.address}`, { width, height });
+    ownerSizeById.set(`unit:${unit.address}`, unitCardSize(
+      unit.name, unit.componentType, inputs, outputs, unknown, tasks, layoutMode, shortType
+    ));
   }
+
   for (const collection of visibleCollections.values()) {
     const inputStreams = collection.streams.filter((stream) => stream.direction === "input");
     const outputStreams = collection.streams.filter((stream) => stream.direction === "output");
@@ -866,7 +816,7 @@ export function buildFlowData(
       const left = startX + index * (STREAM_NODE_WIDTH + gap);
       nodesOut.push({
         id: `stream:${stream.address}`,
-        parentNode: unitOwnerId,
+        parentId: unitOwnerId,
         extent: "parent",
         draggable: false,
         data: {
@@ -1072,7 +1022,7 @@ export function buildFlowData(
         const visual = streamNodeVisualStyle(stream, "is-input", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: scopedCollectionOwnerId,
+          parentId: scopedCollectionOwnerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1108,7 +1058,7 @@ export function buildFlowData(
         const visual = streamNodeVisualStyle(stream, "is-output", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: scopedCollectionOwnerId,
+          parentId: scopedCollectionOwnerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1184,7 +1134,7 @@ export function buildFlowData(
       const visual = streamNodeVisualStyle(stream, "is-unknown", "collection", darkMode);
       nodes.push({
         id: ownerId,
-        parentNode: scopedCollectionOwnerId,
+        parentId: scopedCollectionOwnerId,
         extent: "parent",
         draggable: false,
         data: {
@@ -1298,7 +1248,7 @@ export function buildFlowData(
         const visual = streamNodeVisualStyle(stream, "is-input", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: nodeId,
+          parentId: nodeId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1335,7 +1285,7 @@ export function buildFlowData(
         const visual = streamNodeVisualStyle(stream, "is-output", "collection", darkMode);
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: nodeId,
+          parentId: nodeId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1459,7 +1409,7 @@ export function buildFlowData(
       inputs.forEach((stream, index) => {
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: ownerId,
+          parentId: ownerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1494,7 +1444,7 @@ export function buildFlowData(
       outputs.forEach((stream, index) => {
         nodes.push({
           id: `stream:${stream.address}`,
-          parentNode: ownerId,
+          parentId: ownerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1538,7 +1488,7 @@ export function buildFlowData(
         );
         nodes.push({
           id: taskId,
-          parentNode: ownerId,
+          parentId: ownerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Right,
@@ -1659,7 +1609,7 @@ export function buildFlowData(
         );
         nodes.push({
           id: taskId,
-          parentNode: ownerId,
+          parentId: ownerId,
           extent: "parent",
           draggable: false,
           sourcePosition: Position.Bottom,

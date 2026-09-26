@@ -76,3 +76,18 @@ export function requiredRowWidth(
   }
   return count * itemWidth + Math.max(0, count - 1) * minGap + horizontalPadding;
 }
+
+/** Shared footprint for live and draft Unit cards. */
+export function unitCardSize(name: string, componentType: string, inputs: number, outputs: number,
+  unknown: number, tasks: number, layout: "lr" | "tb", shortType: (value: string) => string) {
+  const header = estimateUnitHeaderMinWidth(name, componentType, shortType);
+  const rows = Math.max(1, inputs, outputs, tasks, unknown);
+  const width = layout === "lr" ? Math.max(UNIT_LR_MIN_WIDTH, header) : Math.max(220, header,
+    requiredRowWidth(rows, STREAM_NODE_WIDTH, STREAM_ROW_GAP, 22),
+    requiredRowWidth(tasks, TASK_NODE_WIDTH, TASK_ROW_GAP, TASK_ROW_HORIZONTAL_PADDING));
+  const verticalRows = Math.max(1, Number(inputs > 0) + Number(outputs > 0) + Number(tasks > 0) + Number(unknown > 0));
+  const height = layout === "lr"
+    ? Math.max(126, UNIT_NODE_HEADER_HEIGHT + 16 + Math.max(1, inputs, outputs, tasks) * 30 + (unknown > 0 ? STREAM_NODE_HEIGHT + 12 : 0) + 12)
+    : Math.max(216, UNIT_NODE_HEADER_HEIGHT + 18 + verticalRows * STREAM_NODE_HEIGHT + Math.max(0, verticalRows - 1) * 12 + 16);
+  return { width, height };
+}

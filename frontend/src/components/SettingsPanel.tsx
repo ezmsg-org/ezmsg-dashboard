@@ -14,6 +14,7 @@ import {
 } from "../utils/nonFiniteNumbers";
 
 type SettingsPanelProps = {
+  draftMode?: boolean;
   settings: SettingsSnapshotPayload | null;
   patchSettingField: (
     componentAddress: string,
@@ -36,6 +37,7 @@ type FieldRow = {
   bounds: [number | null, number | null] | null;
   choices: unknown[] | null;
   isInteger: boolean;
+  nullable: boolean;
 };
 
 function inferSchemaEditorMode(field: SettingsSchemaField): EditorMode {
@@ -119,6 +121,7 @@ function flattenLeafPaths(value: unknown, prefix = ""): string[] {
 }
 
 function initialDraftValueForRow(row: FieldRow): unknown {
+  if (row.nullable && row.currentValue === null) return null;
   if (row.mode === "boolean") {
     return Boolean(row.currentValue);
   }
@@ -155,6 +158,7 @@ function sameDraftMap(
 
 export function SettingsPanel({
   settings,
+  draftMode = false,
   patchSettingField,
   focusComponentAddress = null,
   focusActionId = 0,
@@ -219,7 +223,8 @@ export function SettingsPanel({
         return {
           path: field.name,
           mode: inferSchemaEditorMode(field),
-          currentValue: currentValue ?? field.default ?? null,
+          currentValue: currentValue === undefined ? field.default : currentValue,
+          nullable: field.nullable ?? /none|null|optional/i.test(field.field_type),
           description: field.description,
           bounds: field.bounds,
           choices: field.choices,
@@ -241,6 +246,7 @@ export function SettingsPanel({
         bounds: null,
         choices: null,
         isInteger: Number.isInteger(currentValue),
+        nullable: currentValue === null,
       };
     });
   }, [selectedValue, previewValue]);
@@ -299,6 +305,7 @@ export function SettingsPanel({
 
   const parseRowDraft = (row: FieldRow): unknown => {
     const draftValue = fieldDrafts[row.path];
+    if (row.nullable && draftValue === null) return null;
     if (row.mode === "boolean") {
       return Boolean(draftValue);
     }
@@ -322,7 +329,11 @@ export function SettingsPanel({
         // JSON has no inf/nan literal; the backend decodes these tokens.
         return encodeNumericValue(numeric);
       }
-      return row.isInteger ? Math.trunc(numeric) : numeric;
+      if (row.isInteger && !Number.isInteger(numeric)) throw new Error("Value must be an integer.");
+      if ((row.bounds?.[0] != null && numeric < row.bounds[0]) || (row.bounds?.[1] != null && numeric > row.bounds[1])) {
+        throw new Error("Value is outside the allowed bounds.");
+      }
+      return numeric;
     }
     if (row.mode === "text") {
       return String(draftValue ?? "");
@@ -363,7 +374,7 @@ export function SettingsPanel({
       );
       setSuccessByField((previous) => ({
         ...previous,
-        [row.path]: `Applied ${response.field_path}`,
+        [row.path]: `${draftMode ? "Saved to draft:" : "Applied"} ${response.field_path}`,
       }));
     } catch (patchErr: unknown) {
       setErrorByField((previous) => ({
@@ -383,14 +394,14 @@ export function SettingsPanel({
         </div>
       ) : (
         <div className="settings-component-list">
-          <div className="settings-search">
+          {!draftMode && <div className="settings-search">
             <input
               type="search"
               placeholder="Search component, type, or address"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
             />
-          </div>
+          </div>}
           {filteredAddresses.map((address) => {
             const value = settings?.[address] ?? null;
             const expanded = selectedComponent === address;
@@ -444,7 +455,7 @@ export function SettingsPanel({
                   </div>
                   <div className="settings-component-row__meta">
                     <span className={`settings-access ${patchable ? "is-patchable" : "is-readonly"}`}>
-                      {patchable ? "patchable" : "read only"}
+                      {draftMode ? "draft" : patchable ? "patchable" : "read only"}
                     </span>
                     <span className="publisher-caret">{expanded ? "▾" : "▸"}</span>
                   </div>
@@ -476,9 +487,17 @@ export function SettingsPanel({
                               <div
                                 className={`settings-field-row__control ${row.mode === "boolean" ? "is-boolean" : ""}`}
                               >
+                                {row.nullable && <label className="patch-checkbox settings-null-option">
+                                  <input type="checkbox" aria-label={`${row.path}: use null`}
+                                    checked={draft === null} disabled={rowDisabled || pending}
+                                    onChange={event => setFieldDrafts(previous => ({ ...previous,
+                                      [row.path]: event.target.checked ? null : initialDraftValueForRow({ ...row, currentValue: undefined }),
+                                    }))} />
+                                  <span>Use null (None)</span>
+                                </label>}
                                 {row.mode === "boolean" ? (
                                   <label className="patch-checkbox">
-                                    <input
+                                    <input aria-label={row.path}
                                       type="checkbox"
                                       checked={Boolean(draft)}
                                       onChange={(event) =>
@@ -487,14 +506,14 @@ export function SettingsPanel({
                                           [row.path]: event.target.checked,
                                         }))
                                       }
-                                      disabled={rowDisabled || pending}
+                                      disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                     />
                                     <span>Enabled</span>
                                   </label>
                                 ) : null}
 
                                 {row.mode === "choice" ? (
-                                  <select
+                                  <select aria-label={row.path}
                                     value={String(draft ?? "0")}
                                     onChange={(event) =>
                                       setFieldDrafts((previous) => ({
@@ -502,7 +521,7 @@ export function SettingsPanel({
                                         [row.path]: event.target.value,
                                       }))
                                     }
-                                    disabled={rowDisabled || pending}
+                                    disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                   >
                                     {(row.choices ?? []).map((choice, index) => (
                                       <option key={`${row.path}-${index}`} value={String(index)}>
@@ -516,22 +535,22 @@ export function SettingsPanel({
                                   // A number input cannot hold "Infinity"/"NaN", so float
                                   // fields use a text input and parse on apply.
                                   row.isInteger ? (
-                                    <input
+                                    <input aria-label={row.path}
                                       type="number"
                                       value={String(draft ?? "")}
                                       min={row.bounds?.[0] ?? undefined}
                                       max={row.bounds?.[1] ?? undefined}
-                                      step="any"
+                                      step="1"
                                       onChange={(event) =>
                                         setFieldDrafts((previous) => ({
                                           ...previous,
                                           [row.path]: event.target.value,
                                         }))
                                       }
-                                      disabled={rowDisabled || pending}
+                                      disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                     />
                                   ) : (
-                                    <input
+                                    <input aria-label={row.path}
                                       type="text"
                                       inputMode="decimal"
                                       value={String(draft ?? "")}
@@ -541,13 +560,13 @@ export function SettingsPanel({
                                           [row.path]: event.target.value,
                                         }))
                                       }
-                                      disabled={rowDisabled || pending}
+                                      disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                     />
                                   )
                                 ) : null}
 
                                 {row.mode === "text" ? (
-                                  <input
+                                  <input aria-label={row.path}
                                     type="text"
                                     value={String(draft ?? "")}
                                     onChange={(event) =>
@@ -556,12 +575,12 @@ export function SettingsPanel({
                                         [row.path]: event.target.value,
                                       }))
                                     }
-                                    disabled={rowDisabled || pending}
+                                    disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                   />
                                 ) : null}
 
                                 {row.mode === "json" ? (
-                                  <textarea
+                                  <textarea aria-label={row.path}
                                     value={String(draft ?? "")}
                                     rows={4}
                                     spellCheck={false}
@@ -572,7 +591,7 @@ export function SettingsPanel({
                                         [row.path]: event.target.value,
                                       }))
                                     }
-                                    disabled={rowDisabled || pending}
+                                    disabled={rowDisabled || pending || (row.nullable && draft === null)}
                                   />
                                 ) : null}
 
@@ -583,7 +602,7 @@ export function SettingsPanel({
                                   }}
                                   disabled={rowDisabled || pending}
                                 >
-                                  {pending ? "Applying..." : "Apply"}
+                                  {pending ? "Saving..." : draftMode ? "Save to draft" : "Apply"}
                                 </button>
                               </div>
                               {successByField[row.path] ? (

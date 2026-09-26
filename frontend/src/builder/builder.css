@@ -1,0 +1,77 @@
+.workspace-switch { position: absolute; bottom: 18px; left: 70px; z-index: 12; display: flex; gap: 6px; }
+.workspace-switch button, .builder-panel button, .builder-actions label { border: 1px solid #94a3b8; border-radius: 6px; background: #f8fafc; color: #172b46; padding: 7px 10px; cursor: pointer; }
+.workspace-switch button[aria-pressed=true] { background: #1d4ed8; color: white; }
+.builder-panel { height: 100%; overflow: auto; padding: 18px; font-size: 13px; }
+.builder-panel h2, .builder-panel h3 { margin: 12px 0 8px; }
+.builder-panel p { line-height: 1.5; }
+.builder-panel small { display: block; overflow-wrap: anywhere; opacity: .8; }
+.builder-panel input:not([type=file]):not([type=checkbox]), .builder-panel textarea { width: 100%; box-sizing: border-box; padding: 8px; margin: 8px 0; border: 1px solid #94a3b8; border-radius: 6px; }
+.builder-panel textarea { font-family: monospace; }
+.builder-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.builder-actions input { display: block; width: 180px; }
+.component-list { max-height: 240px; overflow: auto; display: grid; gap: 4px; margin: 10px 0; }
+.component-list button { text-align: left; overflow-wrap: anywhere; }
+.component-description { max-height: 140px; overflow: auto; white-space: pre-wrap; }
+.managed-node { width: 240px; padding: 12px 0; border: 2px solid #6366f1; border-radius: 10px; background: #eef2ff; color: #172b46; }
+.managed-node strong, .managed-node small { display: block; padding: 0 12px; overflow-wrap: anywhere; }
+.managed-node small { margin: 6px 0; font-size: 11px; }
+.managed-node.is-editing, .managed-legend { background-image: repeating-linear-gradient(135deg, transparent 0, transparent 7px, rgba(99,102,241,.13) 7px, rgba(99,102,241,.13) 10px); }
+.managed-legend { padding: 10px; border: 1px solid #818cf8; border-radius: 6px; }
+.managed-port { position: relative; padding: 6px 12px; font: 11px monospace; }
+.managed-port .react-flow__handle { top: 50%; }
+.is-dark .managed-node { background-color: #1e293b; color: #e2e8f0; }
+.is-dark .builder-panel button, .is-dark .builder-actions label { background: #1e293b; color: #e2e8f0; }
+.builder-panel [role=alert] { color: #dc2626; }
+.workspace-switch { bottom: 52px; left: 52px; }
+.topology-flow-shell .managed-node .react-flow__handle { opacity: 1; width: 10px; height: 10px; border: 1px solid white; background: #4f46e5; }
+.topology-flow-shell .managed-node:not(.is-editing) .react-flow__handle { opacity: .4; }
+.topology-flow-shell .managed-runtime-editing { background-image: repeating-linear-gradient(135deg, transparent 0, transparent 7px, rgba(99,102,241,.15) 7px, rgba(99,102,241,.15) 10px) !important; }
+.managed-runtime-label { display: block; font-size: 9px; color: #6366f1; }
+.builder-panel button:disabled { opacity: .45; cursor: default; }
+.managed-node { box-sizing: border-box; width: 100%; height: 100%; }
+
+.external-node { box-sizing: border-box; width: 100%; height: 100%; padding: 12px; border: 1px dashed #64748b; border-radius: 8px; background: #f1f5f9; color: #172b46; font-size: 12px; }
+.external-node small { display: block; margin-top: 8px; }
+.is-dark .external-node { background: #1e293b; color: #e2e8f0; }
+.topology-flow-shell .external-node .react-flow__handle { opacity: .7; width: 8px; height: 8px; background: #64748b; }
+.builder-panel select { width: 100%; padding: 7px; margin: 6px 0 10px; box-sizing: border-box; }
+
+.builder-tabs { display: flex; gap: 4px; margin: 16px 0; border-bottom: 1px solid #94a3b8; padding-bottom: 8px; }
+.builder-tabs button { flex: 1; }
+.builder-tabs button[aria-selected=true], .builder-panel .builder-primary { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+.builder-empty { padding: 10px 14px; background: #eef2ff; border-radius: 8px; }
+.is-dark .builder-empty { background: #1e293b; }
+.builder-document, .builder-ownership { margin-top: 16px; }
+.builder-document summary, .builder-ownership summary { cursor: pointer; padding: 8px 0; }
+.builder-existing-option { margin: 18px 0; padding-top: 14px; border-top: 1px solid #94a3b8; }
+.builder-existing-option label { display: flex; gap: 8px; align-items: center; }
+.builder-connection { display: flex; align-items: start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #cbd5e1; padding: 12px 0; overflow-wrap: anywhere; }
+.builder-connection span { min-width: 0; }
+.builder-boundary-note { border-left: 3px solid #64748b; padding-left: 10px; }
+
+.managed-port { display: flex; height: 40px; box-sizing: border-box; padding: 4px 10px; }
+.managed-port.is-output { justify-content: flex-end; }
+.managed-topic { position: relative; width: 170px; height: 32px; box-sizing: border-box; border: 1px solid #c7d2fe; border-radius: 999px; padding: 0 8px; background: #eef2ff; }
+.managed-topic.is-output { border-color: #7dd3fc; background: #ecfeff; }
+.is-dark .managed-topic { border-color: #818cf8; background: #1d2644; }
+.is-dark .managed-topic.is-output { border-color: #22d3ee; background: #0f2e37; }
+.topology-flow-shell .builder-live-output .react-flow__handle.source { opacity: 1; width: 10px; height: 10px; border: 1px solid white; background: #0891b2; }
+.topology-flow-shell .builder-live-output .react-flow__handle.target { pointer-events: none; }
+.managed-port .managed-topic { width: 170px; height: 32px; overflow: visible; }
+
+/* Match the live Unit card and topic geometry; texture denotes ownership. */
+.managed-node { position: relative; padding: 10px; border: 1px solid #93c5fd; border-radius: 12px; background-color: #f8fbff; font-size: 12px; }
+.is-dark .managed-node { border-color: #3b82f6; background-color: #0f1f35; }
+.managed-node strong { padding: 0; }
+.managed-port { position: absolute; width: 100px; height: 30px; padding: 0; font: inherit; }
+.managed-port .managed-topic { width: 100px; height: 30px; padding: 0 6px; }
+.managed-port .react-flow__handle-top { top: 0; }
+.managed-port .react-flow__handle-bottom { top: auto; bottom: 0; }
+
+.component-browser { max-height: 420px; overflow: auto; margin: 10px 0; }
+.component-browser ul { list-style: none; margin: 0; padding: 0 0 0 14px; }
+.component-browser > ul { padding-left: 0; }
+.component-browser button { width: 100%; text-align: left; margin: 2px 0; overflow-wrap: anywhere; }
+.component-browser .component-group { border-color: transparent; background: transparent; font-weight: 600; }
+.component-count { float: right; opacity: .65; font-weight: normal; }
+.component-entry[aria-pressed=true] { border-color: #6366f1; box-shadow: inset 3px 0 #6366f1; }

@@ -8,6 +8,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { useExecution } from "./builder/useExecution";
+import { BuilderPanel } from "./builder/BuilderPanel";
+import { emptyDraft, parseDraft, type Draft } from "./builder/document";
+import "./builder/builder.css";
+
 import { ProfilingPanel } from "./components/ProfilingPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StreamPanel } from "./components/StreamPanel";
@@ -316,6 +321,17 @@ function healthToneAndTooltip(
 }
 
 export function App() {
+  const executionControl = useExecution();
+  const [editing, setEditing] = useState(false);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft>(() => {
+    try { return parseDraft(localStorage.getItem("ezmsg-draft-v1") ?? ""); } catch { return emptyDraft(); }
+  });
+  const [draftStorageError, setDraftStorageError] = useState("");
+  useEffect(() => {
+    try { localStorage.setItem("ezmsg-draft-v1", JSON.stringify(draft)); setDraftStorageError(""); }
+    catch { setDraftStorageError("Draft could not be saved in this browser. Use Save graph to keep a copy."); }
+  }, [draft]);
   const [inspector, setInspector] = useState<InspectorState>(null);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [profilingFocusActionId, setProfilingFocusActionId] = useState(0);
@@ -595,6 +611,8 @@ export function App() {
       style={dashboardLayoutStyle}
     >
       <aside className="dashboard-inspector dashboard-inspector--pinned">
+        {editing && <BuilderPanel control={executionControl} draft={draft} setDraft={setDraft} selectedId={selectedDraftId} select={setSelectedDraftId} />}
+        <div style={{ display: editing ? "none" : "contents" }}>
         {inspectorCollapsed ? null : (
           <div
             className="inspector-resize-handle"
@@ -706,7 +724,11 @@ export function App() {
             {settingsSectionCollapsed ? null : (
               <div className="inspector-section__content inspector-section__content--scroll">
                 <SettingsPanel
-                  settings={snapshot?.settings ?? null}
+                  settings={snapshot?.settings ? Object.fromEntries(Object.entries(snapshot.settings).map(([address, value]) => [address,
+                    executionControl.execution?.state === "running" && address.startsWith(executionControl.execution.root_name + "/")
+                      ? { ...value, patchable: false, patch_error: "Edit managed settings in Build and Apply changes" }
+                      : value,
+                  ])) : null}
                   patchSettingField={patchSettingField}
                   focusComponentAddress={settingsFocusAddressForInspector(inspector)}
                   focusActionId={settingsFocusActionId}
@@ -738,11 +760,18 @@ export function App() {
             )}
           </section>
         </div>
+        </div>
       </aside>
 
       <div className="dashboard-main">
         <div className="dashboard-viewport">
           <TopologyPanel
+            execution={executionControl.execution}
+            draft={draft}
+            editing={editing}
+            selectedDraftId={selectedDraftId}
+            onDraftChange={setDraft}
+            onDraftSelect={setSelectedDraftId}
             graphSnapshot={snapshot?.snapshot ?? null}
             profilingSnapshot={snapshot?.profiling ?? null}
             recentEvents={topologyEvents}
@@ -759,6 +788,11 @@ export function App() {
             onEntitySelect={handleTopologySelection}
           />
 
+          <div className="workspace-switch" aria-label="Workspace">
+            <button aria-pressed={!editing} onClick={() => setEditing(false)}>Monitor</button>
+            <button aria-pressed={editing} onClick={() => { setEditing(true); setInspectorCollapsed(false); }}>Build</button>
+            {draftStorageError && <span role="alert">{draftStorageError}</span>}
+          </div>
           <section className="dashboard-brand-card">
             <span
               className={`dashboard-health-dot is-${healthStatus.tone}`}

@@ -2060,6 +2060,10 @@ body {
   align-items: start;
 }
 
+.settings-null-option {
+  grid-column: 1 / -1;
+}
+
 .settings-field-row__control.is-boolean {
   align-items: center;
 }
@@ -2502,7 +2506,11 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .settings-field-row__control.is-boolean {
+  .settings-null-option {
+  grid-column: 1 / -1;
+}
+
+.settings-field-row__control.is-boolean {
     align-items: start;
   }
 

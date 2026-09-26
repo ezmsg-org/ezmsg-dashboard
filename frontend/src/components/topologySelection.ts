@@ -18,14 +18,17 @@ export function buildUnitStreamSelectionIndex(
   if (!topologyComponents) {
     return streamByAddress;
   }
-  for (const unit of topologyComponents.units.values()) {
+  for (const unit of [...topologyComponents.units.values(), ...topologyComponents.collections.values()]) {
     for (const stream of unit.streams) {
       const meta = {
         direction: stream.direction,
         unitAddress: unit.address,
       };
-      streamByAddress.set(stream.address, meta);
-      streamByAddress.set(streamAddressWithoutEndpoint(stream.address), meta);
+      // Unit endpoints take precedence over Collection aliases of the same
+      // topic, which may be direction-neutral in older metadata.
+      if (!streamByAddress.has(stream.address)) streamByAddress.set(stream.address, meta);
+      const topic = streamAddressWithoutEndpoint(stream.address);
+      if (!streamByAddress.has(topic)) streamByAddress.set(topic, meta);
     }
   }
   return streamByAddress;

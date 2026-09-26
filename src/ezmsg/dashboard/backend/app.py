@@ -16,6 +16,9 @@ from pydantic import BaseModel, Field
 # StaticFiles raises Starlette's HTTPException, which FastAPI's subclasses.
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .catalog import catalog_payload, component_details
+from .execution import ExecutionConflict, ExecutionSupervisor
+from .external_sources import external_sources
 from .json_encoding import sanitize_json_value
 from .models.events import SystemErrorEnvelope
 from .services import GraphContextLifecycleService, GraphServiceProtocol
@@ -198,12 +201,23 @@ def get_packaged_frontend_dir() -> Path | None:
     return None
 
 
+class ExecutionRequest(BaseModel):
+    document: dict[str, Any]
+    expected_revision: int
+
+
+class StopExecutionRequest(BaseModel):
+    expected_revision: int
+
+
 def create_app(
     graph_service: GraphServiceProtocol | None = None,
     *,
     frontend_dir: Path | None = None,
+    execution_supervisor: ExecutionSupervisor | None = None,
 ) -> FastAPI:
     service = graph_service or GraphContextLifecycleService()
+    supervisor = execution_supervisor or ExecutionSupervisor()
     resolved_frontend_dir = frontend_dir if frontend_dir is not None else get_packaged_frontend_dir()
 
     @asynccontextmanager
@@ -211,12 +225,77 @@ def create_app(
         app.state.graph_service = service
         app.state.frontend_dir = resolved_frontend_dir
         await service.startup()
+
+        async def watch_execution():
+            while True:
+                await asyncio.to_thread(supervisor.status)
+                await asyncio.sleep(0.5)
+
+        watcher = asyncio.create_task(watch_execution())
         try:
             yield
         finally:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
+            await asyncio.to_thread(supervisor.close)
             await service.shutdown()
 
     app = FastAPI(title="ezmsg Dashboard Backend", lifespan=lifespan)
+
+    @app.get("/api/execution")
+    def api_execution() -> JSONResponse:
+        return DashboardJSONResponse(content=supervisor.status(), headers=NO_CACHE_HEADERS)
+
+    @app.get("/api/execution/sources")
+    async def api_external_sources(graph_service: GraphServiceDependency) -> JSONResponse:
+        health = await graph_service.health_payload()
+        state = await asyncio.to_thread(supervisor.status)
+        try:
+            sources = await asyncio.wait_for(external_sources(health["graph_address"], state["root_name"]), timeout=10)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Live publisher discovery unavailable") from exc
+        return DashboardJSONResponse(content={"sources": sources}, headers=NO_CACHE_HEADERS)
+
+    @app.post("/api/execution/stop")
+    def api_stop_execution(body: StopExecutionRequest) -> JSONResponse:
+        try:
+            return DashboardJSONResponse(content=supervisor.stop(body.expected_revision))
+        except ExecutionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/execution/{action}")
+    async def api_deploy_execution(
+        action: str, body: ExecutionRequest, graph_service: GraphServiceDependency
+    ) -> JSONResponse:
+        if action not in {"run", "apply"}:
+            raise HTTPException(status_code=404, detail="Unknown execution action")
+        health = await graph_service.health_payload()
+        try:
+            payload = await asyncio.to_thread(
+                supervisor.deploy,
+                body.document,
+                health["graph_address"],
+                body.expected_revision,
+                apply=action == "apply",
+            )
+            return DashboardJSONResponse(content=payload)
+        except ExecutionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/components")
+    def api_components() -> JSONResponse:
+        return DashboardJSONResponse(content=catalog_payload(), headers=NO_CACHE_HEADERS)
+
+    @app.get("/api/components/{component_id}")
+    def api_component(component_id: str) -> JSONResponse:
+        try:
+            payload = component_details(component_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Component registration not found") from exc
+        return DashboardJSONResponse(content=payload, headers=NO_CACHE_HEADERS)
 
     @app.get("/api/health")
     async def api_health(graph_service: GraphServiceDependency) -> JSONResponse:
@@ -245,6 +324,9 @@ def create_app(
         body: SettingsFieldPatchRequest,
         graph_service: GraphServiceDependency,
     ) -> JSONResponse:
+        execution = await asyncio.to_thread(supervisor.status)
+        if execution["state"] == "running" and component_address.startswith(execution["root_name"] + "/"):
+            raise HTTPException(status_code=409, detail="Edit managed settings in Build and Apply changes")
         try:
             payload = await graph_service.update_setting_field(
                 component_address=component_address,
