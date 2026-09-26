@@ -63,6 +63,8 @@ def main():
         runner.start()
         write_status(status_path, state="running")
         while not stopped.wait(0.1):
+            if status_path.with_suffix(".stop").exists():
+                break
             if any(not process.is_alive() for process in runner.processes):
                 raise RuntimeError("A managed process exited; the processing group has stopped")
         runner.stop()

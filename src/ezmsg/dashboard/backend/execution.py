@@ -75,9 +75,21 @@ class ExecutionSupervisor:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+        # Windows terminate() kills the worker without running its cleanup.
+        # Request a cooperative stop first so GraphRunner can join its children
+        # and release their unit ownership before a replacement starts.
+        if process.poll() is None and status_path is not None:
+            status_path.with_suffix(".stop").touch()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         # Only signal the process group created by _spawn, never GraphService.
         if process.poll() is None:
-            process.terminate()
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)
+            else:
+                process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
