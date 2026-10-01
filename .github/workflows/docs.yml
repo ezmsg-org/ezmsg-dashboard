@@ -54,8 +54,8 @@ jobs:
           path: 'docs/build/html'
 
   deploy:
-    # Only deploy when a release is published
-    if: github.event_name == 'release'
+    # Deploy on push to main or when a release is published
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'release'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
