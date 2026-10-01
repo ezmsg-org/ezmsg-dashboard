@@ -1,5 +1,10 @@
 # User Guide
 
+> **Note:** This guide is fixture-backed and written against the current MVP dashboard behavior.
+> The screenshots are generated from the frontend fixtures rather than a live graph server,
+> so the exact names and values may differ from your running system while the UI behavior
+> should remain representative.
+
 `ezmsg-dashboard` is a live operations view for an `ezmsg` graph. It gives you three main workflows:
 
 - understand structure in the topology view

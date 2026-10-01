@@ -19,9 +19,9 @@ The goal is not to describe every line. The goal is to give one human a reliable
 
 At runtime the data flow is:
 
-1. `ezmsg dashboard` starts [`server.py`](../src/ezmsg/dashboard/server.py).
-2. The server builds a FastAPI app from [`backend/app.py`](../src/ezmsg/dashboard/backend/app.py).
-3. The app starts [`GraphContextLifecycleService`](../src/ezmsg/dashboard/backend/services/graph_context_service.py), which owns the live `GraphContext`.
+1. `ezmsg dashboard` starts [`server.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/server.py).
+2. The server builds a FastAPI app from [`backend/app.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/app.py).
+3. The app starts [`GraphContextLifecycleService`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/graph_context_service.py), which owns the live `GraphContext`.
 4. The frontend loads an initial snapshot over HTTP.
 5. The frontend keeps itself fresh with snapshot polling plus a WebSocket event stream.
 6. UI actions send narrow POST requests for settings patches or profiling trace control.
@@ -38,13 +38,13 @@ Approximate authored surface area, excluding `node_modules`, `.venv`, and the mi
 
 Largest files:
 
-- [`frontend/src/styles.css`](../frontend/src/styles.css): visual system and layout styling.
-- [`frontend/src/components/topologyFlowData.tsx`](../frontend/src/components/topologyFlowData.tsx): topology-to-React-Flow transformation.
-- [`frontend/src/fixtures/dashboardFixtures.ts`](../frontend/src/fixtures/dashboardFixtures.ts): deterministic scenarios used for development and visual tests.
-- [`frontend/src/components/TraceTimingPanel.tsx`](../frontend/src/components/TraceTimingPanel.tsx): canvas trace renderer.
-- [`frontend/src/components/ProfilingPanel.tsx`](../frontend/src/components/ProfilingPanel.tsx): profiling explorer and trace control UI.
-- [`frontend/src/App.tsx`](../frontend/src/App.tsx): top-level coordination and shell state.
-- [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](../src/ezmsg/dashboard/backend/services/graph_context_service.py): backend lifecycle and event orchestration.
+- [`frontend/src/styles.css`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/styles.css): visual system and layout styling.
+- [`frontend/src/components/topologyFlowData.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyFlowData.tsx): topology-to-React-Flow transformation.
+- [`frontend/src/fixtures/dashboardFixtures.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/fixtures/dashboardFixtures.ts): deterministic scenarios used for development and visual tests.
+- [`frontend/src/components/TraceTimingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/TraceTimingPanel.tsx): canvas trace renderer.
+- [`frontend/src/components/ProfilingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/ProfilingPanel.tsx): profiling explorer and trace control UI.
+- [`frontend/src/App.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/App.tsx): top-level coordination and shell state.
+- [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/graph_context_service.py): backend lifecycle and event orchestration.
 
 Interpretation:
 
@@ -54,35 +54,35 @@ Interpretation:
 
 ## Repository Map
 
-- [`src/ezmsg/dashboard/server.py`](../src/ezmsg/dashboard/server.py): CLI entrypoint and embeddable server helpers.
-- [`src/ezmsg/dashboard/backend/app.py`](../src/ezmsg/dashboard/backend/app.py): FastAPI app factory, routes, WebSocket, static frontend mount.
-- [`src/ezmsg/dashboard/backend/services/`](../src/ezmsg/dashboard/backend/services): `GraphContext` lifecycle, protocol, and payload adapters.
-- [`src/ezmsg/dashboard/backend/services/stream_tap.py`](../src/ezmsg/dashboard/backend/services/stream_tap.py): live subscribers on graph topics, and the message inspector.
-- [`src/ezmsg/dashboard/backend/stream_frames.py`](../src/ezmsg/dashboard/backend/stream_frames.py): sample ring, envelope decimation, binary frame codec (pure numpy).
-- [`frontend/src/render/`](../frontend/src/render): WebGL2 trace renderer and Canvas 2D channel map.
-- [`examples/stream_demo_graph.py`](../examples/stream_demo_graph.py): a graph that exercises every data view.
-- [`frontend/src/App.tsx`](../frontend/src/App.tsx): app shell and inspector/topology coordination.
-- [`frontend/src/hooks/useDashboardData.ts`](../frontend/src/hooks/useDashboardData.ts): HTTP/WebSocket client state.
-- [`frontend/src/components/`](../frontend/src/components): topology, settings, profiling, and trace UI.
-- [`frontend/src/fixtures/dashboardFixtures.ts`](../frontend/src/fixtures/dashboardFixtures.ts): fixture mode for deterministic UI/test scenarios.
-- [`tests/backend/`](../tests/backend): backend API and service tests.
-- [`frontend/tests/e2e/dashboard.spec.ts`](../frontend/tests/e2e/dashboard.spec.ts): interaction and screenshot-level frontend tests.
+- [`src/ezmsg/dashboard/server.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/server.py): CLI entrypoint and embeddable server helpers.
+- [`src/ezmsg/dashboard/backend/app.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/app.py): FastAPI app factory, routes, WebSocket, static frontend mount.
+- [`src/ezmsg/dashboard/backend/services/`](https://github.com/ezmsg-org/ezmsg-dashboard/tree/main/src/ezmsg/dashboard/backend/services): `GraphContext` lifecycle, protocol, and payload adapters.
+- [`src/ezmsg/dashboard/backend/services/stream_tap.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/stream_tap.py): live subscribers on graph topics, and the message inspector.
+- [`src/ezmsg/dashboard/backend/stream_frames.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/stream_frames.py): sample ring, envelope decimation, binary frame codec (pure numpy).
+- [`frontend/src/render/`](https://github.com/ezmsg-org/ezmsg-dashboard/tree/main/frontend/src/render): WebGL2 trace renderer and Canvas 2D channel map.
+- [`examples/stream_demo_graph.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/examples/stream_demo_graph.py): a graph that exercises every data view.
+- [`frontend/src/App.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/App.tsx): app shell and inspector/topology coordination.
+- [`frontend/src/hooks/useDashboardData.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/hooks/useDashboardData.ts): HTTP/WebSocket client state.
+- [`frontend/src/components/`](https://github.com/ezmsg-org/ezmsg-dashboard/tree/main/frontend/src/components): topology, settings, profiling, and trace UI.
+- [`frontend/src/fixtures/dashboardFixtures.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/fixtures/dashboardFixtures.ts): fixture mode for deterministic UI/test scenarios.
+- [`tests/backend/`](https://github.com/ezmsg-org/ezmsg-dashboard/tree/main/tests/backend): backend API and service tests.
+- [`frontend/tests/e2e/dashboard.spec.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/tests/e2e/dashboard.spec.ts): interaction and screenshot-level frontend tests.
 
 ## Read This First
 
 If you only have 30 minutes, read in this order:
 
-1. [`README.md`](../README.md)
-2. [`src/ezmsg/dashboard/server.py`](../src/ezmsg/dashboard/server.py)
-3. [`src/ezmsg/dashboard/backend/app.py`](../src/ezmsg/dashboard/backend/app.py)
-4. [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](../src/ezmsg/dashboard/backend/services/graph_context_service.py)
-5. [`frontend/src/hooks/useDashboardData.ts`](../frontend/src/hooks/useDashboardData.ts)
-6. [`frontend/src/App.tsx`](../frontend/src/App.tsx)
-7. [`frontend/src/components/TopologyPanel.tsx`](../frontend/src/components/TopologyPanel.tsx)
-8. [`frontend/src/components/topologyGraph.ts`](../frontend/src/components/topologyGraph.ts)
-9. [`frontend/src/components/topologyFlowData.tsx`](../frontend/src/components/topologyFlowData.tsx)
-10. [`frontend/src/components/SettingsPanel.tsx`](../frontend/src/components/SettingsPanel.tsx)
-11. [`frontend/src/components/ProfilingPanel.tsx`](../frontend/src/components/ProfilingPanel.tsx)
+1. [`README.md`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/README.md)
+2. [`src/ezmsg/dashboard/server.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/server.py)
+3. [`src/ezmsg/dashboard/backend/app.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/app.py)
+4. [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/graph_context_service.py)
+5. [`frontend/src/hooks/useDashboardData.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/hooks/useDashboardData.ts)
+6. [`frontend/src/App.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/App.tsx)
+7. [`frontend/src/components/TopologyPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/TopologyPanel.tsx)
+8. [`frontend/src/components/topologyGraph.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyGraph.ts)
+9. [`frontend/src/components/topologyFlowData.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyFlowData.tsx)
+10. [`frontend/src/components/SettingsPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/SettingsPanel.tsx)
+11. [`frontend/src/components/ProfilingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/ProfilingPanel.tsx)
 
 That path tells the story from process startup to backend protocol to client state to visual rendering.
 
@@ -90,7 +90,7 @@ That path tells the story from process startup to backend protocol to client sta
 
 ### 1. Server entrypoint
 
-[`src/ezmsg/dashboard/server.py`](../src/ezmsg/dashboard/server.py) is intentionally thin.
+[`src/ezmsg/dashboard/server.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/server.py) is intentionally thin.
 
 What it does:
 
@@ -105,7 +105,7 @@ Important design point:
 
 ### 2. FastAPI app factory
 
-[`src/ezmsg/dashboard/backend/app.py`](../src/ezmsg/dashboard/backend/app.py) is the backend composition root.
+[`src/ezmsg/dashboard/backend/app.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/app.py) is the backend composition root.
 
 What lives here:
 
@@ -128,7 +128,7 @@ The SPA fallback logic is also here. Unknown browser paths fall back to `index.h
 
 ### 3. Graph service lifecycle
 
-[`src/ezmsg/dashboard/backend/services/graph_context_service.py`](../src/ezmsg/dashboard/backend/services/graph_context_service.py) is the real backend.
+[`src/ezmsg/dashboard/backend/services/graph_context_service.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/graph_context_service.py) is the real backend.
 
 Responsibilities:
 
@@ -150,7 +150,7 @@ Key ideas:
 
 ### 4. Stream taps
 
-[`stream_tap.py`](../src/ezmsg/dashboard/backend/services/stream_tap.py) is how the
+[`stream_tap.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/stream_tap.py) is how the
 dashboard sees message *data* rather than message *counts*.
 
 The mechanism is one sentence long: the backend already holds a `GraphContext`,
@@ -171,7 +171,7 @@ Two properties of `ezmsg`'s `Subscriber` carry the design:
   reading a buffer the publisher is free to overwrite.
 
 Leakiness costs contiguity, so each tap owns a small ring
-([`stream_frames.py`](../src/ezmsg/dashboard/backend/stream_frames.py)) written
+([`stream_frames.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/stream_frames.py)) written
 at message rate and read at frame rate, which reports gaps instead of drawing
 across them.
 
@@ -220,9 +220,9 @@ the plotting views are unavailable.
 
 Two smaller files matter:
 
-- [`src/ezmsg/dashboard/backend/services/adapters.py`](../src/ezmsg/dashboard/backend/services/adapters.py)
-- [`src/ezmsg/dashboard/backend/models/events.py`](../src/ezmsg/dashboard/backend/models/events.py)
-- [`src/ezmsg/dashboard/backend/json_encoding.py`](../src/ezmsg/dashboard/backend/json_encoding.py)
+- [`src/ezmsg/dashboard/backend/services/adapters.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/adapters.py)
+- [`src/ezmsg/dashboard/backend/models/events.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/models/events.py)
+- [`src/ezmsg/dashboard/backend/json_encoding.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/json_encoding.py)
 
 These files define the browser protocol boundary.
 
@@ -234,7 +234,7 @@ This separation is good practice: the backend can evolve internal types while ke
 
 ### 1. App shell
 
-[`frontend/src/App.tsx`](../frontend/src/App.tsx) is the shell, not the business logic engine.
+[`frontend/src/App.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/App.tsx) is the shell, not the business logic engine.
 
 It manages:
 
@@ -252,7 +252,7 @@ Mental model:
 
 ### 2. Data hook
 
-[`frontend/src/hooks/useDashboardData.ts`](../frontend/src/hooks/useDashboardData.ts) is the client-side state coordinator.
+[`frontend/src/hooks/useDashboardData.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/hooks/useDashboardData.ts) is the client-side state coordinator.
 
 It combines four behaviors:
 
@@ -273,12 +273,12 @@ This is a pragmatic design. The backend provides authoritative snapshots; the fr
 
 The topology view is split into several files on purpose:
 
-- [`frontend/src/components/topologyGraph.ts`](../frontend/src/components/topologyGraph.ts): parse raw graph snapshot metadata into units, collections, streams, and tasks.
-- [`frontend/src/components/topologyFlowData.tsx`](../frontend/src/components/topologyFlowData.tsx): transform classified topology into React Flow nodes and edges with coordinates and styling.
-- [`frontend/src/components/topologyTrace.ts`](../frontend/src/components/topologyTrace.ts): highlight active publisher paths through the graph.
-- [`frontend/src/components/topologySelection.ts`](../frontend/src/components/topologySelection.ts): map stream selection back to units/components.
-- [`frontend/src/components/useTopologyFocus.ts`](../frontend/src/components/useTopologyFocus.ts): auto-focus and scope navigation behavior.
-- [`frontend/src/components/TopologyPanel.tsx`](../frontend/src/components/TopologyPanel.tsx): compose helpers into the actual viewport.
+- [`frontend/src/components/topologyGraph.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyGraph.ts): parse raw graph snapshot metadata into units, collections, streams, and tasks.
+- [`frontend/src/components/topologyFlowData.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyFlowData.tsx): transform classified topology into React Flow nodes and edges with coordinates and styling.
+- [`frontend/src/components/topologyTrace.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyTrace.ts): highlight active publisher paths through the graph.
+- [`frontend/src/components/topologySelection.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologySelection.ts): map stream selection back to units/components.
+- [`frontend/src/components/useTopologyFocus.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/useTopologyFocus.ts): auto-focus and scope navigation behavior.
+- [`frontend/src/components/TopologyPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/TopologyPanel.tsx): compose helpers into the actual viewport.
 
 This is the most important subsystem to understand before making layout changes.
 
@@ -298,7 +298,7 @@ Why:
 
 ### 4. Settings panel
 
-[`frontend/src/components/SettingsPanel.tsx`](../frontend/src/components/SettingsPanel.tsx) renders a searchable component list and a per-field editor.
+[`frontend/src/components/SettingsPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/SettingsPanel.tsx) renders a searchable component list and a per-field editor.
 
 How it works:
 
@@ -312,8 +312,8 @@ This file is fairly self-contained and one of the easier places to extend safely
 
 Two files own the profiling UX:
 
-- [`frontend/src/components/ProfilingPanel.tsx`](../frontend/src/components/ProfilingPanel.tsx)
-- [`frontend/src/components/TraceTimingPanel.tsx`](../frontend/src/components/TraceTimingPanel.tsx)
+- [`frontend/src/components/ProfilingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/ProfilingPanel.tsx)
+- [`frontend/src/components/TraceTimingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/TraceTimingPanel.tsx)
 
 `ProfilingPanel.tsx`:
 
@@ -333,16 +333,16 @@ This is the second-biggest complexity hotspot after topology layout.
 
 ### 6. Stream panel and renderers
 
-[`StreamPanel.tsx`](../frontend/src/components/StreamPanel.tsx) owns one
+[`StreamPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/StreamPanel.tsx) owns one
 `/ws/stream` socket and one renderer.
 
 The load-bearing decision is that data frames never enter React state. They
 arrive tens of times a second and go straight from
-[`useStreamTap`](../frontend/src/hooks/useStreamTap.ts) into the renderer via a
+[`useStreamTap`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/hooks/useStreamTap.ts) into the renderer via a
 callback ref; only metadata, tap health, and the inspector are `useState`.
 Routing frames through React would re-render the topology page at frame rate.
 
-[`traceRenderer.ts`](../frontend/src/render/traceRenderer.ts) is a purpose-built
+[`traceRenderer.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/render/traceRenderer.ts) is a purpose-built
 WebGL2 line renderer rather than a charting library. The ring is an `RG32F`
 **texture** — one row per column, one texel per channel — sampled in the vertex
 shader, and every channel is drawn by one instanced call.
@@ -371,7 +371,7 @@ The frame header therefore carries `columns`, `window_seconds` and
 `samples_per_column`, and the browser sizes its ring and writes its caption from
 those rather than from what it asked for.
 
-[`autoRange.ts`](../frontend/src/render/autoRange.ts) holds the vertical scale,
+[`autoRange.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/render/autoRange.ts) holds the vertical scale,
 split out so it can be tested without a WebGL context. Two things there are easy
 to get wrong and were both wrong once. It must measure only the lanes *on
 screen*: a `(time, ch, feature)` stream interleaves spike rate with band power
@@ -383,13 +383,13 @@ a second, so on a slow signal its extent is a sliver of what the plot is showing
 and a tracker fed per-frame figures settled at 6% of what was needed and clipped.
 Hence one min/max per column, reduced over the ring.
 
-[`scatterRenderer.ts`](../frontend/src/render/scatterRenderer.ts) is Canvas 2D,
+[`scatterRenderer.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/render/scatterRenderer.ts) is Canvas 2D,
 deliberately: a channel map is a few hundred filled circles and text, and text
 is the part that matters.
 
 ## Fixture Mode
 
-[`frontend/src/fixtures/dashboardFixtures.ts`](../frontend/src/fixtures/dashboardFixtures.ts) is a major development asset.
+[`frontend/src/fixtures/dashboardFixtures.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/fixtures/dashboardFixtures.ts) is a major development asset.
 
 It provides deterministic synthetic graphs for:
 
@@ -412,9 +412,9 @@ This file is long, but conceptually simple: it is synthetic data, not runtime lo
 
 ### Live-graph check
 
-[`frontend/scripts/check-stream-panel.mjs`](../frontend/scripts/check-stream-panel.mjs)
+[`frontend/scripts/check-stream-panel.mjs`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/scripts/check-stream-panel.mjs)
 drives the data viewer in a real browser against
-[`examples/stream_demo_graph.py`](../examples/stream_demo_graph.py). Shader
+[`examples/stream_demo_graph.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/examples/stream_demo_graph.py). Shader
 compilation, the vertex layout, and "is anything actually drawn" cannot fail in
 a jsdom test, and they are the parts most likely to be wrong. It judges from a
 screenshot rather than `readPixels`, because reading the canvas back requires
@@ -423,14 +423,14 @@ to blank the canvas — a false failure indistinguishable from the real one.
 
 ### Backend tests
 
-[`tests/backend/test_api_routes.py`](../tests/backend/test_api_routes.py) verifies:
+[`tests/backend/test_api_routes.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/tests/backend/test_api_routes.py) verifies:
 
 - API routes return the expected payload shape
 - cache-control behavior
 - the WebSocket endpoint emits event envelopes
 - static frontend fallback does not hide unknown API routes
 
-[`tests/backend/test_graph_context_service.py`](../tests/backend/test_graph_context_service.py) verifies:
+[`tests/backend/test_graph_context_service.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/tests/backend/test_graph_context_service.py) verifies:
 
 - health payload address resolution
 - settings patchability enforcement
@@ -452,7 +452,7 @@ These tests are especially valuable because the topology code is algorithmic and
 
 ### Frontend end-to-end tests
 
-[`frontend/tests/e2e/dashboard.spec.ts`](../frontend/tests/e2e/dashboard.spec.ts) is broader than a typical smoke suite.
+[`frontend/tests/e2e/dashboard.spec.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/tests/e2e/dashboard.spec.ts) is broader than a typical smoke suite.
 
 It checks:
 
@@ -529,14 +529,14 @@ These areas are relatively easy to modify:
 
 If a human wants to understand the code in one sitting, this is the shortest path I would recommend:
 
-1. Read [`README.md`](../README.md) for packaging and runtime expectations.
-2. Read [`src/ezmsg/dashboard/server.py`](../src/ezmsg/dashboard/server.py) and [`src/ezmsg/dashboard/backend/app.py`](../src/ezmsg/dashboard/backend/app.py) to see the full backend surface.
-3. Read [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](../src/ezmsg/dashboard/backend/services/graph_context_service.py) carefully. This is the backend brain.
-4. Read [`frontend/src/hooks/useDashboardData.ts`](../frontend/src/hooks/useDashboardData.ts) to understand the client data model.
-5. Read [`frontend/src/App.tsx`](../frontend/src/App.tsx) to see how inspector state, topology focus, and trace dock state are wired together.
-6. Read [`frontend/src/components/topologyGraph.ts`](../frontend/src/components/topologyGraph.ts) and [`frontend/src/components/topologyFlowData.tsx`](../frontend/src/components/topologyFlowData.tsx) to understand the hardest rendering path.
-7. Read [`frontend/src/components/SettingsPanel.tsx`](../frontend/src/components/SettingsPanel.tsx) and [`frontend/src/components/ProfilingPanel.tsx`](../frontend/src/components/ProfilingPanel.tsx) for the two inspector panes.
-8. Finish with [`frontend/tests/e2e/dashboard.spec.ts`](../frontend/tests/e2e/dashboard.spec.ts) and [`frontend/src/components/topologyFlowData.test.tsx`](../frontend/src/components/topologyFlowData.test.tsx) to learn what behavior the repo considers essential.
+1. Read [`README.md`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/README.md) for packaging and runtime expectations.
+2. Read [`src/ezmsg/dashboard/server.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/server.py) and [`src/ezmsg/dashboard/backend/app.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/app.py) to see the full backend surface.
+3. Read [`src/ezmsg/dashboard/backend/services/graph_context_service.py`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/src/ezmsg/dashboard/backend/services/graph_context_service.py) carefully. This is the backend brain.
+4. Read [`frontend/src/hooks/useDashboardData.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/hooks/useDashboardData.ts) to understand the client data model.
+5. Read [`frontend/src/App.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/App.tsx) to see how inspector state, topology focus, and trace dock state are wired together.
+6. Read [`frontend/src/components/topologyGraph.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyGraph.ts) and [`frontend/src/components/topologyFlowData.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyFlowData.tsx) to understand the hardest rendering path.
+7. Read [`frontend/src/components/SettingsPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/SettingsPanel.tsx) and [`frontend/src/components/ProfilingPanel.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/ProfilingPanel.tsx) for the two inspector panes.
+8. Finish with [`frontend/tests/e2e/dashboard.spec.ts`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/tests/e2e/dashboard.spec.ts) and [`frontend/src/components/topologyFlowData.test.tsx`](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/frontend/src/components/topologyFlowData.test.tsx) to learn what behavior the repo considers essential.
 
 ## Bottom Line
 

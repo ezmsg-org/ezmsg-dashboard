@@ -1,6 +1,6 @@
 # ezmsg-dashboard
 
-![A screenshot of ezmsg-dashboard](docs/image.png)
+![A screenshot of ezmsg-dashboard](docs/source/_static/image.png)
 
 `ezmsg-dashboard` is a web dashboard for inspecting and operating running `ezmsg` systems.
 
@@ -26,7 +26,7 @@ pip install "ezmsg-dashboard[viz]"
 
 Runtime installs do not require `npm`. The published wheel/sdist includes a prebuilt frontend bundle that the Python backend serves directly.
 
-Documentation lives in [docs/README.md](docs/README.md).
+Documentation is published at <https://www.ezmsg.org/ezmsg-dashboard/>. Start with the [User Guide](docs/source/guides/user-guide.md).
 
 __NOTE:__ This software was written in heavy collaboration (vibe coded) with ChatGPT 5.4.  It appears functional and has been used to evaluate a variety of `ezmsg` deployments, but this in no way implies fitness for any particular use, or that the code is anything more than AI slop.  The human(s) who have their name associated with this package do not fully understand how the code was designed/functions and will not necessarily be helpful in GitHub issues or PRs.  It should be treated as a tool that is nice when it works well and solves a problem, and as an inspirational jumping board/mockup for what `ezmsg-dashboard` could be with a real development push by human developers.
 
@@ -62,8 +62,8 @@ If you want core `ezmsg` to host the graph server and dashboard together:
 ezmsg serve --dashboard
 ```
 
-For local setup, development mode, testing, fixture scenarios, and release steps, use the [Development Guide](docs/development.md).
+For local setup, development mode, testing, fixture scenarios, and release steps, use the [Development Guide](docs/source/guides/development.md).
 
 ## License
 
-MIT. See [LICENSE.txt](LICENSE.txt).
+MIT. See [LICENSE.txt](https://github.com/ezmsg-org/ezmsg-dashboard/blob/main/LICENSE.txt).

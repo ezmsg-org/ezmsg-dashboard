@@ -30,6 +30,13 @@ dev = [
   {include-group = "lint"},
   {include-group = "test"},
 ]
+docs = [
+  "sphinx>=8.0",
+  "pydata-sphinx-theme",
+  "sphinx-autodoc-typehints",
+  "sphinx-copybutton",
+  "myst-parser",
+]
 lint = [
   "ruff==0.16.2"
 ]

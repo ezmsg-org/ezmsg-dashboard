@@ -8,7 +8,7 @@ This page collects the maintainer-facing material that does not need to live in 
 - `frontend/`: React + TypeScript dashboard UI
 - `tests/backend/`: backend tests
 - `frontend/tests/e2e/`: Playwright end-to-end and screenshot tests
-- `docs/`: user-facing and maintainer-facing documentation
+- `docs/`: Sphinx documentation sources (guides in `docs/source/guides/`)
 
 ## Requirements
 
