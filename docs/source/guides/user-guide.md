@@ -1,16 +1,50 @@
 # User Guide
 
-> **Note:** This guide is fixture-backed and written against the current MVP dashboard behavior.
-> The screenshots are generated from the frontend fixtures rather than a live graph server,
-> so the exact names and values may differ from your running system while the UI behavior
-> should remain representative.
+> **Note:** The annotated screenshots in the Topology, Settings, Publishers and Trace Dock
+> sections are generated from the frontend fixtures rather than a live graph server, so the
+> exact names and values may differ from your running system while the UI behavior should
+> remain representative. The overview, Data Viewer and Build Mode screenshots were taken from
+> a live graph ([`screenshots/demo_pipeline.py`](./screenshots/demo_pipeline.py)).
 
-`ezmsg-dashboard` is a live operations view for an `ezmsg` graph. It gives you three main workflows:
+<!-- dd:ezmsg-dashboard:start -->
+
+## Overview
+
+`ezmsg-dashboard` is a browser-based tool for inspecting, operating and extending a running `ezmsg` system. It connects to the system's GraphServer (the service that coordinates an `ezmsg` graph) by address, either alongside it (`ezmsg serve --dashboard`) or separately (`ezmsg dashboard --graph-address HOST:PORT`), so it can attach to a system that is already running without changes to that system's code.
+
+- **Topology**: the graph is drawn as it is running, with Collections as frames, Units as cards and every stream connection as an edge.
+- **Metrics**: each publisher shows its message rate, message count and how many of its buffers are waiting on slow subscribers; each subscriber shows its message count and whether it receives in-process, through shared memory or over TCP. A timing trace can be started on any publisher to plot its publishing interval and each subscriber's handling time.
+- **Settings**: any Unit that accepts settings updates can have individual fields changed while the system runs.
+- **Live plotting of any edge**: the output of any publisher can be plotted as a multichannel sweep, a spectrum or a channel map, or inspected as raw message structure. The dashboard subscribes without slowing the publisher (it drops data rather than applying backpressure) and reduces the data to the plot's resolution before sending it to the browser.
+- **Visual graph editing**: Build mode lists the Units and Collections registered by the installed extension packages, and lets you add them to a draft graph, set their settings, and connect their ports to each other or to outputs of the running system. The draft can be run, changed and stopped from the dashboard, and saved to or loaded from a file.
+
+```{figure} ./screenshots/live-topology.png
+:alt: ezmsg-dashboard in Monitor mode. The left pane shows a Collection named PIPELINE containing a SOURCE collection and BANDPASS, WINDOW and SPECTRUM units connected top to bottom; the right pane lists every publisher with its rate, message count, buffers in use out of 32, and subscriber count.
+
+The dashboard attached to a running graph: a synthetic EEG source, band-pass filter, windowing and spectrum Units, with each publisher's rate, message count and buffer use.
+```
+
+```{figure} ./screenshots/live-data-viewer.png
+:alt: Data viewer dock showing sixteen stacked colour traces labelled ch0 to ch15 for the topic PIPELINE/BANDPASS/OUTPUT_SIGNAL, with controls for mode, window length, channel range, autoscale and gain.
+
+Live sweep plot of the band-pass filter output (16 channels at 500 Hz), opened from the publisher list.
+```
+
+```{figure} ./screenshots/build-mode.png
+:alt: ezmsg-dashboard in Build mode. The running pipeline is on the left; two hatched draft nodes, ButterworthFilter and Spectrum, are connected to it by an edge marked across processes. The right pane shows the Configure tab with the ButterworthFilter settings fields.
+
+Build mode: a draft Butterworth filter and spectrum (hatched) connected to the output of the running band-pass filter, with the filter's settings form open.
+```
+
+<!-- dd:ezmsg-dashboard:end -->
+
+The rest of this guide covers each workflow in detail:
 
 - understand structure in the topology view
 - inspect and patch settings
 - inspect publisher/subscriber health and timing traces
 - watch the data a publisher is actually sending
+- build, run and change a graph in Build mode
 
 ## Main Layout
 
@@ -215,6 +249,43 @@ Sample data is reduced before it is sent — to the width of your plot and the
 window you asked for — so bandwidth follows the size of the plot rather than the
 publisher's sample rate. A 256-channel 30 kHz stream on a 2 s window costs
 roughly 700 KB/s; the same stream sent raw would be 60 MB/s.
+
+## Build Mode
+
+Switch between **Monitor** and **Build** with the buttons at the lower left of the
+topology. Build keeps the live topology on the canvas and replaces the inspector
+with three tabs:
+
+1. **Components**: every Unit and Collection registered by the installed
+   extensions under the `ezmsg.components` entry point, grouped by package and
+   module, with a search box. Select one and `Add to draft`. The catalog comes
+   from the dashboard server's own Python environment; components are inspected
+   without being constructed.
+2. **Configure**: the selected draft component's name and settings, using the
+   same widgets as the Settings pane. `Save to draft` stores a field; nothing is
+   sent to a running component until you Run or Apply.
+3. **Connections**: pick an output and an input and `Connect ports`, or drag
+   between port handles on the canvas. Tick `Include components running
+   elsewhere` to feed a draft component from any output of a pipeline that is
+   already running; that pipeline keeps running in its own processes, and the
+   edge is drawn dashed and marked "across processes".
+
+Draft components are drawn hatched. `Run` starts the draft as one managed group
+attached to the same GraphServer, `Apply changes` replaces the running group
+with the edited draft, and `Stop` stops only that group, never the GraphServer
+or other pipelines. Run and Apply first validate the whole draft in a separate
+process (installed components, complete settings, port types and directions, no
+cycles); if validation fails, the running group is left untouched. Apply is a
+restart, not a seamless handover: state is reset and samples arriving during the
+switch are lost. `Graph document` saves the draft to a JSON file or loads one;
+the draft is also kept in the browser between visits.
+
+A connection that validates is structurally sound, not a guarantee that the data
+is scientifically compatible (for example, matching sampling rates or channel
+layouts).
+
+See [Graph builder implementation plan](graph-builder.md) for design details and
+current limitations.
 
 ## Theme And Layout Controls
 
