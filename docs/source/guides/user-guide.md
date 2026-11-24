@@ -6,9 +6,9 @@
 > remain representative. The overview, Data Viewer and Build Mode screenshots were taken from
 > a live graph ([`screenshots/demo_pipeline.py`](./screenshots/demo_pipeline.py)).
 
-<!-- dd:ezmsg-dashboard:start -->
-
 ## Overview
+
+<!-- dd:ezmsg-dashboard:start -->
 
 `ezmsg-dashboard` is a browser-based tool for inspecting, operating and extending a running `ezmsg` system. It connects to the system's GraphServer (the service that coordinates an `ezmsg` graph) by address, either alongside it (`ezmsg serve --dashboard`) or separately (`ezmsg dashboard --graph-address HOST:PORT`), so it can attach to a system that is already running without changes to that system's code.
 
